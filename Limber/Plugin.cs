@@ -241,6 +241,9 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.BodyShapeTab = new BodyShapeTab(_selection, _config.Ik) { RigEverything = limberTab.RigEverything };
             _windows.AddWindow(_mainWindow);
             _windows.AddWindow(syncHelp);
+            var physicsHelp = new BodyPhysicsHelpWindow();
+            _windows.AddWindow(physicsHelp);
+            limberTab.ShowPhysicsHelp = () => physicsHelp.IsOpen = true;
             _windows.AddWindow(new SyncPromptWindow(_koi));
             if(!_config.HasShownWindow)
             {

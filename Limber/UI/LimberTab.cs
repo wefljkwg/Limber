@@ -974,8 +974,18 @@ public sealed partial class LimberTab
                 : _config.SoftBody ??= new Limber.BodyRig.SoftBodySettings();
 
     /// <summary>The Rigging tab: one collapsible section per rigged part, then one build for all of them.</summary>
+    /// <summary>Opens the Body physics guide window.</summary>
+    public Action? ShowPhysicsHelp { get; set; }
+
     public void DrawRiggingTab()
     {
+        if(ShowPhysicsHelp != null)
+        {
+            if(ImGui.Button("How to use this (step by step)###lmb_physics_help"))
+                ShowPhysicsHelp();
+            Tooltip("Opens a guide: what Body physics does, what you need, setting it up, the sliders, and what to do if it doesn't work.");
+            ImGui.Spacing();
+        }
         DrawOneClick();
 
         foreach(var part in Limber.BodyRig.RigParts.All)
