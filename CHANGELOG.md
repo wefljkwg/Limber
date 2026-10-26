@@ -2,12 +2,6 @@
 
 Newest first. Each version here is a release on GitHub; Dalamud shows the newest entry in the plugin installer.
 
-## v0.59.4
-
-- **Body physics guide:** a "How to use this (step by step)" button at the top of the Body physics page opens a guide
-  window: what it does, what you need, setting it up, what each slider does, touching and grabbing, and what to do when
-  it doesn't work.
-
 ## v0.59.3
 
 - New plugin description in Dalamud's plugin list, covering what Limber does today.
