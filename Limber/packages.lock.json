@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows7.0": {
+      "DalamudPackager": {
+        "type": "Direct",
+        "requested": "[15.0.0, )",
+        "resolved": "15.0.0",
+        "contentHash": "411vwC8/X8Z/sQ2TI6v3SvOn66xFPeOjFn3Zn+h0d3Ox2t1kFm66AhDvmx/qcMwVrR+Hidxj0dadpQ2dgyXMBQ=="
+      },
+      "DotNet.ReproducibleBuilds": {
+        "type": "Direct",
+        "requested": "[1.2.39, )",
+        "resolved": "1.2.39",
+        "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
+      },
+      "Microsoft.AI.DirectML": {
+        "type": "Direct",
+        "requested": "[1.15.2, )",
+        "resolved": "1.15.2",
+        "contentHash": "FVvIJWnT14L5cTEr8uc40mY2lAdtzcAcgsas4i4HF7EcZMr8RJyLWTCxQj1K7fi7DNykBufQe1K5HDh/oIBz0g=="
+      },
+      "Microsoft.ML.OnnxRuntime.DirectML": {
+        "type": "Direct",
+        "requested": "[1.20.1, )",
+        "resolved": "1.20.1",
+        "contentHash": "IQSqKIwOGJ8azkJxqT7h/xGkjw3AKdVd/f9BfnbwQVBRZ7W5vrv8nCirNYPO0Xr3XJ27RpSzXSKIRBkiQlhjyw==",
+        "dependencies": {
+          "Microsoft.AI.DirectML": "1.15.2",
+          "Microsoft.ML.OnnxRuntime.Managed": "1.20.1"
+        }
+      },
+      "OpenCvSharp4": {
+        "type": "Direct",
+        "requested": "[4.10.0.*, )",
+        "resolved": "4.10.0.20241108",
+        "contentHash": "4Lw57NQzOaR0fi9et7GMWB1rpdGzGuNgXHXy45Gltvt8SizQLOGufUonNF9Z+9mo3dcwGC/mL4w5NBgJCqZdHQ=="
+      },
+      "OpenCvSharp4.runtime.win": {
+        "type": "Direct",
+        "requested": "[4.10.0.*, )",
+        "resolved": "4.10.0.20241108",
+        "contentHash": "0ae2dwel83tqKlAs45D3KYncoJHRzj1ArEESa6wz7FS3tYu37JDIb5yoMIZPzlkx3Gx2S1BjUrClfXbBHmVh5g=="
+      },
+      "Microsoft.ML.OnnxRuntime.Managed": {
+        "type": "Transitive",
+        "resolved": "1.20.1",
+        "contentHash": "+EVcEcKdq3gkw6iu8TYl2coJxfPnMi1YQc6eZ80BGNlw6mbBCxNGe6h4udDCwENYWsXFvYjoBc6412t40tl4ew=="
+      }
+    }
+  }
+}

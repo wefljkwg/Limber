@@ -1,0 +1,30 @@
+Limber's Video tab uses the following third-party components.
+
+MediaPipe pose and hand landmark models (ONNX versions from the OpenCV model zoo)
+  person_detection_mediapipe_2023mar.onnx, pose_estimation_mediapipe_2023mar.onnx,
+  handpose_estimation_mediapipe_2023feb.onnx
+  https://huggingface.co/opencv/person_detection_mediapipe
+  https://huggingface.co/opencv/pose_estimation_mediapipe
+  https://huggingface.co/opencv/handpose_estimation_mediapipe
+  Original models by Google (MediaPipe). Licensed under the Apache License 2.0.
+
+RTMW3D-x whole-body 3D pose model (rtmw3d-x_8xb64_cocktail14-384x288-b0a0eab7_20240626.onnx)
+  By OpenMMLab (MMPose). Licensed under the Apache License 2.0.
+  https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose3d
+  ONNX export: https://huggingface.co/Soykaf/RTMW3D-x
+
+DirectML - Copyright (c) Microsoft Corporation. Microsoft DirectML license.
+  https://www.nuget.org/packages/Microsoft.AI.DirectML
+
+ONNX Runtime - Copyright (c) Microsoft Corporation. MIT License.
+  https://github.com/microsoft/onnxruntime
+
+OpenCvSharp - Copyright (c) shimat. Apache License 2.0.
+  https://github.com/shimat/opencvsharp
+
+OpenCV - Apache License 2.0. https://opencv.org
+  The OpenCV build used by OpenCvSharp includes FFmpeg (LGPL 2.1) for reading video files.
+  https://ffmpeg.org
+
+Full license texts: https://www.apache.org/licenses/LICENSE-2.0 , https://opensource.org/license/mit ,
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html

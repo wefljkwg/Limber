@@ -1,0 +1,149 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Two ways to build:
+
+    1. With no game install (what GitHub's automatic build uses; Koikatsu only):
+         dotnet build -c Release
+       Reference libraries come from the BepInEx / IllusionMods package feeds (see NuGet.config).
+
+    2. Against your own game install (also works for Koikatsu Sunshine):
+         dotnet build -c Release -p:KoikatsuDir="D:\Games\Koikatsu"
+         dotnet build -c Release -p:GameVariant=KKS -p:KoikatsuDir="D:\Games\KoikatsuSunshine"
+       Add -p:InstallToGame=true to copy the built DLL into <game>\BepInEx\plugins\Limber\.
+       The game install must have BepInEx 5 and KKAPI / KKSAPI (any HF Patch install does).
+  -->
+
+  <PropertyGroup>
+    <GameVariant Condition="'$(GameVariant)' == ''">KK</GameVariant>
+
+    <AssemblyName>Limber.Koikatsu</AssemblyName>
+    <RootNamespace>Limber.Koikatsu</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>0.11.0</Version>
+    <DebugType>embedded</DebugType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(GameVariant)\</OutputPath>
+
+    <!-- Privacy: don't embed this PC's folder paths in the built DLL/PDB, and build reproducibly. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=./$(MSBuildProjectName)/,$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/..'))=./</PathMap>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GameVariant)' == 'KK'">
+    <TargetFramework>net35</TargetFramework>
+    <GameDataDir Condition="'$(KoikatsuDir)' != ''">$(KoikatsuDir)\Koikatu_Data\Managed</GameDataDir>
+    <ApiDll>KKAPI.dll</ApiDll>
+    <DefineConstants>$(DefineConstants);KK</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GameVariant)' == 'KKS'">
+    <TargetFramework>net46</TargetFramework>
+    <GameDataDir Condition="'$(KoikatsuDir)' != ''">$(KoikatsuDir)\KoikatsuSunshine_Data\Managed</GameDataDir>
+    <ApiDll>KKSAPI.dll</ApiDll>
+    <DefineConstants>$(DefineConstants);KKS</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- No game folder given: use the reference packages instead (Koikatsu only). -->
+    <UseGameDlls Condition="'$(KoikatsuDir)' != ''">true</UseGameDlls>
+    <UseGameDlls Condition="'$(KoikatsuDir)' == ''">false</UseGameDlls>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets the modern dotnet SDK target .NET Framework 3.5 / 4.6 without Visual Studio targeting packs. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\Protocol.cs" Link="Shared\Protocol.cs" />
+  </ItemGroup>
+
+  <!-- ===== Build without a game install: reference packages (compile only, nothing is copied to the output) ===== -->
+
+  <Target Name="NoPackagesForKks" BeforeTargets="Restore;CollectPackageReferences" Condition="'$(UseGameDlls)' != 'true' and '$(GameVariant)' == 'KKS'">
+    <Error Text="Koikatsu Sunshine builds need your game folder: add -p:KoikatsuDir=&quot;...&quot;" />
+  </Target>
+
+  <ItemGroup Condition="'$(UseGameDlls)' != 'true' and '$(GameVariant)' == 'KK'">
+    <PackageReference Include="IllusionLibs.BepInEx" Version="5.4.22" IncludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="IllusionLibs.Koikatu.Assembly-CSharp" Version="2019.4.27.4" IncludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="IllusionLibs.Koikatu.Assembly-CSharp-firstpass" Version="2019.4.27.4" IncludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="IllusionLibs.Koikatu.UnityEngine" Version="5.6.2.4" IncludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="IllusionModdingAPI.KKAPI" Version="1.43.0" IncludeAssets="compile" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- ===== Build against a game install ===== -->
+
+  <ItemGroup Condition="'$(UseGameDlls)' == 'true'">
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameDataDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(GameDataDir)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameDataDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(KoikatsuDir)\BepInEx\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Repacks put KKAPI in different subfolders, so search the whole plugins folder for it. -->
+  <ItemGroup Condition="'$(UseGameDlls)' == 'true'">
+    <_KkApiCandidate Include="$(KoikatsuDir)\BepInEx\plugins\**\$(ApiDll)" />
+  </ItemGroup>
+
+  <Target Name="ResolveKkApi" BeforeTargets="ResolveAssemblyReferences" Condition="'$(UseGameDlls)' == 'true'">
+    <Error Condition="!Exists('$(GameDataDir)\Assembly-CSharp.dll')"
+           Text="Game DLLs not found in '$(GameDataDir)'. Check -p:KoikatsuDir (and add -p:GameVariant=KKS for Sunshine)." />
+    <Error Condition="'@(_KkApiCandidate)' == ''"
+           Text="$(ApiDll) not found under '$(KoikatsuDir)\BepInEx\plugins'. Install KKAPI (IllusionModdingAPI) first." />
+    <!-- If several copies exist, batching leaves exactly one path in the property. -->
+    <PropertyGroup>
+      <_KkApiPath>%(_KkApiCandidate.FullPath)</_KkApiPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <Reference Include="KKAPI">
+        <HintPath>$(_KkApiPath)</HintPath>
+        <Private>false</Private>
+      </Reference>
+    </ItemGroup>
+    <Message Importance="high" Text="Using KKAPI: $(_KkApiPath)" />
+  </Target>
+
+  <Target Name="InstallToGame" AfterTargets="Build" Condition="'$(InstallToGame)' == 'true'">
+    <Error Condition="'$(KoikatsuDir)' == ''" Text="InstallToGame needs -p:KoikatsuDir=&quot;your game folder&quot;." />
+    <PropertyGroup>
+      <_InstallDir>$(KoikatsuDir)\BepInEx\plugins\Limber</_InstallDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_InstallDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(_InstallDir)" />
+    <Message Importance="high" Text="Installed $(TargetFileName) to $(_InstallDir)" />
+  </Target>
+
+  <!-- Koikatsu Sunshine (Unity 2019) splits UnityEngine into modules. -->
+  <ItemGroup Condition="'$(GameVariant)' == 'KKS' and '$(UseGameDlls)' == 'true'">
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameDataDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(GameDataDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(GameDataDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

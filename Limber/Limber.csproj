@@ -1,0 +1,78 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <!--
+    Limber - Dalamud API 15 (Dalamud 15.0.3.7, game patch 7.57). Build with:  dotnet build -c Release
+    Requires a local XIVLauncher/Dalamud install (the SDK finds it via %AppData%\XIVLauncher\addon\Hooks\dev
+    or the DALAMUD_HOME environment variable). The plugin manifest is Limber.json.
+  -->
+  <PropertyGroup>
+    <Version>0.59.2.0</Version>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Limber</RootNamespace>
+    <AssemblyName>Limber</AssemblyName>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+
+    <!-- Privacy: don't embed this PC's folder paths in the built DLL/PDB, and build reproducibly. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=./$(MSBuildProjectName)/,$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/..'))=./</PathMap>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Wire format shared with the Koikatsu sender plugin. -->
+    <Compile Include="..\Shared\Protocol.cs" Link="Shared\Protocol.cs" />
+  </ItemGroup>
+
+  <!-- ===== Video tab: video decoding (OpenCV) and pose tracking (ONNX Runtime with DirectML, RTMW3D + MediaPipe models) ===== -->
+  <ItemGroup>
+    <!-- The DirectML build of ONNX Runtime: runs on any DirectX 12 graphics card, and on the CPU as well. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.2" GeneratePathProperty="true" />
+    <PackageReference Include="OpenCvSharp4" Version="4.10.0.*" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.*" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Apache-2.0 MediaPipe models converted to ONNX, from the OpenCV model zoo. Downloaded once, then kept. -->
+    <LimberModelDir>$(MSBuildProjectDirectory)\Video\Models</LimberModelDir>
+    <!-- false: build without the Video page's tracking models (the release build: that page isn't finished). -->
+    <LimberVideoModels Condition="'$(LimberVideoModels)' == ''">true</LimberVideoModels>
+    <PoseModelUrl>https://huggingface.co/opencv/pose_estimation_mediapipe/resolve/main/pose_estimation_mediapipe_2023mar.onnx</PoseModelUrl>
+    <DetectorModelUrl>https://huggingface.co/opencv/person_detection_mediapipe/resolve/main/person_detection_mediapipe_2023mar.onnx</DetectorModelUrl>
+    <!-- RTMW3D-x (OpenMMLab, Apache-2.0), ONNX export used by rtmlib. About 370 MB. -->
+    <RtmModelFile>rtmw3d-x_8xb64_cocktail14-384x288-b0a0eab7_20240626.onnx</RtmModelFile>
+    <RtmModelUrl>https://huggingface.co/Soykaf/RTMW3D-x/resolve/main/onnx/$(RtmModelFile)</RtmModelUrl>
+    <HandModelUrl>https://huggingface.co/opencv/handpose_estimation_mediapipe/resolve/main/handpose_estimation_mediapipe_2023feb.onnx</HandModelUrl>
+  </PropertyGroup>
+
+  <Target Name="LimberDownloadModels" BeforeTargets="BeforeBuild" Condition="'$(LimberVideoModels)' == 'true'">
+    <DownloadFile SourceUrl="$(PoseModelUrl)" DestinationFolder="$(LimberModelDir)" DestinationFileName="pose_estimation_mediapipe_2023mar.onnx" Retries="3" Condition="!Exists('$(LimberModelDir)\pose_estimation_mediapipe_2023mar.onnx')" />
+    <DownloadFile SourceUrl="$(DetectorModelUrl)" DestinationFolder="$(LimberModelDir)" DestinationFileName="person_detection_mediapipe_2023mar.onnx" Retries="3" Condition="!Exists('$(LimberModelDir)\person_detection_mediapipe_2023mar.onnx')" />
+    <DownloadFile SourceUrl="$(RtmModelUrl)" DestinationFolder="$(LimberModelDir)" DestinationFileName="$(RtmModelFile)" Retries="3" Condition="!Exists('$(LimberModelDir)\$(RtmModelFile)')" />
+    <DownloadFile SourceUrl="$(HandModelUrl)" DestinationFolder="$(LimberModelDir)" DestinationFileName="handpose_estimation_mediapipe_2023feb.onnx" Retries="3" Condition="!Exists('$(LimberModelDir)\handpose_estimation_mediapipe_2023feb.onnx')" />
+  </Target>
+
+  <!-- Put the models and the native DLLs right next to Limber.dll, where the plugin package picks them up. -->
+  <Target Name="LimberCopyVideoFiles" AfterTargets="CopyFilesToOutputDirectory">
+    <ItemGroup>
+      <_LimberModels Include="$(LimberModelDir)\*.onnx" Condition="'$(LimberVideoModels)' == 'true'" />
+      <_LimberNative Include="$(OutDir)runtimes\win-x64\native\*.dll" />
+      <_LimberNative Include="$(PkgMicrosoft_AI_DirectML)\bin\x64-win\DirectML.dll" Condition="Exists('$(PkgMicrosoft_AI_DirectML)\bin\x64-win\DirectML.dll')" />
+      <_LimberNotice Include="$(MSBuildProjectDirectory)\Video\THIRD-PARTY-NOTICES.txt" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LimberModels);@(_LimberNative);@(_LimberNotice)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <!-- Other platforms' copies (Linux, macOS, ARM, 32-bit) are never used; keep them out of the plugin package. -->
+    <RemoveDir Directories="$(OutDir)runtimes" />
+    <!-- DirectML's debug-layer DLL and symbols are only for DirectML developers. -->
+    <Delete Files="$(OutDir)DirectML.Debug.dll;$(OutDir)DirectML.Debug.pdb;$(OutDir)DirectML.pdb" />
+  </Target>
+
+  <ItemGroup>
+    <!-- The sync relay that the plugin deploys to the player's own Cloudflare account. -->
+    <None Remove="Koi\Sync\relay.js" />
+    <EmbeddedResource Include="Koi\Sync\relay.js" LogicalName="Limber.relay.js" />
+  </ItemGroup>
+</Project>

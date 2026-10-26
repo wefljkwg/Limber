@@ -1,0 +1,109 @@
+# Builds both plugins on GitHub's servers and publishes them:
+#   - latest.zip            -> the FFXIV plugin, installed by Dalamud from repo.json
+#   - Limber.Koikatsu.zip   -> the Koikatsu plugin, unzip into the Koikatsu folder
+# (The Video page's tracking models, ~400 MB, aren't put in the FFXIV plugin: that page isn't finished.)
+# Then writes repo.json (the link players add in Dalamud) and fills that link into README.md.
+#
+# Run it from the repository's "Actions" tab: "Build and release" -> "Run workflow".
+# The version comes from <Version> in Limber/Limber.csproj; raise it before each new release.
+
+name: Build and release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    # Must run on a branch (not a tag): it commits repo.json back to that branch.
+    if: github.ref_type == 'branch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Limber/Limber.csproj -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value
+          $short = (($v -split '\.')[0..2]) -join '.'
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "tag=v$short" >> $env:GITHUB_OUTPUT
+
+      - name: Download Dalamud (needed to build the FFXIV plugin)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile dalamud.zip
+          Expand-Archive -Path dalamud.zip -DestinationPath "$env:AppData\XIVLauncher\addon\Hooks\dev" -Force
+          # Stop if the published Dalamud has moved past API 15 (the plugin would need updating first).
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/version -OutFile dver.json
+          $dv = (Get-Content dver.json -Raw | ConvertFrom-Json).AssemblyVersion
+          Write-Host "Dalamud $dv"
+          if (-not $dv.StartsWith('15.')) { throw "Dalamud is $dv, expected API 15 - update Limber for the new API first." }
+
+      - name: Build FFXIV plugin
+        run: dotnet build Limber/Limber.csproj -c Release -p:LimberVideoModels=false
+
+      - name: Build Koikatsu plugin
+        run: dotnet build Limber.Koikatsu/Limber.Koikatsu.csproj -c Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/kk/BepInEx/plugins/Limber | Out-Null
+          Copy-Item Limber.Koikatsu/bin/KK/Limber.Koikatsu.dll out/kk/BepInEx/plugins/Limber/
+          Compress-Archive -Path out/kk/BepInEx -DestinationPath out/Limber.Koikatsu.zip -Force
+          $zip = Get-ChildItem Limber/bin -Recurse -Filter latest.zip | Select-Object -First 1
+          if (-not $zip) { throw "latest.zip not found - the FFXIV build didn't package" }
+          Copy-Item $zip.FullName out/latest.zip
+          Copy-Item (Join-Path $zip.DirectoryName 'Limber.json') out/Limber.json
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Limber ${{ steps.version.outputs.tag }}
+          make_latest: true
+          body: |
+            **FFXIV:** in game, `/xlsettings` > Experimental > Custom Plugin Repositories, add
+            `https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/repo.json`,
+            tick it, Save, then install **Limber** from `/xlplugins`.
+
+            **Koikatsu:** download `Limber.Koikatsu.zip` below and unzip it into your Koikatsu folder
+            (the one with `Koikatu.exe` / `CharaStudio.exe`). It goes to `BepInEx\plugins\Limber`.
+            Only needed to mirror Koikatsu characters; needs BepInEx and KKAPI (any HF Patch / BetterRepack has them).
+          files: |
+            out/latest.zip
+            out/Limber.Koikatsu.zip
+
+      - name: Update repo.json and README link
+        shell: pwsh
+        env:
+          LIMBER_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python .github/scripts/make_repo_json.py out/Limber.json repo.json
+          if ($LASTEXITCODE) { throw "make_repo_json.py failed" }
+          $url = "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/repo.json"
+          (Get-Content README.md -Raw).Replace('{{REPO_JSON_URL}}', $url) | Set-Content README.md -NoNewline -Encoding utf8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repo.json README.md
+          if ($LASTEXITCODE) { throw "git add failed" }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 1) {
+            git commit -m "Release ${{ steps.version.outputs.tag }}"
+            if ($LASTEXITCODE) { throw "git commit failed" }
+            git push origin "HEAD:${{ github.ref_name }}"
+            if ($LASTEXITCODE) { throw "git push failed" }
+          } elseif ($LASTEXITCODE -ne 0) { throw "git diff failed" }
+          exit 0

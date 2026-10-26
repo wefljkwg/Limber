@@ -1,0 +1,19 @@
+# Build output (contains machine-specific paths)
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+*.DotSettings.user
+# Local packaging
+*.zip
+build.local.txt
+# Downloaded at build time
+Limber/Video/Models/
+__pycache__/
+# Personal / local files (never uploaded)
+Backups/
+*.glb
+*.limberclip
+video-mocap-report.md
