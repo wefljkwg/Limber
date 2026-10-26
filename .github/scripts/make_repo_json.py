@@ -19,6 +19,18 @@ version = manifest.get("AssemblyVersion") or os.environ["LIMBER_VERSION"]
 
 download = f"https://github.com/{repo}/releases/latest/download/latest.zip"
 
+
+def newest_changes(path="CHANGELOG.md"):
+    """The newest version's entry in CHANGELOG.md (shown in Dalamud's plugin installer), or ""."""
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    parts = text.split("\n## ")
+    return parts[1].split("\n", 1)[1].strip() if len(parts) > 1 and "\n" in parts[1] else ""
+
+
 entry = {
     "Author": manifest.get("Author", ""),
     "Name": manifest["Name"],
@@ -36,6 +48,7 @@ entry = {
     "CanUnloadAsync": manifest.get("CanUnloadAsync", False),
     "LoadPriority": manifest.get("LoadPriority", 0),
     "AcceptsFeedback": False,
+    "Changelog": newest_changes(),
     "RepoUrl": f"https://github.com/{repo}",
     "IsHide": False,
     "IsTestingExclusive": False,

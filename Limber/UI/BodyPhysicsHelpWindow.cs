@@ -25,8 +25,7 @@ public sealed class BodyPhysicsHelpWindow : Window
             "1. Penumbra, with a body mod on your character (for example Bibo+, RUEXB+, YAB, TBSE...).",
             "2. A skeleton mod with IVCS or YAS bones, which almost every body mod asks for anyway. Without one there are no " +
             "butt or genital bones to move (the chest still works).",
-            "3. An adult character. Body physics never works on Lalafell or child characters.",
-            "4. GPose (or \"Also run outside GPose\" turned on in Settings > Advanced).",
+            "3. GPose (or \"Also run outside GPose\" turned on in Settings > Advanced).",
         ]),
         ("Step by step", "Setting it up (once)",
         [

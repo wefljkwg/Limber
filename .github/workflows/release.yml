@@ -67,6 +67,22 @@ jobs:
           if (-not $zip) { throw "latest.zip not found - the FFXIV build didn't package" }
           Copy-Item $zip.FullName out/latest.zip
           Copy-Item (Join-Path $zip.DirectoryName 'Limber.json') out/Limber.json
+          # Release notes: how to install, then this version's entry from CHANGELOG.md.
+          $repoJson = "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/repo.json"
+          $notes = @(
+            "**FFXIV:** in game, ``/xlsettings`` > Experimental > Custom Plugin Repositories, add",
+            "``$repoJson``, tick it, Save, then install **Limber** from ``/xlplugins``.",
+            "",
+            "**Koikatsu (optional):** download ``Limber.Koikatsu.zip`` below and unzip it into your Koikatsu folder",
+            "(the one with ``Koikatu.exe`` / ``CharaStudio.exe``). It goes to ``BepInEx\plugins\Limber``.",
+            "Only needed to mirror Koikatsu characters; needs BepInEx and KKAPI (any HF Patch / BetterRepack has them).",
+            "")
+          $log = Get-Content CHANGELOG.md -Raw
+          $tag = "${{ steps.version.outputs.tag }}"
+          $m = [regex]::Match($log, "(?ms)^## $([regex]::Escape($tag))\s*\r?\n(.*?)(?=^## |\z)")
+          if ($m.Success) { $notes += "## What's new in $tag"; $notes += ""; $notes += $m.Groups[1].Value.Trim() }
+          else { Write-Warning "CHANGELOG.md has no '## $tag' entry" }
+          $notes -join "`n" | Set-Content out/notes.md -Encoding utf8
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -74,14 +90,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Limber ${{ steps.version.outputs.tag }}
           make_latest: true
-          body: |
-            **FFXIV:** in game, `/xlsettings` > Experimental > Custom Plugin Repositories, add
-            `https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/repo.json`,
-            tick it, Save, then install **Limber** from `/xlplugins`.
-
-            **Koikatsu:** download `Limber.Koikatsu.zip` below and unzip it into your Koikatsu folder
-            (the one with `Koikatu.exe` / `CharaStudio.exe`). It goes to `BepInEx\plugins\Limber`.
-            Only needed to mirror Koikatsu characters; needs BepInEx and KKAPI (any HF Patch / BetterRepack has them).
+          body_path: out/notes.md
           files: |
             out/latest.zip
             out/Limber.Koikatsu.zip
