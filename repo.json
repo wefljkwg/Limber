@@ -23,11 +23,12 @@
     "CanUnloadAsync": false,
     "LoadPriority": -100,
     "AcceptsFeedback": false,
+    "Changelog": "- New plugin description in Dalamud's plugin list, covering what Limber does today.",
     "RepoUrl": "https://github.com/wefljkwg/Limber",
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1793034583,
+    "LastUpdate": 1793035445,
     "DownloadLinkInstall": "https://github.com/wefljkwg/Limber/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/wefljkwg/Limber/releases/latest/download/latest.zip",
     "DownloadLinkTesting": "https://github.com/wefljkwg/Limber/releases/latest/download/latest.zip"
