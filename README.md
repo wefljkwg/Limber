@@ -6,7 +6,7 @@
 1. In game, type `/xlsettings` and open the **Experimental** tab.
 2. Under **Custom Plugin Repositories**, paste this link, tick the box next to it, and click **Save and Close**:
 
-       {{REPO_JSON_URL}}
+       https://raw.githubusercontent.com/wefljkwg/Limber/main/repo.json
 
 3. Type `/xlplugins`, search for **Limber**, and click **Install**.
 4. Type `/limber` to open it.

@@ -1,0 +1,35 @@
+[
+  {
+    "Author": "Limber contributors",
+    "Name": "Limber",
+    "InternalName": "Limber",
+    "AssemblyVersion": "0.59.2.0",
+    "TestingAssemblyVersion": "0.59.2.0",
+    "Punchline": "IK posing with on-body handles, plus a live link that mirrors Koikatsu poses, faces and animation.",
+    "Description": "Limber adds inverse kinematics posing on top of whatever pose a character already has.\n- Drag on-body handles: hands and feet bend the arm or leg, elbows and knees swing the limb, head and chest bend the spine, hips move the body\n- Pin hands and feet in place while the rest of the body moves\n- Rotation gizmo on the selected handle\n- Attach a bone to a bone on another character\n- Works in GPose and, optionally, outside it\nKoikatsu link (formerly KoiPoseLink): live-mirror up to 8 Koikatsu characters' pose, face and animation onto characters of any race, with optional private two-player sync. Needs the Limber Koikatsu sender plugin in Koikatsu.\nVideo tab: track a person's movement in a video file (body, optionally fingers) and play it on any character, with an accurate whole-body 3D model that runs on your graphics card.\nVLC Live tab: the character follows whatever VLC is playing, live.\nEverything happens on your PC and your screen only.",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "gpose",
+      "posing",
+      "ik",
+      "koikatsu",
+      "animation",
+      "mocap"
+    ],
+    "DalamudApiLevel": 15,
+    "TestingDalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": -100,
+    "AcceptsFeedback": false,
+    "RepoUrl": "https://github.com/wefljkwg/Limber",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadCount": 0,
+    "LastUpdate": 1793032626,
+    "DownloadLinkInstall": "https://github.com/wefljkwg/Limber/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/wefljkwg/Limber/releases/latest/download/latest.zip",
+    "DownloadLinkTesting": "https://github.com/wefljkwg/Limber/releases/latest/download/latest.zip"
+  }
+]
