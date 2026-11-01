@@ -7,18 +7,574 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Newtonsoft.Json.Linq;
 
 namespace Limber.UI;
 
 // The pages the main window's list opens (each one part of what used to be the Limber tab), and Bone scale.
 public sealed partial class LimberTab
 {
-    /// <summary>Pose page: the posing switch, then grabbing and holding bones.</summary>
+    /// <summary>Freeze motion and pose files (set by the plugin).</summary>
+    public Limber.Rig.MotionFreeze? Freeze { get; set; }
+    /// <summary>Motion devices: letting go of a bone one moves turns the device off (or it takes hold again).</summary>
+    public Limber.Rig.MotionService? Motions { get; set; }
+
+    private readonly Dalamud.Interface.ImGuiFileDialog.FileDialogManager _poseFiles = new();
+    private volatile string? _poseStatus;
+    private (ushort Id, string Key)? _poseAnimation;
+    private bool _poseDuo;
+    private bool _poseOral; // a duo pose that's an Oral scene: saves Oral's settings, and starts Oral when loaded
+    private ActorRef _posePartner;
+    private bool _importPositions;
+
+    /// <summary>The file pickers (drawn every frame by the main window, whichever page is open).</summary>
+    public void DrawDialogs()
+    {
+        ReceiveFromSync();
+        if(System.Threading.Interlocked.Exchange(ref _pendingExport, null) is { } export)
+        {
+            var (text, name) = export;
+            _poseStatus = "Choose where to save it.";
+            _poseFiles.SaveFileDialog("Save the pose", "Pose files{.pose},.*", name, ".pose", (ok, path) =>
+            {
+                if(!ok || string.IsNullOrEmpty(path))
+                {
+                    _poseStatus = null;
+                    return;
+                }
+                try
+                {
+                    System.IO.File.WriteAllText(path, text);
+                    _poseStatus = "Saved " + System.IO.Path.GetFileName(path) + ".";
+                }
+                catch(Exception e)
+                {
+                    _poseStatus = "Couldn't save: " + e.Message;
+                }
+            }, PoseFolder());
+        }
+        _poseFiles.Draw();
+    }
+
+    private Tuple<string, string>? _pendingExport;
+
+    /// <summary>The "Freeze motion" toggle at the top of the window (for the chosen character).</summary>
+    public void DrawFreezeToggle()
+    {
+        if(Freeze == null)
+            return;
+        var actor = _selection.Actor;
+        using(ImRaii.Disabled(!actor.IsSet))
+        {
+            bool frozen = actor.IsSet && Freeze.IsFrozen(actor.Address);
+            if(ImGui.Checkbox("Freeze motion###limber_freeze", ref frozen))
+            {
+                if(frozen)
+                    Freeze.Freeze(actor.Address, actor.ObjectIndex);
+                else
+                    Freeze.Resume(actor.Address);
+            }
+        }
+        Tooltip("Holds the chosen character exactly as they are now: animation, face, hair and clothes stop moving.\n" +
+                "Posing, body shape and the soft bodies still work on top. Untick to let the animation play again.");
+        int others = Freeze.Count - (actor.IsSet && Freeze.IsFrozen(actor.Address) ? 1 : 0);
+        if(others > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled($"(+{others} more)");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Resume all###limber_freeze_all"))
+                Freeze.ResumeAll();
+            Tooltip("Lets every frozen character move again.");
+        }
+    }
+
+    /// <summary>Pose page: the posing switch, pose files, then grabbing and holding bones.</summary>
     public void DrawPosePage()
     {
         DrawGeneral();
+        bool faceBones = _config.ShowFaceBones;
+        if(ImGui.Checkbox("Face bones###limber_face_dots", ref faceBones))
+        {
+            _config.ShowFaceBones = faceBones;
+            _config.Save();
+        }
+        Tooltip("Small dots on the face: brows, eyelids, eyes, cheeks, lips, jaw and tongue.\n" +
+                "Drag one to move it, or select it and use the gizmo to turn it (eyes, eyelids, jaw).\n" +
+                "Tip: Freeze motion first, so the animation's own expression doesn't fight you.");
         ImGui.Spacing();
+        DrawPoseFiles();
         DrawPoseTab();
+    }
+
+    private static string PoseFolder()
+    {
+        var dir = System.IO.Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "Poses");
+        try
+        {
+            System.IO.Directory.CreateDirectory(dir);
+        }
+        catch
+        {
+            // (the picker opens wherever it can)
+        }
+        return dir;
+    }
+
+    private void DrawPoseFiles()
+    {
+        if(Freeze == null || !ImGui.CollapsingHeader("Pose files (export / import)###limber_pose_files"))
+            return;
+        var actor = _selection.Actor;
+        using(ImRaii.Disabled(!actor.IsSet))
+        {
+            if(ImGui.Button("Export pose...###limber_pose_export"))
+            {
+                if(_poseDuo)
+                    ExportDuo(actor);
+                else
+                {
+                var who = actor;
+                _poseStatus = "Reading the pose...";
+                Freeze.Export(who.Address, who.ObjectIndex, (json, error) =>
+                {
+                    if(json == null)
+                    {
+                        _poseStatus = error;
+                        return;
+                    }
+                    // (this runs in the bone update: the save picker opens on the next window frame)
+                    _pendingExport = Tuple.Create(json.ToString(Newtonsoft.Json.Formatting.Indented), string.IsNullOrEmpty(who.Name) ? "pose" : who.Name);
+                });
+                }
+            }
+            Tooltip("Saves the chosen character's pose as you see it (body, face and hair) as a .pose file.\nBrio and Ktisis can load it too.");
+            ImGui.SameLine();
+            if(ImGui.Button("Import pose...###limber_pose_import"))
+            {
+                var who = actor;
+                bool positions = _importPositions;
+                _poseFiles.OpenFileDialog("Load a pose", "Pose files{.pose},.*", (ok, paths) =>
+                {
+                    if(!ok || paths.Count == 0)
+                        return;
+                    try
+                    {
+                        var text = System.IO.File.ReadAllText(paths[0]);
+                        if(IsDuo(text))
+                        {
+                            if(Partner(who) is not { } second)
+                            {
+                                _poseStatus = "That's a duo pose: choose Duo and the partner first.";
+                                return;
+                            }
+                            if(ImportDuo(who, second, text, positions))
+                                ShareWithSync(text, who, second, positions);
+                            return;
+                        }
+                        if(ImportSolo(who, text, positions))
+                            ShareWithSync(text, who, null, positions);
+                    }
+                    catch(Exception e)
+                    {
+                        _poseStatus = "Couldn't read the file: " + e.Message;
+                    }
+                }, 1, PoseFolder());
+            }
+            Tooltip("Puts a .pose file (Limber, Brio or Ktisis) on the chosen character and holds it (Freeze motion goes on).");
+        }
+        // Solo or duo: a duo saves (and loads) the partner too, where they stand against each other, both animations and
+        // every bone attached between the two.
+        if(ImGui.RadioButton("Solo###limber_pose_solo", !_poseDuo))
+            _poseDuo = false;
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Duo###limber_pose_duo", _poseDuo))
+            _poseDuo = true;
+        Tooltip("Duo: the pose file holds both characters (poses, animations, where they stand against each other and the bones "
+            + "attached between them). Loading one puts it all back on the chosen character and the partner.");
+        if(_poseDuo)
+        {
+            var others = _selection.ListCharacters().Where(c => c.Address != actor.Address).ToList();
+            int current = others.FindIndex(c => c.ObjectIndex == _posePartner.ObjectIndex && c.Name == _posePartner.Name);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            if(ImGui.BeginCombo("Partner###limber_pose_partner", current >= 0 ? others[current].Label : "(choose)"))
+            {
+                for(int i = 0; i < others.Count; i++)
+                    if(ImGui.Selectable($"{others[i].Label}###limber_pose_partner_{i}", i == current))
+                        _posePartner = others[i];
+                ImGui.EndCombo();
+            }
+            Tooltip("The other character in the duo pose.");
+            ImGui.SameLine();
+            ImGui.Checkbox("Oral###limber_pose_oral", ref _poseOral);
+            Tooltip("An Oral scene: the duo file also keeps Oral's settings (motion, head, mouth, lips...) and who is the mouth, "
+                + "and loading it starts Oral on the two with them. Loading a file saved with Oral starts it whether this is ticked or not.");
+        }
+        ImGui.Checkbox("Import positions too (same body)###limber_pose_positions", ref _importPositions);
+        Tooltip("Off (recommended): only the turns are used, so the pose fits any body and race (the hips still go where the file has them, "
+                + "so two characters line up as they were).\n" +
+                "On: every bone also goes exactly where the file has it; use it for a pose made on this same character.");
+        if(!actor.IsSet)
+            ImGui.TextDisabled("Choose a character first.");
+        else if(_poseStatus is { } status)
+            ImGui.TextDisabled(status);
+        if(actor.IsSet && _poseAnimation is { } anim)
+        {
+            ImGui.TextDisabled($"Saved on the animation: {(anim.Key.Length > 0 ? anim.Key : "#" + anim.Id)}");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Play it###limber_pose_play_anim"))
+                _poseStatus = Limber.Rig.Animations.Play(actor.Address, actor.ObjectIndex, anim.Id);
+            Tooltip("Plays the game animation the pose was saved on (untick Freeze motion to see it move).");
+        }
+        ImGui.Spacing();
+    }
+
+    // ---- Duo pose files
+
+    private static bool IsDuo(string json)
+    {
+        try
+        {
+            return Newtonsoft.Json.Linq.JObject.Parse(json)["TypeName"]?.Value<string>() == "Limber Duo Pose";
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private ActorRef? Partner(ActorRef actor)
+    {
+        foreach(var c in _selection.ListCharacters())
+            if(c.Address != actor.Address && c.ObjectIndex == _posePartner.ObjectIndex && c.Name == _posePartner.Name)
+                return c;
+        return null;
+    }
+
+    private static Newtonsoft.Json.Linq.JArray V3(Vector3 v) => new(v.X, v.Y, v.Z);
+    private static Newtonsoft.Json.Linq.JArray Q4(Quaternion q) => new(q.X, q.Y, q.Z, q.W);
+    private static Vector3 ReadV3(Newtonsoft.Json.Linq.JToken? t) => t is Newtonsoft.Json.Linq.JArray a && a.Count >= 3
+        ? new Vector3(a[0].Value<float>(), a[1].Value<float>(), a[2].Value<float>()) : Vector3.Zero;
+    private static Quaternion ReadQ4(Newtonsoft.Json.Linq.JToken? t) => t is Newtonsoft.Json.Linq.JArray a && a.Count >= 4
+        ? Quaternion.Normalize(new Quaternion(a[0].Value<float>(), a[1].Value<float>(), a[2].Value<float>(), a[3].Value<float>())) : Quaternion.Identity;
+
+    private static bool Root(ActorRef who, out Vector3 position, out Quaternion rotation)
+    {
+        position = Vector3.Zero;
+        rotation = Quaternion.Identity;
+        if(!Limber.Core.ActorSkeleton.TryGet(who.Address, who.ObjectIndex, new Limber.Core.SkeletonInfoCache(), out var sk) || sk.Info.Count == 0)
+            return false;
+        // Where the character really is drawn: its skeleton's root bone in the world, so Limber's own move / turn
+        // (Move character, done on the skeleton) counts too, not just where the game has the character.
+        var root = sk.GetModelFrame(0);
+        position = sk.ModelToWorldPoint(root.Position);
+        rotation = sk.ModelToWorldRotation(root.Rotation);
+        return Limber.Core.MathUtil.IsFinite(position) && Limber.Core.MathUtil.IsFinite(rotation);
+    }
+
+    // Both characters' poses (next frame), where they stand against each other, and the bones attached between them.
+    private void ExportDuo(ActorRef first)
+    {
+        if(Freeze == null)
+            return;
+        if(Partner(first) is not { } second)
+        {
+            _poseStatus = "Choose the partner first.";
+            return;
+        }
+        if(!Root(first, out var pa, out var ra) || !Root(second, out var pb, out var rb))
+        {
+            _poseStatus = "Can't read where the two characters are.";
+            return;
+        }
+        var inverse = Quaternion.Inverse(ra);
+        var relative = new Newtonsoft.Json.Linq.JObject
+        {
+            ["Position"] = V3(Vector3.Transform(pb - pa, inverse)),
+            ["Rotation"] = Q4(Quaternion.Normalize(inverse * rb)),
+        };
+        var attachments = new Newtonsoft.Json.Linq.JArray();
+        lock(_rigs.Sync)
+        {
+            foreach(var (who, other, tag) in new[] { (first, second, "First"), (second, first, "Second") })
+            {
+                var rig = _rigs.GetRig(who.Address);
+                if(rig == null)
+                    continue;
+                foreach(var g in rig.Goals)
+                    if(g.Space == GoalSpace.Attached && g.ParentActor == other.Address && g.ParentBone != null && g.HasTarget)
+                        attachments.Add(new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["Who"] = tag,
+                            ["Bone"] = g.Bone,
+                            ["ParentBone"] = g.ParentBone,
+                            ["Position"] = V3(g.Local.Position),
+                            ["Rotation"] = Q4(g.Local.Rotation),
+                            ["HoldPosition"] = g.HoldPosition,
+                            ["LockRotation"] = g.LockRotation,
+                            ["Enabled"] = g.Enabled,
+                        });
+            }
+        }
+        // An Oral scene: its settings (without who's in it) and which of the two is the mouth.
+        JObject? oral = null;
+        if(_poseOral)
+        {
+            var settings = _config.Oral ??= new OralSettings();
+            var saved = JObject.FromObject(settings);
+            foreach(var key in new[] { "Giver", "GiverIndex", "Receiver", "ReceiverIndex", "Enabled" })
+                saved.Remove(key);
+            bool secondIsMouth = settings.Giver == second.Name && settings.Receiver == first.Name;
+            oral = new JObject { ["Mouth"] = secondIsMouth ? "Second" : "First", ["Settings"] = saved };
+        }
+        _poseStatus = "Reading both poses...";
+        var gate = new object();
+        Newtonsoft.Json.Linq.JObject? poseA = null, poseB = null;
+        string name = $"{(string.IsNullOrEmpty(first.Name) ? "first" : first.Name)} & {(string.IsNullOrEmpty(second.Name) ? "second" : second.Name)} (duo)";
+        void Finish()
+        {
+            if(poseA == null || poseB == null)
+                return;
+            var duo = new Newtonsoft.Json.Linq.JObject
+            {
+                ["FileExtension"] = ".pose",
+                ["TypeName"] = "Limber Duo Pose",
+                ["FileVersion"] = 1,
+                ["First"] = poseA,
+                ["Second"] = poseB,
+                ["SecondFromFirst"] = relative,
+                ["Attachments"] = attachments,
+            };
+            if(oral != null)
+                duo["Oral"] = oral;
+            _pendingExport = Tuple.Create(duo.ToString(Newtonsoft.Json.Formatting.Indented), name);
+        }
+        Freeze.Export(first.Address, first.ObjectIndex, (json, error) =>
+        {
+            if(json == null)
+            {
+                _poseStatus = error;
+                return;
+            }
+            lock(gate)
+            {
+                poseA = json;
+                Finish();
+            }
+        });
+        Freeze.Export(second.Address, second.ObjectIndex, (json, error) =>
+        {
+            if(json == null)
+            {
+                _poseStatus = error;
+                return;
+            }
+            lock(gate)
+            {
+                poseB = json;
+                Finish();
+            }
+        });
+    }
+
+    // A plain pose file on one character (and the animation it was made on, offered).
+    private bool ImportSolo(ActorRef who, string text, bool positions)
+    {
+        if(Freeze == null)
+            return false;
+        var bones = Limber.Rig.MotionFreeze.ReadFile(text, out var error);
+        _poseAnimation = Limber.Rig.MotionFreeze.ReadAnimation(text);
+        if(bones == null)
+        {
+            _poseStatus = error;
+            return false;
+        }
+        _poseStatus = "Loading the pose...";
+        Freeze.Import(who.Address, who.ObjectIndex, bones, positions, message => _poseStatus = message);
+        return true;
+    }
+
+    // ---- Sync: a pose file loaded here loads on the synced partner's screen too (and theirs here)
+
+    /// <summary>The Koikatsu link (for the Sync tab's session); set by the plugin.</summary>
+    public Limber.Koi.KoiLink? SyncLink { get; set; }
+
+    // Which synced character an actor is: 0 = me, 1 = my sync partner, 255 = neither.
+    private int SyncRole(ActorRef actor)
+    {
+        var link = SyncLink;
+        if(link == null || actor.Address == 0)
+            return 255;
+        if(actor.Address == link.SyncSelf.Address)
+            return 0;
+        if(actor.Address == link.SyncPartner.Address)
+            return 1;
+        return 255;
+    }
+
+    private void ShareWithSync(string text, ActorRef first, ActorRef? second, bool positions)
+    {
+        var link = SyncLink;
+        if(link == null || link.Sync.State != Limber.Koi.Sync.SyncSession.Phase.Active)
+            return;
+        int a = SyncRole(first), b = second is { } s2 ? SyncRole(s2) : 255;
+        if(a == 255 || (second != null && b == 255))
+        {
+            _poseStatus += " (Not sent to your sync partner: it's only shared when it's on you and your partner.)";
+            return;
+        }
+        if(link.Sync.SendPoseFile(text, a, b, positions))
+            _poseStatus += " Sent to your sync partner.";
+    }
+
+    // A pose file the sync partner loaded: on the same characters here (their character = my partner, mine = me).
+    private void ReceiveFromSync()
+    {
+        var link = SyncLink;
+        if(link == null || Freeze == null || link.Sync.TakePoseFile() is not { } m)
+            return;
+        ActorRef? Who(int role)
+        {
+            // (sent from their side: 0 = their character = my partner here; 1 = my character)
+            var (address, index) = role == 0 ? link.SyncPartner : role == 1 ? link.SyncSelf : default;
+            if(address == 0)
+                return null;
+            foreach(var c in _selection.ListCharacters())
+                if(c.Address == address)
+                    return c;
+            return new ActorRef(address, index, "");
+        }
+        try
+        {
+            if(Who(m.First) is not { } first)
+                return;
+            if(IsDuo(m.Json))
+            {
+                if(Who(m.Second) is { } second)
+                    ImportDuo(first, second, m.Json, m.Positions);
+            }
+            else
+                ImportSolo(first, m.Json, m.Positions);
+            _poseStatus = "From your sync partner: " + _poseStatus;
+        }
+        catch(Exception e)
+        {
+            _poseStatus = "Couldn't load your sync partner's pose: " + e.Message;
+        }
+    }
+
+    // A duo file back on the chosen character and the partner: poses, where the partner stands, animations, attachments.
+    private bool ImportDuo(ActorRef first, ActorRef second, string text, bool positions)
+    {
+        if(Freeze == null)
+            return false;
+        var root = Newtonsoft.Json.Linq.JObject.Parse(text);
+        if(root["First"] is not Newtonsoft.Json.Linq.JObject a || root["Second"] is not Newtonsoft.Json.Linq.JObject b)
+        {
+            _poseStatus = "The duo pose file is missing a character.";
+            return false;
+        }
+        var bonesA = Limber.Rig.MotionFreeze.ReadFile(a.ToString(), out var errorA);
+        var bonesB = Limber.Rig.MotionFreeze.ReadFile(b.ToString(), out var errorB);
+        if(bonesA == null || bonesB == null)
+        {
+            _poseStatus = bonesA == null ? errorA : errorB;
+            return false;
+        }
+
+        // Where the partner stands against the chosen character (moved with Limber's move / turn).
+        if(Actors != null && root["SecondFromFirst"] is Newtonsoft.Json.Linq.JObject rel
+           && Root(first, out var pa, out var ra) && Root(second, out var pb, out var rb))
+        {
+            var wantPosition = pa + Vector3.Transform(ReadV3(rel["Position"]), ra);
+            var wantRotation = Quaternion.Normalize(ra * ReadQ4(rel["Rotation"]));
+            static float Yaw(Quaternion q)
+            {
+                var f = Vector3.Transform(Vector3.UnitZ, q);
+                return MathF.Atan2(f.X, f.Z) * 180f / MathF.PI;
+            }
+            float turn = Yaw(wantRotation) - Yaw(rb);
+            while(turn > 180f) turn -= 360f;
+            while(turn < -180f) turn += 360f;
+            var offset = Actors.GetOrAdd(second.Address, second.ObjectIndex);
+            lock(Actors.Sync)
+            {
+                offset.Move += wantPosition - pb;
+                offset.Turn = new Vector3(offset.Turn.X + turn, offset.Turn.Y, offset.Turn.Z);
+            }
+        }
+
+        // The poses (held), and the animations they were made on.
+        Freeze.Import(first.Address, first.ObjectIndex, bonesA, positions, message => _poseStatus = message);
+        Freeze.Import(second.Address, second.ObjectIndex, bonesB, positions, _ => { });
+        foreach(var (who, pose) in new[] { (first, a), (second, b) })
+            if(Limber.Rig.MotionFreeze.ReadAnimation(pose.ToString()) is { } anim)
+                Limber.Rig.Animations.Play(who.Address, who.ObjectIndex, anim.Id);
+
+        // The attachments between the two.
+        int attached = 0;
+        if(root["Attachments"] is Newtonsoft.Json.Linq.JArray list)
+        {
+            lock(_rigs.Sync)
+            {
+                _rigs.Checkpoint();
+                foreach(var item in list.OfType<Newtonsoft.Json.Linq.JObject>())
+                {
+                    string? bone = item["Bone"]?.Value<string>(), parentBone = item["ParentBone"]?.Value<string>();
+                    if(bone == null || parentBone == null)
+                        continue;
+                    bool isFirst = item["Who"]?.Value<string>() != "Second";
+                    var who = isFirst ? first : second;
+                    var other = isFirst ? second : first;
+                    var rig = _rigs.GetOrCreateRig(who.Address, who.ObjectIndex, who.Name);
+                    var goal = rig.GetOrAdd(bone);
+                    goal.Space = GoalSpace.Attached;
+                    goal.ParentActor = other.Address;
+                    goal.ParentObjectIndex = other.ObjectIndex;
+                    goal.ParentActorName = other.Name;
+                    goal.ParentBone = parentBone;
+                    goal.HoldPosition = item["HoldPosition"]?.Value<bool>() ?? true;
+                    goal.LockRotation = item["LockRotation"]?.Value<bool>() ?? true;
+                    goal.Enabled = item["Enabled"]?.Value<bool>() ?? true;
+                    goal.Local = new Limber.Core.Frame { Position = ReadV3(item["Position"]), Rotation = ReadQ4(item["Rotation"]) };
+                    goal.HasTarget = true;
+                    goal.CapturePosition = false;
+                    goal.CaptureRotation = false;
+                    attached++;
+                }
+            }
+        }
+        // An Oral scene: Oral's settings back, and Oral started on the two.
+        bool oralOn = false;
+        if(root["Oral"] is JObject oral && oral["Settings"] is JObject saved)
+        {
+            var settings = _config.Oral ??= new OralSettings();
+            try
+            {
+                Newtonsoft.Json.JsonConvert.PopulateObject(saved.ToString(), settings);
+                if(Limber.Koi.Safety.AdultAllowed(first.Address) && Limber.Koi.Safety.AdultAllowed(second.Address))
+                {
+                    bool secondIsMouth = oral["Mouth"]?.Value<string>() == "Second";
+                    var mouth = secondIsMouth ? second : first;
+                    var partner = secondIsMouth ? first : second;
+                    settings.Giver = mouth.Name;
+                    settings.GiverIndex = mouth.ObjectIndex;
+                    settings.Receiver = partner.Name;
+                    settings.ReceiverIndex = partner.ObjectIndex;
+                    settings.Enabled = true;
+                    oralOn = true;
+                }
+                _config.Save();
+            }
+            catch(Exception e)
+            {
+                Plugin.Log.Information("Limber: couldn't read the duo pose's Oral settings: " + e.Message);
+            }
+        }
+        _poseStatus = $"Duo pose loaded on {first.Name} and {second.Name}" + (attached > 0 ? $", {attached} attachment{(attached == 1 ? "" : "s")}" : "")
+            + (oralOn ? ", Oral started" : "") + ".";
+        return true;
     }
 
     /// <summary>Hands page: preset finger poses.</summary>
@@ -45,6 +601,111 @@ public sealed partial class LimberTab
     public bool PosingHookReady => _rigs.HookReady;
 
     public bool HasCharacter => _selection.Actor.IsSet;
+
+    // ---- Actors (GPose actors added and removed)
+
+    /// <summary>Adds and removes GPose actors (set by the plugin).</summary>
+    public Limber.Rig.ActorSpawner? Spawner { get; set; }
+
+    private bool _spawnSamePlace;
+    private string? _spawnStatus;
+
+    public void DrawActorsPage()
+    {
+        if(Spawner == null)
+            return;
+        if(!Plugin.ClientState.IsGPosing)
+        {
+            ImGui.TextDisabled("Enter GPose to add actors. Actors added here go away when you leave GPose.");
+            return;
+        }
+        var chosen = _selection.Actor;
+        var me = Plugin.ObjectTable.LocalPlayer;
+
+        SeparatorText("Add an actor");
+        using(ImRaii.Disabled(!chosen.IsSet))
+        {
+            if(ImGui.Button("Copy of the chosen character###lmb_spawn_chosen"))
+            {
+                if(Plugin.ObjectTable.CreateObjectReference(chosen.Address) is Dalamud.Game.ClientState.Objects.Types.ICharacter c)
+                    Spawned(Spawner.Spawn(c, _spawnSamePlace));
+            }
+        }
+        Tooltip("A new actor that looks like the character chosen at the top (body, face, outfit).");
+        ImGui.SameLine();
+        using(ImRaii.Disabled(me == null))
+        {
+            if(ImGui.Button("Copy of me###lmb_spawn_me") && me != null)
+                Spawned(Spawner.Spawn(me, _spawnSamePlace));
+        }
+        Tooltip("A new actor that looks like your own character.");
+        ImGui.Checkbox("In the same spot###lmb_spawn_same", ref _spawnSamePlace);
+        Tooltip("Off: it appears a step in front of the one it copies. On: exactly where that one stands.");
+        if(_spawnStatus != null)
+            ImGui.TextDisabled(_spawnStatus);
+
+        SeparatorText($"Actors added by Limber ({Spawner.Made.Count})");
+        if(Spawner.Made.Count == 0)
+            ImGui.TextDisabled("None yet.");
+        else
+        {
+            ushort? remove = null;
+            using(var table = ImRaii.Table("###lmb_spawn_table", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            {
+                if(table.Success)
+                {
+                    foreach(var index in Spawner.Made)
+                    {
+                        var obj = Plugin.ObjectTable[index];
+                        using var id = ImRaii.PushId(index);
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        string name = obj == null ? "(gone)" : obj.Name.TextValue;
+                        bool selected = obj != null && chosen.Address == obj.Address;
+                        if(ImGui.Selectable($"{(name.Length > 0 ? name : "Added actor")}  #{index}", selected) && obj != null)
+                        {
+                            _selection.Select(ActorRef.From(obj));
+                            _config.FollowTarget = false;
+                            _config.Save();
+                        }
+                        ImGui.TableNextColumn();
+                        if(obj != null)
+                        {
+                            if(ImGui.SmallButton("Target"))
+                                Plugin.TargetManager.GPoseTarget = obj;
+                            Tooltip("Makes it the GPose target (and the character Limber works on, with Follow my target on).");
+                        }
+                        ImGui.TableNextColumn();
+                        if(ImGui.SmallButton("Remove"))
+                            remove = index;
+                    }
+                }
+            }
+            if(remove is { } r)
+            {
+                Freeze?.Resume(Plugin.ObjectTable[r]?.Address ?? 0);
+                Spawner.Despawn(r);
+            }
+            if(ImGui.Button("Remove all###lmb_spawn_clear"))
+            {
+                Freeze?.ResumeAll();
+                Spawner.DespawnAll();
+            }
+            Tooltip("Removes every actor Limber added (actors from other plugins are left alone).");
+        }
+        ImGui.Spacing();
+        ImGui.TextDisabled("Actors from other plugins (like Brio) aren't listed or removed here. All of them only exist on your screen.");
+    }
+
+    private void Spawned(int index)
+    {
+        if(index < 0)
+        {
+            _spawnStatus = Spawner?.LastError ?? "Couldn't add an actor.";
+            return;
+        }
+        _spawnStatus = $"Added actor #{index}. It appears in a moment.";
+    }
 
     // ---- Bone scale
 

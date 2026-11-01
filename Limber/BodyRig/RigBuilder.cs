@@ -179,7 +179,8 @@ public static class RigBuilder
     /// <summary>
     /// The skeleton the game would load for the player right now (Penumbra's active mods included); null if none.
     /// </summary>
-    private static byte[]? ReadActive(string gamePath, out string from)
+    /// <summary>A game file as your active mods have it (Penumbra), or the game's own.</summary>
+    public static byte[]? ReadActive(string gamePath, out string from)
     {
         from = "the game";
         try

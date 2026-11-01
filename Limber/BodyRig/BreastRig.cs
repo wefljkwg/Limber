@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Numerics;
 
@@ -39,6 +40,8 @@ public sealed class RigPart
     public required int Rows { get; init; }
     public required int Columns { get; init; }
     public required string[] Parents { get; init; }  // candidate parent bones, "{side}" = l / r, first found wins
+    /// <summary>The bones marked in the Renderer for this part first (other skeletons), then the ones Limber knows.</summary>
+    public string[] AllParents => SoftBoneMarks.ParentsFor(Key).Concat(Parents).Distinct().ToArray();
     public required Func<BreastRigShape> DefaultShape { get; init; }
     /// <summary>
     /// A lattice: a box of bones through the whole part, <see cref="Layers"/> layers of Rows x Columns deep (front
@@ -93,7 +96,7 @@ public sealed class RigPart
 
     public string? ParentBone(Func<string, bool> has, bool left)
     {
-        foreach (var pattern in Parents)
+        foreach (var pattern in AllParents)
         {
             var name = pattern.Replace("{side}", left ? "l" : "r");
             if (has(name))

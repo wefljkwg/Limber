@@ -32,6 +32,7 @@ public sealed class HandleOverlay
         public GoalSpace? Space;
         public bool GoalEnabled;
         public bool TurnOnly;   // only turned, not held in place (yellow)
+        public bool Fk;         // held by FK (purple)
     }
 
     private sealed class DragState
@@ -56,6 +57,13 @@ public sealed class HandleOverlay
     private string? _gizmoBone;
 
     public bool IsDragging => _drag != null;
+
+    /// <summary>The FK Posing page: while it's showing, dots only pick bones and the gizmo turns them with FK.</summary>
+    public FkPosingTab? FkEditor { get; set; }
+
+    private bool FkMode => FkEditor?.Showing == true;
+
+    private bool Posing => _config.Enabled && _config.ShowHandles && _rigs.IsActive;
 
     /// <summary>Another gizmo (a prop's) is in use this frame: don't draw the bone gizmo (one gizmo per frame).</summary>
     public Func<bool> SuppressGizmo = () => false;
@@ -91,7 +99,7 @@ public sealed class HandleOverlay
         BoneSnapshot? snapshot = null;
 
         bool preview = RigPreviewWanted && actor.IsSet;
-        bool show = actor.IsSet && (preview || (_config.Enabled && _config.ShowHandles && _rigs.IsActive
+        bool show = actor.IsSet && (preview || ((Posing || (FkMode && _config.ShowHandles))
             && !(_config.HideHandlesWithGameUi && _gameGui.GameUiHidden)));
 
         if(show)
@@ -109,7 +117,7 @@ public sealed class HandleOverlay
         if(_drag != null && _drag.Actor != actor.Address)
             _drag = null;
 
-        if(_config.Enabled && _config.ShowHandles && _rigs.IsActive)
+        if(Posing || (FkMode && _config.ShowHandles))
             BuildHandles(snapshot, actor);
         else
             _handles.Clear();
@@ -235,6 +243,9 @@ public sealed class HandleOverlay
                 IsMain = isMain,
             };
 
+            if(FkMode && FkEditor!.HasFk(actor.Name ?? "", bone))
+                view.Fk = true;
+
             if(goals != null && goals.TryGetValue(bone, out var state))
             {
                 view.Space = state.Space;
@@ -243,6 +254,18 @@ public sealed class HandleOverlay
             }
 
             _handles.Add(view);
+        }
+
+        void AddFace(string bone)
+        {
+            int before = _handles.Count;
+            Add(bone, false);
+            if(_handles.Count > before)
+            {
+                var view = _handles[^1];
+                view.Radius = MathF.Max(2.5f * scale, smallRadius * 0.6f);
+                _handles[^1] = view;
+            }
         }
 
         foreach(var handle in HandleCatalog.Handles)
@@ -256,7 +279,15 @@ public sealed class HandleOverlay
         if(_selection.Bone != null)
             Add(_selection.Bone, false);
 
-        if(_config.ShowAllBones)
+        // The face's bones (they're small and close together: smaller dots).
+        if(_config.ShowFaceBones)
+        {
+            foreach(var name in snapshot.Names)
+                if(HandleCatalog.IsFaceBone(name))
+                    AddFace(name);
+        }
+
+        if(_config.ShowAllBones || FkMode)
         {
             var names = snapshot.Info.Names;
             bool adult = Limber.Koi.Safety.AdultAllowed(actor.Address);
@@ -271,7 +302,7 @@ public sealed class HandleOverlay
         var drawList = ImGui.GetWindowDrawList();
         if(RigPreviewWanted && _rigPreview != null)
             DrawRigPreview(drawList, snapshot, _rigPreviewPart, _rigPreview);
-        if(!(_config.Enabled && _config.ShowHandles && _rigs.IsActive))
+        if(!(Posing || (FkMode && _config.ShowHandles)))
         {
             // Only here for the rig preview: no handles or gizmo.
             _hovered = -1;
@@ -311,7 +342,13 @@ public sealed class HandleOverlay
             {
                 var handle = _handles[_hovered];
 
-                if(ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                if(FkMode)
+                {
+                    // FK: a click only picks the bone (the gizmo turns it).
+                    if(ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                        _selection.Bone = handle.Bone;
+                }
+                else if(ImGui.IsMouseClicked(ImGuiMouseButton.Left))
                 {
                     _selection.Bone = handle.Bone;
                     StartDrag(actor, handle, mouse);
@@ -391,7 +428,9 @@ public sealed class HandleOverlay
     private static Vector4 HandleColor(in HandleView handle, bool hovered)
     {
         Vector4 color;
-        if(handle.Space == null)
+        if(handle.Fk && handle.Space == null)
+            color = new Vector4(0.75f, 0.45f, 1f, 0.95f);
+        else if(handle.Space == null)
             color = handle.IsMain ? new Vector4(1f, 1f, 1f, 0.85f) : new Vector4(0.85f, 0.85f, 0.9f, 0.65f);
         else if(!handle.GoalEnabled)
             color = new Vector4(0.55f, 0.55f, 0.55f, 0.85f);
@@ -514,8 +553,12 @@ public sealed class HandleOverlay
         }
     }
 
+    /// <summary>The motion devices (a bone one holds is let go by turning it off).</summary>
+    public MotionService? Motions { get; set; }
+
     public void Release(ActorRef actor, string bone)
     {
+        Motions?.StopFor(actor.Address, bone);
         lock(_rigs.Sync)
         {
             var rig = _rigs.GetRig(actor.Address);
@@ -530,6 +573,40 @@ public sealed class HandleOverlay
 
         if(_drag != null && _drag.Bone == bone)
             _drag = null;
+    }
+
+    // FK: the gizmo turns (or moves) the bone itself, stored relative to its parent on the FK Posing page.
+    private bool DrawFkGizmo(BoneSnapshot snapshot, ActorRef actor, string bone, Matrix4x4 matrix, Matrix4x4 view, Matrix4x4 projection,
+        ImGuizmoOperation operation, ImGuizmoMode mode, Vector2 viewportPos, Vector2 viewportSize)
+    {
+        var editor = FkEditor!;
+        ImGuizmo.BeginFrame();
+        ImGuizmo.SetID(GizmoId);
+        ImGuizmo.SetOrthographic(false);
+        ImGuizmo.SetDrawlist();
+        ImGuizmo.SetRect(viewportPos.X, viewportPos.Y, viewportSize.X, viewportSize.Y);
+        ImGuizmo.Enable(true);
+        if(ImGuizmo.Manipulate(ref view, ref projection, operation, mode, ref matrix))
+        {
+            editor.GizmoStart(actor.Name ?? "");
+            _gizmoTracking = matrix;
+            if(Matrix4x4.Decompose(matrix, out _, out var rotation, out var translation))
+            {
+                if(operation == ImGuizmoOperation.Translate)
+                    editor.SetFromWorld(actor, snapshot, bone, null, translation);
+                else
+                    editor.SetFromWorld(actor, snapshot, bone, Quaternion.Normalize(rotation), null);
+            }
+        }
+        bool usingGizmo = ImGuizmo.IsUsing();
+        bool overGizmo = ImGuizmo.IsOver();
+        if(!usingGizmo)
+        {
+            _gizmoTracking = null;
+            editor.GizmoEnd();
+        }
+        ImGuizmo.SetID(0);
+        return usingGizmo || overGizmo;
     }
 
     // ---- Gizmo on the selected handle: rotation rings or move arrows, on the bone's own axes or the world's
@@ -560,6 +637,8 @@ public sealed class HandleOverlay
         var mode = _config.GizmoWorldAxes ? ImGuizmoMode.World : ImGuizmoMode.Local;
 
         var matrix = _gizmoTracking ?? MathUtil.FrameMatrix(world);
+        if(FkMode)
+            return DrawFkGizmo(snapshot, actor, bone, matrix, view, projection, operation, mode, viewportPos, viewportSize);
 
         ImGuizmo.BeginFrame();
         ImGuizmo.SetID(GizmoId);

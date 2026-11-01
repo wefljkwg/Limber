@@ -17,3 +17,5 @@ Backups/
 *.glb
 *.limberclip
 video-mocap-report.md
+.bench/
+*.bak

@@ -168,7 +168,14 @@ public static class Solver
         int joint = info.JointParentOf(bone);
         while(joint >= 0 && joints.Count < length)
         {
+            // A spine bone bends the spine, never the hips (turning them twisted the hips and legs, and fought
+            // pinned hips): the chain stops above them. Only the lowest spine bone, with nothing else to bend,
+            // turns the hips.
+            if(info.Names[joint] == "j_kosi" && joints.Count > 0)
+                break;
             joints.Add(joint);
+            if(info.Names[joint] == "j_kosi")
+                break;
             joint = info.JointParentOf(joint);
         }
     }

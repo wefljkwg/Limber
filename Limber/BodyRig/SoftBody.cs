@@ -91,6 +91,7 @@ public sealed unsafe class SoftBody
         public long LastTicks;
         public Vector3 LastRoot;
         public int SeenFrame;
+        public Vector3 SacShift; // testicles: how far the whole sac is moved out of the way of props (eased)
     }
 
     private readonly struct Capsule
@@ -316,8 +317,72 @@ public sealed unsafe class SoftBody
                 }
             }
         }
+        SpreadPush(breast, start, nodes);
         for (int n = 0; n < Side; n++)
             start[n] += (nodes[n] - start[n]) * _boneStrength;
+    }
+
+    /// <summary>
+    /// The props' push on the lattice, made into a smooth dent: no bone pushed further than about a grid spacing,
+    /// spread a little onto its neighbours, and neighbours never differing by more than a share of their spacing.
+    /// Without this, a prop that arrives deep inside (a thigh collider swinging into the butt in a squat, say) shoves
+    /// single bones right out and the skin over them spikes.
+    /// </summary>
+    private void SpreadPush(Breast breast, Vector3[] start, Vector3[] nodes)
+    {
+        Span<Vector3> d = stackalloc Vector3[Side];
+        Span<Vector3> sum = stackalloc Vector3[Side];
+        Span<int> count = stackalloc int[Side];
+        float cap = SkinDepth(breast) * 2.5f;
+        bool any = false;
+        for (int i = 0; i < Side; i++)
+        {
+            d[i] = nodes[i] - start[i];
+            float len = d[i].Length();
+            if (len > cap && len > 1e-7f)
+                d[i] *= cap / len;
+            any |= len > 1e-7f;
+        }
+        if (!any)
+            return;
+        // spread onto the neighbours (each keeps most of its own)
+        for (int pass = 0; pass < 2; pass++)
+        {
+            sum.Clear();
+            count.Clear();
+            foreach (var (a, c) in Links)
+            {
+                sum[a] += d[c];
+                sum[c] += d[a];
+                count[a]++;
+                count[c]++;
+            }
+            for (int i = 0; i < Side; i++)
+                if (count[i] > 0)
+                {
+                    var avg = sum[i] / count[i];
+                    var blended = d[i] * 0.65f + avg * 0.35f;
+                    // a pushed bone stays at least as far out as its share of the spread (the dent doesn't vanish)
+                    d[i] = blended.LengthSquared() >= d[i].LengthSquared() * 0.5f ? blended : d[i] * 0.7f + avg * 0.3f;
+                }
+        }
+        // neighbours within a share of their spacing of each other: the surface dents, it doesn't fold or spike
+        for (int iteration = 0; iteration < 4; iteration++)
+            foreach (var (a, c) in Links)
+            {
+                float rest = Vector3.Distance(breast.Target[a], breast.Target[c]);
+                var diff = d[a] - d[c];
+                float len = diff.Length();
+                float allowed = rest * 0.45f;
+                if (len > allowed && len > 1e-6f)
+                {
+                    var fix = diff * ((len - allowed) / len * 0.5f);
+                    d[a] -= fix;
+                    d[c] += fix;
+                }
+            }
+        for (int i = 0; i < Side; i++)
+            nodes[i] = start[i] + (Mobility[i] > 1e-4f ? d[i] : Vector3.Zero); // (the back face stays on the body)
     }
 
     // address -> (bone, scale before Limber, scale Limber wrote) for the size fallback.
@@ -628,6 +693,25 @@ public sealed unsafe class SoftBody
         Span<Vector3> shown = stackalloc Vector3[Side]; // reused for both sides (no stackalloc inside the loop)
         Span<Vector3> turned = stackalloc Vector3[Side];
 
+        // Testicles: props (e.g. colliders on the thighs) move the whole sac out of their way first, together, rather
+        // than denting each side into a wider shape. Squeezed from both sides, it slides out forward (or down if
+        // something's in front too).
+        if (_part.GrowsFromTop)
+        {
+            var want = reset || !s.Enabled ? Vector3.Zero : SacEscape(state, size);
+            if (reset || !s.Enabled)
+                state.SacShift = Vector3.Zero;
+            else if (advance)
+            {
+                // Out quickly, back slowly.
+                bool outward = want.LengthSquared() > state.SacShift.LengthSquared();
+                float k = 1f - MathF.Exp(-dt / (outward ? 0.04f : 0.25f));
+                state.SacShift += (want - state.SacShift) * k;
+            }
+        }
+        else
+            state.SacShift = Vector3.Zero;
+
         var shifts = new Dictionary<string, Vector3>();
         foreach (var breast in new[] { state.Left, state.Right })
         {
@@ -709,6 +793,9 @@ public sealed unsafe class SoftBody
                 }
             }
             Goals(swung);
+            if (state.SacShift != Vector3.Zero)
+                for (int i = 0; i < Side; i++)
+                    breast.Goal[i] += state.SacShift * Mobility[i];
 
             // Pressed onto something flat or big (a box, a large collider, the floor): the breast flattens against
             // it (shorter out from the body, wider across it, keeping its volume) instead of being shoved back into
@@ -1237,6 +1324,94 @@ public sealed unsafe class SoftBody
     // A capsule this thick (m) or more flattens the breast like a box does; thinner ones dent it.
     private const float SquashThick = 0.08f;
 
+    /// <summary>
+    /// Testicles: how far to move the whole sac (both sides together, the top held: each point by its mobility) so
+    /// its surface is out of the props. Pushes from one side move it away from that side; pushes that cancel out
+    /// (a thigh on each side) mean it's squeezed, so it slides out forward instead, or down if something's in front.
+    /// </summary>
+    private Vector3 SacEscape(State state, float size)
+    {
+        if (_props.Length == 0)
+            return Vector3.Zero;
+        var middle = (state.Left.Origin + state.Right.Origin) * 0.5f;
+        if (!Axes(state.Left, middle, out _, out var up, out var forward))
+            return Vector3.Zero;
+        // The points: the surface points (or the grid points that move) of both sides, where the pose puts them.
+        var points = new List<(Vector3 At, float Mob)>();
+        foreach (var b in new[] { state.Left, state.Right })
+        {
+            if (_surface.Length > 0)
+                foreach (var sp in _surface)
+                {
+                    float mob = 0f;
+                    for (int k = 0; k < sp.Node.Length; k++)
+                        mob += Mobility[sp.Node[k]] * sp.W[k];
+                    if (mob >= 0.25f)
+                        points.Add((At(b.Target, sp), mob));
+                }
+            else
+                for (int i = 0; i < Side; i++)
+                    if (Mobility[i] >= 0.25f)
+                        points.Add((b.Target[i], Mobility[i]));
+        }
+        if (points.Count == 0)
+            return Vector3.Zero;
+        var centre = Vector3.Zero;
+        foreach (var (at, _) in points)
+            centre += at;
+        centre /= points.Count;
+
+        float maxShift = Math.Clamp(size * 2.5f, 0.02f, 0.15f);
+        var shift = Vector3.Zero;
+        for (int iteration = 0; iteration < 12; iteration++)
+        {
+            var sum = Vector3.Zero;
+            float magnitude = 0f;
+            int count = 0;
+            bool blockedAhead = false;
+            foreach (var (rest, mob) in points)
+            {
+                var point = rest + shift * mob;
+                foreach (var prop in _props)
+                {
+                    if (prop.BoneStrength <= 0f)
+                        continue;
+                    float radius = prop.Radius * prop.BoneStrength + SurfaceSkin;
+                    float dist = prop.Gap(point, out var core, out var n);
+                    if (dist >= radius)
+                        continue;
+                    if (n.LengthSquared() < 0.5f)
+                    {
+                        // Right on its centre line: out the way the sac's middle is from it.
+                        var away = centre + shift * 0.5f - core;
+                        n = away.LengthSquared() > 1e-10f ? Vector3.Normalize(away) : forward;
+                    }
+                    var push = prop.IsBox ? n * prop.Shape.Exit(point, n, radius) : core + n * radius - point;
+                    // The sac moves this point by mob of the shift: the shift it needs is push / mob.
+                    push /= MathF.Max(mob, 0.3f);
+                    sum += push;
+                    magnitude += push.Length();
+                    count++;
+                    if (Vector3.Dot(n, forward) < -0.5f)
+                        blockedAhead = true; // something in front pushing it back
+                }
+            }
+            if (count == 0)
+                break;
+            var net = sum / count;
+            // Pushes that cancel each other out: squeezed. Slide out (forward, or down when blocked in front).
+            float squeeze = MathF.Max(0f, magnitude / count - net.Length());
+            var slide = blockedAhead ? -up : forward;
+            shift += (net + slide * squeeze) * 0.6f;
+            float len = shift.Length();
+            if (len > maxShift)
+                shift *= maxShift / len;
+            if (!MathUtil.IsFinite(shift))
+                return Vector3.Zero;
+        }
+        return shift * _boneStrength;
+    }
+
     private void Squash(Breast breast, Vector3 pivot, float floor, bool useFloor, float dt)
     {
         var arm = Centre(breast.Goal) - pivot;
@@ -1257,7 +1432,7 @@ public sealed unsafe class SoftBody
                     strength = 1f;
                 }
             }
-        foreach (var prop in _props)
+        foreach (var prop in _part.GrowsFromTop ? Array.Empty<PropWorld>() : _props)
         {
             if (prop.BoneStrength <= 0f || (!prop.IsBox && prop.Radius < SquashThick))
                 continue;
@@ -1498,6 +1673,11 @@ public sealed unsafe class SoftBody
         if (dist >= minDist)
             return p;
         Vector3 normal = dist > 1e-6f ? d / dist : Vector3.Normalize(p - rest + new Vector3(0, 1e-4f, 0));
+        // Deep inside and on the far side of the axis from where it rests (the collider swung through it): out the
+        // way it rests, not straight through to the other side.
+        var restSide = rest - ClosestOnSegment(c.A, c.B, rest);
+        if (restSide.LengthSquared() > 1e-10f && Vector3.Dot(normal, restSide) < 0f)
+            normal = Vector3.Normalize(restSide);
         var pushed = closest + normal * minDist;
         float into = Vector3.Dot(velocity, normal);
         if (into < 0)

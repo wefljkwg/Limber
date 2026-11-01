@@ -24,7 +24,7 @@ public static unsafe partial class LiveSoftBody
 
         /// <summary>The settings one step uses (a copy, so the UI can change them while a step runs).</summary>
         public readonly record struct Tuning(float Strength, float Firm, float Home, float Damp, float ContactKeep, float BreastPush,
-            int Iterations, float Steadiness, float ImprintDepth, float ClingRange)
+            int Iterations, float Steadiness, float ImprintDepth, float ClingRange, float SideFirm, float MaxBulge, float Carry)
         {
             public static Tuning From(LiveMeshSettings s) => new(
                 Math.Clamp(s.Strength, 0f, 1f),
@@ -36,7 +36,10 @@ public static unsafe partial class LiveSoftBody
                 Math.Clamp(s.Accuracy, 2, 16),
                 Math.Clamp(s.Steadiness, 0f, 0.9f),
                 Math.Clamp(s.ImprintDepth, 0f, 10f) * 0.01f,
-                Math.Clamp(s.ClingRange, 0.2f, 15f) * 0.01f);
+                Math.Clamp(s.ClingRange, 0.2f, 15f) * 0.01f,
+                Math.Clamp(s.SideFirmness, 0f, 1f),
+                Math.Clamp(s.MaxBulge, 0.2f, 10f) * 0.01f,
+                Math.Clamp(s.Carry, 0f, 1f) * Math.Clamp(s.Friction, 0.2f, 1f));
         }
         // A particle touching nothing moves at most this far a frame (one coming free of a finger eases back).
         private const float MaxMove = 0.006f;
@@ -51,6 +54,8 @@ public static unsafe partial class LiveSoftBody
         private readonly float[] _pin;
         private readonly byte[] _side;
         private readonly float[] _radius;
+        private readonly Vector3[] _restNormal, _facing; // each particle's outward direction (rest / this frame)
+        private readonly Dictionary<Guid, Shape> _lastShape = new(); // each collider as it was last step
         private readonly int[] _clusterStart, _cluster;
         private readonly Quaternion[] _clusterTurn;
         private readonly Vector3[] _x, _v, _target, _before, _acc;
@@ -77,6 +82,8 @@ public static unsafe partial class LiveSoftBody
             _pin = new float[_n];
             _side = new byte[_n];
             _radius = new float[_n];
+            _restNormal = new Vector3[_n];
+            _facing = new Vector3[_n];
             for (int i = 0; i < _n; i++)
             {
                 var p = particles[i];
@@ -86,6 +93,7 @@ public static unsafe partial class LiveSoftBody
                 _pin[i] = p.Pin;
                 _side[i] = (byte)p.Side;
                 _radius[i] = Spacing * 0.5f;
+                _restNormal[i] = p.Normal.LengthSquared() > 1e-12f ? Vector3.Normalize(p.Normal) : Vector3.UnitZ;
             }
             _clusterStart = new int[_n + 1];
             var flat = new List<int>();
@@ -122,6 +130,7 @@ public static unsafe partial class LiveSoftBody
             public float[] Weight = [];
             public float Pin;
             public int Side;
+            public Vector3 Normal; // outward (skin: the surface's own; inside: out along the breast)
         }
 
         // ---- Building (once, when the live mesh starts)
@@ -215,7 +224,7 @@ public static unsafe partial class LiveSoftBody
                 var key = ((int)MathF.Floor(g.Rest.X / ShellSpacing), (int)MathF.Floor(g.Rest.Y / ShellSpacing), (int)MathF.Floor(g.Rest.Z / ShellSpacing));
                 if (!taken.Add(key))
                     continue;
-                particles.Add(new Particle { Rest = g.Rest, Bone = g.Bone, Weight = g.Weight, Pin = Math.Clamp(1f - (g.Mask - 0.15f) / 0.45f, 0f, 1f), Side = side });
+                particles.Add(new Particle { Rest = g.Rest, Bone = g.Bone, Weight = g.Weight, Pin = Math.Clamp(1f - (g.Mask - 0.15f) / 0.45f, 0f, 1f), Side = side, Normal = g.RestNormal });
             }
 
             // The base (where the breast meets the chest): a plane through the rim, facing out along the breast.
@@ -284,7 +293,7 @@ public static unsafe partial class LiveSoftBody
                             continue;
                         if ((Crossings(p, normal, triangles) & 1) == 0)
                             continue;
-                        particles.Add(new Particle { Rest = p, Bone = nearest.Bone, Weight = nearest.Weight, Pin = h < InnerSpacing * 1.2f ? 1f : 0f, Side = side });
+                        particles.Add(new Particle { Rest = p, Bone = nearest.Bone, Weight = nearest.Weight, Pin = h < InnerSpacing * 1.2f ? 1f : 0f, Side = side, Normal = normal });
                     }
                 }
             }
@@ -388,12 +397,15 @@ public static unsafe partial class LiveSoftBody
                 float total = 0f;
                 var bones = _bone[i];
                 var weights = _weight[i];
+                var nn = Vector3.Zero;
                 for (int b = 0; b < bones.Length; b++)
                 {
                     q += Vector3.Transform(_rest[i], m[bones[b]]) * weights[b];
+                    nn += Vector3.TransformNormal(_restNormal[i], m[bones[b]]) * weights[b];
                     total += weights[b];
                 }
                 _target[i] = total > 0f ? q / total : _rest[i];
+                _facing[i] = nn.LengthSquared() > 1e-20f ? Vector3.Normalize(nn) : _restNormal[i];
             }
             bool reset = !_started;
             if (!reset)
@@ -408,6 +420,7 @@ public static unsafe partial class LiveSoftBody
                 Array.Copy(_target, _x, _n);
                 Array.Clear(_v);
                 _side0.Clear();
+                _lastShape.Clear();
                 _started = true;
             }
 
@@ -428,8 +441,10 @@ public static unsafe partial class LiveSoftBody
                     float hold = _pin[i] + (1f - _pin[i]) * home;
                     _x[i] += (_target[i] - _x[i]) * hold;
                 }
+                Directional(tuning.SideFirm, tuning.MaxBulge);
                 if (strength > 0f)
-                    Collide(colliders, ids, own, cling, share, strength, tuning.ClingRange, remember: iteration == iterations - 1);
+                    Collide(colliders, ids, own, cling, share, strength, tuning.ClingRange, remember: iteration == iterations - 1,
+                        carry: iteration == 0 ? tuning.Carry : 0f);
                 Breasts(tuning.BreastPush);
             }
 
@@ -451,7 +466,30 @@ public static unsafe partial class LiveSoftBody
                     _x[i] = _target[i];
                 }
             }
+            for (int k = 0; k < colliders.Length && k < ids.Length; k++)
+                _lastShape[ids[k]] = colliders[k];
             LastMilliseconds = (float)clock.Elapsed.TotalMilliseconds;
+        }
+
+        // Skin isn't equally soft every way: in and out (along its own facing) it gives freely; sideways it's held
+        // a little more firmly toward where the body puts it (no sloshing), unless something is touching it; and it
+        // never swells further out than the bulge limit.
+        private void Directional(float sideFirm, float maxBulge)
+        {
+            float side = sideFirm * 0.12f;
+            for (int i = 0; i < _n; i++)
+            {
+                var d = _x[i] - _target[i];
+                var n = _facing[i];
+                float outward = Vector3.Dot(d, n);
+                if (outward > maxBulge)
+                {
+                    _x[i] -= n * (outward - maxBulge);
+                    outward = maxBulge;
+                }
+                if (side > 0f && !_touch[i])
+                    _x[i] -= (d - n * Vector3.Dot(d, n)) * side;
+            }
         }
 
         /// <summary>How far a surface point is moved off where the body puts it (posed model space).</summary>
@@ -531,7 +569,7 @@ public static unsafe partial class LiveSoftBody
 
         // Colliders are solid: a particle inside goes out on the side it was on before (or came from, if it went
         // right across a thin one in a frame). Strength below 1 lets the collider sink in that much.
-        private void Collide(Shape[] colliders, Guid[] ids, float[] own, float[] cling, float[] share, float strength, float clingRange, bool remember)
+        private void Collide(Shape[] colliders, Guid[] ids, float[] own, float[] cling, float[] share, float strength, float clingRange, bool remember, float carry)
         {
             float margin = Skin * 0.5f;
             for (int k = 0; k < colliders.Length; k++)
@@ -545,6 +583,10 @@ public static unsafe partial class LiveSoftBody
                 float size = k < share.Length ? Math.Clamp(share[k], 0f, 1f) : 1f;
                 if (!_side0.TryGetValue(ids[k], out var memory))
                     _side0[ids[k]] = memory = new Vector3[_n];
+                // How it moved since last step (a fast hand / shaft): skin it touches is carried along by that much
+                // (times the grip), so it's dragged with it instead of the collider slipping past or through.
+                Shape last = default;
+                bool moved = carry > 0f && _lastShape.TryGetValue(ids[k], out last) && last.Box == shape.Box;
                 for (int i = 0; i < _n; i++)
                 {
                     var x = _x[i];
@@ -562,6 +604,17 @@ public static unsafe partial class LiveSoftBody
                         var way = have ? was : OwnWay(_target[i], shape, normal);
                         _x[i] = shape.Box ? x + way * shape.Exit(x, way, reach) : c + way * reach;
                         _touch[i] = true;
+                        if (moved)
+                        {
+                            float tt = Math.Clamp(t, 0f, 1f);
+                            var before = last.Box ? last.A : Vector3.Lerp(last.A, last.B, tt);
+                            var now = shape.Box ? shape.A : Vector3.Lerp(shape.A, shape.B, tt);
+                            var slide = now - before;
+                            // Only along the surface (pushing in and out is the collision's job); never a jump.
+                            slide -= way * Vector3.Dot(slide, way);
+                            if (slide.LengthSquared() < 0.03f * 0.03f)
+                                _x[i] += slide * carry;
+                        }
                         if (remember)
                             memory[i] = way;
                     }
@@ -595,7 +648,7 @@ public static unsafe partial class LiveSoftBody
         {
             _pairs.Clear();
             var grid = new Dictionary<(int, int, int), List<int>>();
-            // (each pair's right side: 1 for the breasts, 3 for the butt)
+            // (each pair's right side: 1 for the breasts, 3 for the butt, 5 for the testicles)
             for (int i = 0; i < _n; i++)
             {
                 if ((_side[i] & 1) != 1)

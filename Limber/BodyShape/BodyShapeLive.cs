@@ -26,6 +26,7 @@ public sealed class BodyShapeLive
         public Dictionary<string, ShapeOp> Applied = new();
         public float Legs = 1f;
         public float Hip;   // metres the hips are moved up (Hip position)
+        public float Size = 1f; // Body size applied (the whole skeleton scaled about the feet)
         public bool LegsFeet = true;
         public Dictionary<string, Vector3> Written = new(); // scales as written, to tell a rebuilt pose
         public Dictionary<string, BoneFrame> WrittenFrames = new();
@@ -124,6 +125,7 @@ public sealed class BodyShapeLive
             state.Applied.Clear();
             state.Legs = 1f;
             state.Hip = 0f;
+            state.Size = 1f;
         }
 
         // What's wanted: everything live; what's built into the models taken off.
@@ -138,6 +140,23 @@ public sealed class BodyShapeLive
         foreach (var (name, op) in BoneScales.Ops(target.Bones, adult))
             wanted[name] = wanted.TryGetValue(name, out var w0) ? w0.With(op) : op;
         var ownSize = BoneScales.OwnSize(target.Bones, adult);
+
+        // Body size: the whole character scaled about its feet (taller and bigger, everything in proportion), the
+        // head then scaled back so it stays the size it was; Head size on top of that.
+        float bodySize = SizeOf(values, "body_size"), headSize = SizeOf(values, "head_size"), thickness = SizeOf(values, "body_thickness");
+        // Body thickness: the body's root bone scaled (every part thicker in place), the head scaled back as well.
+        string? thickRoot = MathF.Abs(thickness - 1f) > 1e-6f ? ThickRoot(info, Rest) : null;
+        if (thickRoot != null)
+        {
+            var op = new ShapeOp { Bone = thickRoot, Scale = new Vector3(thickness), CarryDescendants = false };
+            wanted[thickRoot] = wanted.TryGetValue(thickRoot, out var w1) ? w1.With(op) : op;
+        }
+        float head = headSize / bodySize / (thickRoot != null ? thickness : 1f);
+        if (info.IndexOf("j_kao") >= 0 && MathF.Abs(head - 1f) > 1e-6f)
+        {
+            var op = new ShapeOp { Bone = "j_kao", Scale = new Vector3(head) };
+            wanted["j_kao"] = wanted.TryGetValue("j_kao", out var w2) ? w2.With(op) : op;
+        }
         float legs = MathF.Max(0.05f, 1f + (values.TryGetValue("leg_length", out var lv) && float.IsFinite(lv) ? Math.Clamp(lv, -10f, 10f) : 0f));
         bool feet = KeepFeet();
         float hip = values.TryGetValue("hip_position", out var hv) && float.IsFinite(hv) ? Math.Clamp(hv, -10f, 10f) * HipStep : 0f;
@@ -182,8 +201,16 @@ public sealed class BodyShapeLive
         }
         float legStep = legs / state.Legs;
         float hipStep = hip - state.Hip;
-        if (!undone && todo.Count == 0 && MathF.Abs(legStep - 1f) < 1e-6f && MathF.Abs(hipStep) < 1e-6f)
+        float sizeStep = bodySize / state.Size;
+        if (!undone && todo.Count == 0 && MathF.Abs(legStep - 1f) < 1e-6f && MathF.Abs(hipStep) < 1e-6f && MathF.Abs(sizeStep - 1f) < 1e-6f)
             return;
+
+        // The whole skeleton (body, face, hair, tail) scaled about the feet, first: the other changes are made on it.
+        if (MathF.Abs(sizeStep - 1f) > 1e-6f && float.IsFinite(sizeStep) && sizeStep > 0f)
+            skeleton.TransformAllBones(Vector3.Zero, Quaternion.Identity, sizeStep);
+
+        // The face, hair and tail skeletons as they are now, to carry them along exactly (see CarryPartials).
+        var partials = CapturePartials(skeleton);
 
         // Parents first, so a child's change is made in its moved place.
         todo.Sort((a, b) => Depth(info, info.IndexOf(a.Bone)).CompareTo(Depth(info, info.IndexOf(b.Bone))));
@@ -196,11 +223,13 @@ public sealed class BodyShapeLive
 
         // The face, hair and other extra skeletons onto the moved body again.
         skeleton.RealignPartials(_cache);
+        CarryPartials(skeleton, partials);
         skeleton.RefreshAttachedModels();
 
         state.Applied = wanted;
         state.Legs = legs;
         state.Hip = hip;
+        state.Size = bodySize;
         state.Record = true;
     }
 
@@ -220,13 +249,18 @@ public sealed class BodyShapeLive
             if (!ActorSkeleton.TryGet(address, state.Index, _cache, out var skeleton) || skeleton.Info.Count == 0)
                 continue;
             var info = skeleton.Info;
-            foreach (var name in state.Applied.Keys.Concat(state.Legs != 1f || state.Hip != 0f ? new[] { "j_asi_a_l" } : Array.Empty<string>()))
+            var marks = new List<string>();
+            if (state.Legs != 1f || state.Hip != 0f)
+                marks.Add("j_asi_a_l");
+            if (state.Size != 1f)
+                marks.Add("j_kosi");
+            foreach (var name in state.Applied.Keys.Concat(marks).Distinct())
             {
                 int i = info.IndexOf(name);
                 if (i < 0)
                     continue;
                 var scale = skeleton.GetModelScale(i);
-                bool scaled = name == "j_asi_a_l"
+                bool scaled = marks.Contains(name)
                     || (state.Applied.TryGetValue(name, out var o) && (Vector3.DistanceSquared(o.Scale, Vector3.One) > 1e-12f || MathF.Abs(o.Stretch - 1f) > 1e-6f));
                 if (scaled)
                     state.Written[name] = scale;
@@ -288,6 +322,77 @@ public sealed class BodyShapeLive
         return _rest[info] = result;
     }
 
+    private static float SizeOf(IReadOnlyDictionary<string, float> values, string key)
+    {
+        if (!values.TryGetValue(key, out var v) || !float.IsFinite(v) || !BodySliders.ByKey.TryGetValue(key, out var slider))
+            return 1f;
+        return MathF.Max(0.05f, 1f + Math.Clamp(v, slider.Min, slider.Max));
+    }
+
+    // The bone Body thickness scales: one at the feet (the model's origin).
+    private static string? ThickRoot(SkeletonInfo info, Func<string, BoneFrame?> rest)
+    {
+        foreach (var name in new[] { "n_hara", "n_root" })
+            if (info.IndexOf(name) >= 0 && rest(name) is { } f && MathF.Abs(f.Position.Y) < 0.05f)
+                return name;
+        return null;
+    }
+
+    private sealed record PartialCapture(int Partial, int Root, Frame RootFrame, Vector3 RootScale, Frame[] Frames, Vector3[] Scales, bool[] Own);
+
+    private List<PartialCapture> CapturePartials(in ActorSkeleton skeleton)
+    {
+        var list = new List<PartialCapture>();
+        for (int p = 1; p < skeleton.PartialCount; p++)
+        {
+            var info = skeleton.PartialInfo(p, _cache);
+            int root = skeleton.PartialRootBone(p);
+            if (info == null || root < 0 || root >= info.Count)
+                continue;
+            var frames = new Frame[info.Count];
+            var scales = new Vector3[info.Count];
+            var own = new bool[info.Count];
+            for (int b = 0; b < info.Count; b++)
+            {
+                frames[b] = skeleton.GetPartialFrame(p, b);
+                scales[b] = skeleton.GetPartialScale(p, b);
+                // (the ones RealignPartials takes from the body itself)
+                own[b] = info.Parents[b] < 0 || ActorSkeleton.IsSkeletonModBone(info.Names[b]);
+            }
+            list.Add(new PartialCapture(p, root, frames[root], scales[root], frames, scales, own));
+        }
+        return list;
+    }
+
+    // The extra skeletons (face, hair, tail) carried exactly with the body bone they hang from: moved, turned and
+    // scaled by just as much as it was, every bone written directly. The game would only take the root's new place
+    // and leave the face's own bones (eyes, mouth, lips) at their old size, which is what bent the face out of shape
+    // when the head was scaled.
+    private static void CarryPartials(in ActorSkeleton skeleton, List<PartialCapture> captured)
+    {
+        foreach (var c in captured)
+        {
+            var now = skeleton.GetPartialFrame(c.Partial, c.Root);
+            var nowScale = skeleton.GetPartialScale(c.Partial, c.Root);
+            float k = c.RootScale.Y > 1e-6f ? nowScale.Y / c.RootScale.Y : 1f;
+            var turn = Quaternion.Normalize(now.Rotation * Quaternion.Inverse(c.RootFrame.Rotation));
+            if (!float.IsFinite(k) || k <= 0f || !MathUtil.IsFinite(turn))
+                continue;
+            if (MathF.Abs(k - 1f) < 1e-6f && MathF.Abs(turn.W) > 0.9999999f && Vector3.DistanceSquared(now.Position, c.RootFrame.Position) < 1e-12f)
+                continue;
+            for (int b = 0; b < c.Frames.Length; b++)
+            {
+                if (c.Own[b])
+                    continue;
+                var f = c.Frames[b];
+                var position = now.Position + Vector3.Transform((f.Position - c.RootFrame.Position) * k, turn);
+                skeleton.SetPartialPosition(c.Partial, b, position, children: false);
+                skeleton.SetPartialRotation(c.Partial, b, Quaternion.Normalize(turn * f.Rotation), children: false);
+                skeleton.SetPartialScale(c.Partial, b, c.Scales[b] * k, children: false);
+            }
+        }
+    }
+
     private static ShapeOp Inverse(ShapeOp op)
     {
         var r = op.Copy();
@@ -326,6 +431,25 @@ public sealed class BodyShapeLive
                 else
                     children.Add((b, skeleton.GetModelFrame(b), skeleton.GetModelScale(b)));
             }
+        // Every bone further down below those (the game keeps their distances when a parent is scaled, so a scaled
+        // shaft or limb wouldn't get longer past its first joint): carried along exactly, parents first.
+        var deeper = new List<(int Bone, Frame Frame, Vector3 Scale)>();
+        if (op.CarryDescendants && !op.HoldChildPlaces && children.Count > 0)
+        {
+            var under = new HashSet<int>(children.Select(c => c.Bone));
+            bool grew = true;
+            while (grew)
+            {
+                grew = false;
+                for (int b = 0; b < info.Count; b++)
+                    if (!under.Contains(b) && under.Contains(info.ParentOf(b)))
+                    {
+                        under.Add(b); grew = true;
+                        deeper.Add((b, skeleton.GetModelFrame(b), skeleton.GetModelScale(b)));
+                    }
+            }
+            deeper.Sort((x, y) => Depth(info, x.Bone).CompareTo(Depth(info, y.Bone)));
+        }
         // Bones further down that keep their own size whatever is above them (Bone scale: "follow parent" off).
         var own = new List<(int Bone, Vector3 Scale)>();
         if (ownSize is { Count: > 0 })
@@ -395,6 +519,15 @@ public sealed class BodyShapeLive
                 }
                 else
                     skeleton.SetModelPosition(b, f.Position);
+                skeleton.SetModelRotation(b, MathF.Abs(op.Turn.W) < 0.999999f
+                    ? Quaternion.Normalize(frame.Rotation * op.Turn * Quaternion.Inverse(frame.Rotation) * f.Rotation)
+                    : f.Rotation);
+                skeleton.SetModelScale(b, op.HoldChildSizes ? sc : sc * s);
+            }
+            foreach (var (b, f, sc) in deeper)
+            {
+                var local = Vector3.Transform(f.Position - frame.Position, toLocal) * s;
+                skeleton.SetModelPosition(b, at + Vector3.Transform(Vector3.Transform(local, op.Turn), frame.Rotation));
                 skeleton.SetModelRotation(b, MathF.Abs(op.Turn.W) < 0.999999f
                     ? Quaternion.Normalize(frame.Rotation * op.Turn * Quaternion.Inverse(frame.Rotation) * f.Rotation)
                     : f.Rotation);

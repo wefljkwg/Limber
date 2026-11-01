@@ -109,7 +109,19 @@ public sealed class LiveTab : IDisposable
             Cfg.LiveSwapSides = swap;
             changed = true;
         }
-        if (TrackerChoice.Draw(Cfg, "limber_vlc"))
+        int engine = Cfg.LiveNlf ? 1 : 0;
+        ImGui.SetNextItemWidth(260);
+        if (ImGui.Combo("Tracker###limber_vlc_engine", ref engine, EngineNames, EngineNames.Length))
+        {
+            Cfg.LiveNlf = engine == 1;
+            changed = true;
+        }
+        Tip("Built-in: runs on any PC, but guesses depth, so turning and twisting can go wrong.\n" +
+            "NLF: a full 3D body with real depth, hands and feet, fast enough to follow live. Needs an NVIDIA card and a\n" +
+            "one-time setup in WSL (the button below). Takes effect the next time you click Start.");
+        if (Cfg.LiveNlf)
+            DrawNlfSetup(ref changed);
+        else if (TrackerChoice.Draw(Cfg, "limber_vlc"))
             changed = true;
         var fingers = Cfg.LiveFingers;
         if (ImGui.Checkbox("Track fingers", ref fingers)) { Cfg.LiveFingers = fingers; changed = true; }
@@ -151,7 +163,7 @@ public sealed class LiveTab : IDisposable
         ImGui.Spacing();
         ImGui.TextColored(Dim, "Works best with people fully in view, not overlapping, and a steady camera. Expect a short delay behind VLC " +
                                "(two people take about twice the work). Looping in VLC is followed too. " +
-                               "Body tab settings and the Pose page's held bones apply on top.");
+                               "Body tab settings and the IK Posing page's held bones apply on top.");
 
         if (changed)
         {
@@ -162,7 +174,48 @@ public sealed class LiveTab : IDisposable
 
     private LiveTracker.Settings CurrentSettings()
         => new(Cfg.LiveVlcPort, Cfg.LiveVlcPassword, Cfg.LiveFingers, Cfg.LiveGuessHiddenLimbs, Cfg.LiveSmoothing,
-            Cfg.LivePeople, Cfg.LiveSwapSides, Cfg.TrackerAccurate, Cfg.TrackerGpu);
+            Cfg.LivePeople, Cfg.LiveSwapSides, Cfg.TrackerAccurate, Cfg.TrackerGpu, Cfg.LiveNlf, Cfg.NlfDistro);
+
+    private static readonly string[] EngineNames = ["Built-in (any PC)", "NLF - accurate 3D (NVIDIA + WSL)"];
+    private volatile string? _nlfCheck;
+    private volatile bool _nlfChecking;
+
+    // NLF: the WSL distro, the one-time setup, and whether it's set up.
+    private void DrawNlfSetup(ref bool changed)
+    {
+        var distro = Cfg.NlfDistro;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.InputTextWithHint("WSL distro##limber_nlf_distro", "default", ref distro, 64))
+        {
+            Cfg.NlfDistro = distro;
+            changed = true;
+        }
+        Tip("Leave empty for WSL's default (usually Ubuntu).");
+        if (ImGui.Button("Set up NLF (one time)...###limber_nlf_setup"))
+        {
+            var folder = System.IO.Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "NLF");
+            _nlfCheck = NlfClient.RunSetup(folder) ?? "Setup opened in a new window: follow it there (it can take 10-20 minutes), then click Check.";
+        }
+        Tip("Opens a window that installs Python, PyTorch and the NLF model inside WSL (in ~/limber-nlf only).\n" +
+            "Needs WSL (wsl --install -d Ubuntu) and an NVIDIA graphics card. About 6 GB.\n" +
+            "NLF's model is for non-commercial research use; it's downloaded to your PC for your own use.");
+        ImGui.SameLine();
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(_nlfChecking))
+        {
+            if (ImGui.Button(_nlfChecking ? "Checking...###limber_nlf_check" : "Check###limber_nlf_check"))
+            {
+                _nlfChecking = true;
+                var d = Cfg.NlfDistro;
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    _nlfCheck = NlfClient.IsSetUp(d) ? "NLF is set up. Click Start." : "NLF isn't set up yet (or WSL isn't running): click Set up NLF.";
+                    _nlfChecking = false;
+                });
+            }
+        }
+        if (_nlfCheck != null)
+            ImGui.TextColored(Dim, _nlfCheck);
+    }
 
     private void DrawStatus()
     {

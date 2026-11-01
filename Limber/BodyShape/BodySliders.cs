@@ -87,7 +87,7 @@ public sealed record Morph
 /// <summary>Every slider the Body Shape tab has, in its groups.</summary>
 public static class BodySliders
 {
-    public static readonly string[] Groups = ["Breasts", "Butt", "Hips & waist", "Legs", "Arms & shoulders", "Torso",
+    public static readonly string[] Groups = ["Size", "Breasts", "Butt", "Hips & waist", "Legs", "Arms & shoulders", "Torso",
         "Detail: thighs", "Detail: calves", "Detail: hips", "Detail: belly & waist", "Detail: chest & back", "Detail: arms", "Detail: neck"];
 
     /// <summary>The detail groups are sculpted into the models when building.</summary>
@@ -171,6 +171,14 @@ public static class BodySliders
 
     public static readonly BodySlider[] All =
     [
+        // Size (live only: done on the skeleton, with the face and hair kept in step).
+        new() { Key = "body_size", Group = "Size", Name = "Body size", LiveOnly = true,
+            Tip = "The whole character bigger or smaller, taller or shorter, everything in proportion (the feet stay on the floor), while the head stays the size it is. Live only." },
+        new() { Key = "body_thickness", Group = "Size", Name = "Body thickness", LiveOnly = true,
+            Tip = "Every part of the body thicker or thinner in place (the bones' own size, not the skeleton's), the head as it is. Live only." },
+        new() { Key = "head_size", Group = "Size", Name = "Head size", LiveOnly = true,
+            Tip = "The head bigger or smaller, the face, eyes, mouth and hair with it. Live only." },
+
         // Breasts (the game's breast bone; Limber's breast rig and the nipples go with it).
         new() { Key = "breast_size", Group = "Breasts", Name = "Size", Tip = "Bigger or smaller breasts.",
             Ops = [new() { Bone = Mune, Scale = 0.5f }] },

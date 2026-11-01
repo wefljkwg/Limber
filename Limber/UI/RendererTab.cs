@@ -333,6 +333,36 @@ public sealed class RendererTab
         }
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("Puts a collider on this bone (Devices page).");
+
+        if(Limber.Koi.Safety.AdultAllowed(actor.Address))
+            DrawSoftMark(bone);
+    }
+
+    private static readonly string[] SoftMarkNames = ["Automatic", "Breast bone", "Butt bone", "Testicle bone", "Not a soft part"];
+    private static readonly string?[] SoftMarkKeys =
+        [null, Limber.BodyRig.SoftBoneMarks.Breasts, Limber.BodyRig.SoftBoneMarks.Butt, Limber.BodyRig.SoftBoneMarks.Testicles, Limber.BodyRig.SoftBoneMarks.None];
+
+    // Body physics on skeletons Limber doesn't know: say which bones are the breasts / butt / testicles.
+    private void DrawSoftMark(string bone)
+    {
+        var mark = Limber.BodyRig.SoftBoneMarks.MarkOf(bone);
+        int current = Math.Max(0, Array.IndexOf(SoftMarkKeys, mark));
+        ImGui.SetNextItemWidth(170 * ImGuiHelpers.GlobalScale);
+        if(ImGui.Combo("Body physics part###renderer_soft_mark", ref current, SoftMarkNames, SoftMarkNames.Length))
+        {
+            Limber.BodyRig.SoftBoneMarks.Set(bone, SoftMarkKeys[current]);
+            _config.Save();
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("For skeletons whose bones Limber doesn't know by name: which soft part this bone moves.\n" +
+                "The live mesh soft body (and one-click rigging) then use it. Marking one side marks the other side too.\n" +
+                "Start the live mesh again after changing it.");
+        if(mark == null)
+        {
+            ImGui.SameLine();
+            int known = LimberTab.KnownLivePartOf(bone);
+            ImGui.TextDisabled(known switch { 0 => "(known: breast)", 1 => "(known: butt)", 2 => "(known: testicle)", _ => "(not a soft part)" });
+        }
     }
 
     private static uint PartColor(int part) => PartColors[Math.Min(part, PartColors.Length - 1)];

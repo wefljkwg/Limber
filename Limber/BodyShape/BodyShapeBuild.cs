@@ -141,7 +141,7 @@ public static class BodyShapeBuild
 
         var modName = $"{ModName} ({OneClickRig.Safe(collectionName)})";
         var modDir = Path.Combine(root, modName);
-        var riggedDir = Path.Combine(root, $"{OneClickRig.ModelsModName} ({OneClickRig.Safe(collectionName)})");
+        var riggedDir = OneClickRig.RigModFolder(root, collectionName) ?? Path.Combine(root, OneClickRig.RigModName(RigParts.Rigged, collectionName));
         var unshapedDir = UnshapedDir(collectionName);
 
         // Each race's skeleton at rest (models are in their own race's space; the game fits them to yours).

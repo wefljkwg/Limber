@@ -468,7 +468,7 @@ public sealed class VideoTab : IDisposable
         Tip("Swap left and right (for selfie-camera videos).");
 
         ImGui.TextColored(Dim, "Body tab settings (body parts, smoothing, \"Flip facing\", hip height) apply to clips too, " +
-                               "and the Pose page's held and pinned bones go on top.");
+                               "and the IK Posing page's held and pinned bones go on top.");
     }
 
     // ---- Helpers

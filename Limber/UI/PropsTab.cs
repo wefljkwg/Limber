@@ -598,41 +598,108 @@ public sealed unsafe class PropsTab
                 }
                 Tooltip("On: goes to the last point and back the same way. Off: loops back to the start.");
 
-                ImGui.TextDisabled("Point 1 is where the bone is held. Points (cm, left / up / forward from it):");
+                // Its points can be dragged on screen while this is open.
+                if (Motions != null)
+                {
+                    Motions.Editing = m.Id;
+                    Motions.EditingFrame = ImGui.GetFrameCount();
+                }
+                ImGui.TextDisabled(m.BackAndForth
+                    ? "The bone goes from point 1 to the last point and back along the line."
+                    : "The bone goes round all the points and back to point 1, in a loop.");
+                ImGui.TextDisabled("Drag the green dots on the character to reshape the line (its path must be shown: the second box in the list).");
+
+                float startSharp = m.StartSharpness;
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.4f);
+                if (ImGui.SliderFloat("Point 1: corner###motion_start_sharp", ref startSharp, 0f, 1f, "%.2f"))
+                    m.StartSharpness = startSharp;
+                SaveWhenDone();
+                Tooltip("Point 1 is where the bone is held (move the bone itself to move it).\n0 = the line curves smoothly through it, 1 = a sharp corner.");
+
                 var points = m.Points;
-                int removeAt = -1;
+                int removeAt = -1, insertAfter = -1;
                 for (int i = 0; i < points.Count; i++)
                 {
                     using var pid = ImRaii.PushId(i);
-                    var v = points[i].Value * 100f;
+                    var p = points[i];
+                    ImGui.Separator();
+                    ImGui.TextUnformatted($"Point {i + 2}");
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Add after###motion_point_insert"))
+                        insertAfter = i;
+                    Tooltip("Adds a new point between this one and the next.");
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Remove###motion_point_remove"))
+                        removeAt = i;
+
+                    var v = p.Value * 100f;
                     ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.6f);
-                    if (ImGui.DragFloat3($"Point {i + 2}###motion_point", ref v, 0.1f, -200f, 200f, "%.1f"))
+                    if (ImGui.DragFloat3("Position (cm)###motion_point", ref v, 0.1f, -200f, 200f, "%.1f"))
+                        Replace(m, i, p.With(v / 100f));
+                    SaveWhenDone();
+                    Tooltip("Where the bone goes, from point 1: left / up / forward of the character.");
+
+                    var turn = new Vector3(p.Yaw, p.Pitch, p.Roll);
+                    ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.6f);
+                    if (ImGui.DragFloat3("Rotation (°)###motion_point_turn", ref turn, 0.5f, -180f, 180f, "%.0f"))
                     {
-                        var copy = new List<MotionPoint>(points);
-                        copy[i] = new MotionPoint(v / 100f);
-                        m.Points = points = copy;
+                        var q = p.Copy();
+                        q.Yaw = turn.X;
+                        q.Pitch = turn.Y;
+                        q.Roll = turn.Z;
+                        Replace(m, i, q);
                     }
                     SaveWhenDone();
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton("x###motion_point_remove"))
-                        removeAt = i;
+                    Tooltip("How the bone is turned when it gets here (around, forward / back, sideways), on top of how it's held.\nIt turns smoothly from point to point. All 0: it keeps the held turn.");
+
+                    float sharp = p.Sharpness;
+                    ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.4f);
+                    if (ImGui.SliderFloat("Corner###motion_point_sharp", ref sharp, 0f, 1f, "%.2f"))
+                    {
+                        var q = p.Copy();
+                        q.Sharpness = sharp;
+                        Replace(m, i, q);
+                    }
+                    SaveWhenDone();
+                    Tooltip("0 = the line curves smoothly through this point, 1 = a sharp corner here.");
                 }
+                ImGui.Separator();
                 if (removeAt >= 0)
                 {
-                    var copy = new List<MotionPoint>(points);
+                    var copy = new List<MotionPoint>(m.Points);
                     copy.RemoveAt(removeAt);
+                    m.Points = copy;
+                    _config.Save();
+                }
+                else if (insertAfter >= 0)
+                {
+                    var copy = new List<MotionPoint>(m.Points);
+                    var a = copy[insertAfter];
+                    var next = insertAfter + 1 < copy.Count ? copy[insertAfter + 1].Value : (m.BackAndForth ? a.Value + new Vector3(0f, 0f, 0.05f) : Vector3.Zero);
+                    var mid = a.With((a.Value + next) * 0.5f);
+                    mid.Sharpness = a.Sharpness;
+                    copy.Insert(insertAfter + 1, mid);
                     m.Points = copy;
                     _config.Save();
                 }
                 if (ImGui.Button("Add point###motion_point_add"))
                 {
-                    var last = points.Count > 0 ? points[^1].Value : Vector3.Zero;
-                    m.Points = new List<MotionPoint>(points) { new MotionPoint(last + new Vector3(0f, 0f, 0.05f)) };
+                    var last = m.Points.Count > 0 ? m.Points[^1] : null;
+                    var added = last?.With(last.Value + new Vector3(0f, 0f, 0.05f)) ?? new MotionPoint(new Vector3(0f, 0f, 0.05f));
+                    m.Points = new List<MotionPoint>(m.Points) { added };
                     _config.Save();
                 }
+                Tooltip("Adds another spot at the end for the bone to travel to (it starts a little past the last one).");
                 break;
             }
         }
+    }
+
+    private static void Replace(MotionProp m, int index, MotionPoint point)
+    {
+        var copy = new List<MotionPoint>(m.Points);
+        copy[index] = point;
+        m.Points = copy;
     }
 
     // Both collision strengths in one place: bones (here) and the live mesh's (same as in Rigging > Live mesh).
