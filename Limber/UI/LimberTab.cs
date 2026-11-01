@@ -43,7 +43,9 @@ public sealed partial class LimberTab
     public Limber.BodyRig.PropService? PropService { get; set; }
     // Whole-character move / turn / scale (Actor tab).
     public ActorTransforms? Actors { get; set; }
-    private string[]? _modelCheck;
+    private (string Line, string? RigGame)[]? _modelCheck;
+    private bool _recheckAfterRig;
+    private string _rigOneNote = "";
     private bool _modelChecking;
     private List<Limber.Gpu.LiveMesh.Found>? _gpuFound;
     private List<string>? _gpuLog;
@@ -128,6 +130,110 @@ public sealed partial class LimberTab
     }
 
     /// <summary>Which character every tab works on (shown above the main tabs).</summary>
+    // ---- Reset to defaults (the button above every page)
+
+    private long _resetArmedUntil;
+    private string _resetNote = "";
+    private long _resetNoteUntil;
+
+    /// <summary>The "Reset to defaults" button: everything Limber does to the chosen character back to nothing (two clicks).</summary>
+    public void DrawResetCharacter()
+    {
+        var actor = _selection.Actor;
+        long now = Environment.TickCount64;
+        bool armed = now < _resetArmedUntil;
+        using(ImRaii.Disabled(!actor.IsSet))
+        {
+            if(ImGui.Button(armed ? "Click again to reset###limber_reset_char" : "Reset to defaults###limber_reset_char"))
+            {
+                if(armed)
+                {
+                    _resetArmedUntil = 0;
+                    _resetNote = ResetCharacter(actor);
+                    _resetNoteUntil = now + 4000;
+                }
+                else
+                    _resetArmedUntil = now + 3000;
+            }
+        }
+        Tooltip(actor.IsSet
+            ? $"Puts {actor.Name} back as the game has them: lets go of every posed bone and motion, undoes Limber's move / turn / "
+              + "size, clears their bone scales and body shape sliders, removes the devices placed on them, and stops Oral on them. "
+              + "Click twice (it asks once). Undo brings the pose back."
+            : "Choose a character first.");
+        if(now < _resetNoteUntil && _resetNote.Length > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(_resetNote);
+        }
+    }
+
+    /// <summary>Everything Limber does to one character back to nothing. Returns what was reset.</summary>
+    public string ResetCharacter(ActorRef actor)
+    {
+        if(!actor.IsSet)
+            return "";
+        var done = new List<string>();
+        // Pose and motions (undo can bring the pose back).
+        Motions?.StopFor(actor.Address, null);
+        lock(_rigs.Sync)
+        {
+            if(_rigs.GetRig(actor.Address)?.Goals.Count > 0)
+                done.Add("pose");
+            _rigs.Checkpoint();
+            _rigs.RemoveRig(actor.Address);
+        }
+        _selection.Bone = null;
+        // Move / turn / size.
+        Actors?.Reset(actor.Address);
+        string name = actor.Name ?? "";
+        if(name.Length > 0)
+        {
+            // Bone scales and body shape (kept by name).
+            if(_config.BoneScales != null && _config.BoneScales.Remove(name))
+                done.Add("bone scales");
+            if(_config.FkPoses != null && _config.FkPoses.Remove(name))
+                done.Add("FK pose");
+            if(_config.Throb != null && _config.Throb.TryGetValue(name, out var throb) && throb.Enabled)
+            {
+                throb.Enabled = false;
+                done.Add("throbbing");
+            }
+            if(_config.LookAt != null && _config.LookAt.TryGetValue(name, out var look) && look.Enabled)
+            {
+                look.Enabled = false;
+                done.Add("look at");
+            }
+            if(_config.Twerk != null && _config.Twerk.TryGetValue(name, out var twerk) && twerk.Enabled)
+            {
+                twerk.Enabled = false;
+                done.Add("twerking");
+            }
+            if(_config.Ahegao != null && _config.Ahegao.TryGetValue(name, out var ahegao) && ahegao.Enabled)
+            {
+                ahegao.Enabled = false;
+                done.Add("ahegao");
+            }
+            if(_config.BodyShapes != null && _config.BodyShapes.TryGetValue(name, out var shape) && shape.Count > 0)
+            {
+                shape.Clear();
+                done.Add("body shape");
+            }
+            // Devices placed on this character.
+            int removed = _config.Props?.RemoveAll(p => string.Equals(p.ParentCharacter, name, StringComparison.Ordinal)) ?? 0;
+            if(removed > 0)
+                done.Add($"{removed} device{(removed == 1 ? "" : "s")}");
+            // Oral on them.
+            if(_config.Oral is { Enabled: true } oral && (oral.Giver == name || oral.Receiver == name))
+            {
+                oral.Enabled = false;
+                done.Add("Oral");
+            }
+        }
+        _config.Save();
+        return done.Count > 0 ? "Reset: " + string.Join(", ", done) + "." : "Reset (nothing was changed on them).";
+    }
+
     public void DrawActorPicker()
     {
         var characters = _selection.ListCharacters();
@@ -192,6 +298,9 @@ public sealed partial class LimberTab
         ImGui.Spacing();
         HotkeyRow("Undo", _config.UndoKey ??= new());
         HotkeyRow("Redo", _config.RedoKey ??= new());
+        ImGui.Spacing();
+        HotkeyRow("Open / close Limber", _config.OpenKey ??= new());
+        Tooltip("Opens or closes this window from anywhere in the game (also when /limber doesn't get through).");
         ImGui.Spacing();
         ImGui.TextDisabled("Click Change, then press the key with any Ctrl / Shift / Alt you want. Esc cancels.");
     }
@@ -353,6 +462,7 @@ public sealed partial class LimberTab
                 {
                     if(ImGui.Button("Let go of all###limber_let_go_all", new Vector2(third, 0)))
                     {
+                        Motions?.StopFor(actor.Address, null);
                         lock(_rigs.Sync)
                         {
                             _rigs.Checkpoint();
@@ -570,6 +680,8 @@ public sealed partial class LimberTab
                 state += ", rotation held";
             if(goal.LastSolveFailed && goal.Enabled)
                 state += " (can't reach)";
+            if(Motions?.For(actor.Address, goal.Bone) is { } motion)
+                state += $", moved by the motion device \"{motion.Name}\" (Let go turns it off)";
             ImGui.TextWrapped(state);
 
             ImGui.TableNextColumn();
@@ -601,6 +713,7 @@ public sealed partial class LimberTab
 
         if(remove != null)
         {
+            Motions?.StopFor(actor.Address, remove);
             _rigs.Checkpoint();
             rig.Remove(remove);
             if(rig.Goals.Count == 0)
@@ -1009,6 +1122,29 @@ public sealed partial class LimberTab
     {
         ImGui.TextDisabled("Per-vertex soft body on the breasts and butt. Experimental: may crash the game. Starts again by itself after a redraw (a Body Shape build, a gear change).");
         var actor = _selection.Actor;
+        {
+            var liveSettings = Limber.Gpu.LiveSoftBody.Settings();
+            bool auto = liveSettings.AutoStart;
+            if(ImGui.Checkbox("Start by itself###lmb_live_auto", ref auto))
+            {
+                liveSettings.AutoStart = auto;
+                _config.Save();
+            }
+            Tooltip("Starts the live soft body on the chosen character by itself (finding the right model on its own), and again "
+                + "when what it wears changes. Off: use Start now, or the buffer list below.");
+            ImGui.SameLine();
+            using(ImRaii.Disabled(!actor.IsSet))
+                if(ImGui.Button("Start now###lmb_live_start"))
+                {
+                    _gpuStatus = Limber.Gpu.LiveSoftBody.AutoStart(actor.Address, actor.ObjectIndex, ReadModelFile, LivePartOf);
+                }
+            Tooltip("Finds the character's body model on the GPU and starts the live soft body on it.");
+            if(Limber.Gpu.LiveSoftBody.AutoStatus.Length > 0 && _gpuStatus == null)
+                ImGui.TextDisabled(Limber.Gpu.LiveSoftBody.AutoStatus);
+        }
+        bool manual = ImGui.TreeNode("Buffer list (manual, advanced)###lmb_gpu_manual");
+        if(manual)
+        {
         using(ImRaii.Disabled(!actor.IsSet))
         {
             if(ImGui.Button("Find the GPU buffers###lmb_gpu_probe"))
@@ -1035,7 +1171,9 @@ public sealed partial class LimberTab
                 _gpuStatus = null;
             }
         }
-        Tooltip("Then click Soft body on a \"vertices\" line of the body / top model.");
+            Tooltip("Then click Soft body on a \"vertices\" line of the body / top model.");
+            ImGui.TreePop();
+        }
         if(Limber.Gpu.LiveMesh.Wobbling)
         {
             ImGui.SameLine();
@@ -1096,9 +1234,21 @@ public sealed partial class LimberTab
             physics ? "How firmly it holds its shape (and springs back)." : "How fast it springs back.");
         LiveSlider("Bounce###lmb_live_bounce", Limber.Gpu.LiveSoftBody.Bounce, v => Limber.Gpu.LiveSoftBody.Bounce = v, 0f, 1f,
             physics ? "How long it keeps wobbling." : "Wobble on the way back.");
+        {
+            var live = Limber.Gpu.LiveSoftBody.Settings();
+            LiveSlider("Smoothing###lmb_live_smooth", live.Smoothing, v => live.Smoothing = v, 0f, 1f,
+                "How smooth dents look. Higher: rounder edges; the dent keeps its depth (nothing shrinks).");
+        }
         if(physics && ImGui.TreeNode("More soft body settings###lmb_live_more"))
         {
             var live = Limber.Gpu.LiveSoftBody.Settings();
+            LiveSlider("Side firmness###lmb_live_side", live.SideFirmness, v => live.SideFirmness = v, 0f, 1f,
+                "How much firmer the skin is sideways than in and out. Higher: dents go in, but less sloshing about.");
+            LiveSlider("Max bulge (cm)###lmb_live_bulge_max", live.MaxBulge, v => live.MaxBulge = v, 0.2f, 6f,
+                "How far skin may swell out past where the body puts it (stops ballooning around a deep press).", "%.1f");
+            LiveSlider("Carry###lmb_live_carry", live.Carry, v => live.Carry = v, 0f, 1f,
+                "How much skin is dragged along by what touches it as that moves (a sliding hand pulls the skin with it; "
+                + "fast moves don't slip through). Works with Friction.");
             LiveSlider("Pull back###lmb_live_pull", live.PullBack, v => live.PullBack = v, 0f, 1f,
                 "How strongly it's drawn back to where the body puts it (higher: stiffer, less sag and swing).");
             LiveSlider("Friction###lmb_live_friction", live.Friction, v => live.Friction = v, 0f, 1f,
@@ -1126,6 +1276,7 @@ public sealed partial class LimberTab
                 live.PullBack = d.PullBack; live.Friction = d.Friction; live.Steadiness = d.Steadiness; live.Accuracy = d.Accuracy;
                 live.BreastPush = d.BreastPush; live.SkinMargin = d.SkinMargin; live.ImprintDepth = d.ImprintDepth; live.ClingRange = d.ClingRange;
                 live.Firmness = d.Firmness; live.Bounce = d.Bounce; live.Strength = d.Strength;
+                live.SideFirmness = d.SideFirmness; live.MaxBulge = d.MaxBulge; live.Carry = d.Carry; live.Smoothing = d.Smoothing;
                 _config.Save();
             }
             ImGui.TreePop();
@@ -1171,15 +1322,31 @@ public sealed partial class LimberTab
 
     private static bool IsBreastBone(string name) => LivePartOf(name) == 0;
 
-    // Which soft part a bone moves for the live mesh: 0 breasts, 1 butt, -1 neither.
-    private static int LivePartOf(string name)
+    // Which soft part a bone moves for the live mesh: 0 breasts, 1 butt, 2 testicles, -1 none. Bones marked on the
+    // Renderer page first (other skeletons), then the ones Limber knows by name.
+    public static int LivePartOf(string name)
+    {
+        switch(Limber.BodyRig.SoftBoneMarks.MarkOf(name))
+        {
+            case Limber.BodyRig.SoftBoneMarks.Breasts: return 0;
+            case Limber.BodyRig.SoftBoneMarks.Butt: return 1;
+            case Limber.BodyRig.SoftBoneMarks.Testicles: return 2;
+            case Limber.BodyRig.SoftBoneMarks.None: return -1;
+        }
+        return KnownLivePartOf(name);
+    }
+
+    public static int KnownLivePartOf(string name)
         => name.StartsWith("iv_c_mune_", StringComparison.Ordinal) || name.StartsWith("j_mune_", StringComparison.Ordinal)
            || name.StartsWith("lmb_lat_mune_", StringComparison.Ordinal) || name.StartsWith("lmb_mune_", StringComparison.Ordinal) ? 0
            : name.StartsWith("iv_shiri_", StringComparison.Ordinal) || name.StartsWith("lmb_lat_shiri_", StringComparison.Ordinal) ? 1
+           : name.StartsWith("iv_kougan_", StringComparison.Ordinal) || name.StartsWith("iv_kintama", StringComparison.Ordinal)
+             || name.StartsWith("lmb_lat_kougan_", StringComparison.Ordinal) || name.StartsWith("lmb_kougan_", StringComparison.Ordinal) ? 2
            : -1;
 
     // A model file as the game loaded it (Penumbra's replacement on disk, or the game's own).
-    private static byte[]? ReadModelFile(string name)
+    /// <summary>A model file as the game loaded it (Penumbra's replacement on disk, or the game's own).</summary>
+    public static byte[]? ReadModelFile(string name)
     {
         var path = name;
         if(path.StartsWith('|'))
@@ -1265,6 +1432,18 @@ public sealed partial class LimberTab
         var dir = System.IO.Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "BodyRig", "RiggedModels");
         // (The old baked roundness / middle joining are replaced by the live blend shapes.)
         _oneClick = Limber.BodyRig.OneClickRig.Start(actor.ObjectIndex, actor.Address, RigShapes(), dir, parts, _config.RigAutoFit);
+    }
+
+    // "Rig this one" (Check the worn models): just that model, every part it has, into the rig mod already there.
+    private void RigOne(string game)
+    {
+        var actor = _selection.Actor;
+        if(!actor.IsSet || OneClickBusy)
+            return;
+        var dir = System.IO.Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "BodyRig", "RiggedModels");
+        _oneClick = Limber.BodyRig.OneClickRig.Start(actor.ObjectIndex, actor.Address, RigShapes(), dir, Limber.BodyRig.RigParts.Rigged, false,
+            only: new[] { game });
+        _recheckAfterRig = true;
     }
 
     /// <summary>One-click rig of everything (the Body Shape tab's button); false if it can't start now.</summary>
@@ -1393,12 +1572,41 @@ public sealed partial class LimberTab
         }
         Tooltip("Lists the models the selected character is wearing and whether each one is weighted to the rig\n" +
                 "(if a model isn't, it can't move, whatever the sliders say).");
+        // After "Rig this one": check again once the rig is done, so the list shows the result.
+        if(_recheckAfterRig && _oneClick is { Done: true } done && !_modelChecking)
+        {
+            _recheckAfterRig = false;
+            _rigOneNote = done.Lines.Length > 0 ? done.Lines[^1] : "";
+            CheckModels();
+        }
+        if(_recheckAfterRig && _oneClick is { Done: false } running)
+            ImGui.TextDisabled("Rigging: " + (running.Lines.Length > 0 ? running.Lines[^1] : "..."));
+        else if(_rigOneNote.Length > 0 && _modelCheck != null)
+            ImGui.TextDisabled(_rigOneNote);
         if(_modelCheck != null)
         {
-            foreach(var line in _modelCheck)
+            int row = 0;
+            foreach(var (line, rigGame) in _modelCheck)
+            {
                 ImGui.TextWrapped(line);
+                if(rigGame != null)
+                {
+                    ImGui.SameLine();
+                    using(ImRaii.Disabled(OneClickBusy || !_selection.Actor.IsSet))
+                    {
+                        if(ImGui.SmallButton($"Rig this one###lmb_rig_one_{part.Key}_{row}"))
+                            RigOne(rigGame);
+                    }
+                    Tooltip("Rigs just this model (breasts, testicles and butt, whichever it has) and adds it to the character's rig mod.\n" +
+                            "Your own mods are only read. The rest of the rig stays as it is.");
+                }
+                row++;
+            }
             if(ImGui.SmallButton($"Hide###lmb_check_hide_{part.Key}"))
+            {
                 _modelCheck = null;
+                _rigOneNote = "";
+            }
         }
     }
 
@@ -1406,10 +1614,10 @@ public sealed partial class LimberTab
     {
         var actor = _selection.Actor;
         _modelChecking = true;
-        _modelCheck = ["Checking..."];
+        _modelCheck = [("Checking...", null)];
         System.Threading.Tasks.Task.Run(async () =>
         {
-            var lines = new List<string>();
+            var lines = new List<(string Line, string? RigGame)>();
             try
             {
                 var paths = await Plugin.Framework.RunOnFrameworkThread(() =>
@@ -1420,7 +1628,7 @@ public sealed partial class LimberTab
                     return all.Length > 0 ? all[0] : null;
                 });
                 if(paths == null)
-                    lines.Add("Penumbra couldn't list this character's files.");
+                    lines.Add(("Penumbra couldn't list this character's files.", null));
                 else
                 {
                     foreach(var (actual, games) in paths)
@@ -1439,18 +1647,19 @@ public sealed partial class LimberTab
                             if(!hasParts)
                                 continue;
                             string origin = System.IO.Path.IsPathRooted(file) ? System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file) ?? "") : "game";
-                            lines.Add($"{System.IO.Path.GetFileName(game)}: " + (breasts || testicles || butt
+                            bool rigged = breasts || testicles || butt;
+                            lines.Add(($"{System.IO.Path.GetFileName(game)}: " + (rigged
                                 ? "rigged (" + string.Join(", ", new[] { breasts ? "breasts" : null, testicles ? "testicles" : null, butt ? "butt" : null }.Where(x => x != null)) + ")"
-                                : "NOT rigged") + $" - from {origin}");
+                                : "NOT rigged") + $" - from {origin}", rigged ? null : game));
                         }
                     }
                     if(lines.Count == 0)
-                        lines.Add("No worn model has breast, testicle or butt bones.");
+                        lines.Add(("No worn model has breast, testicle or butt bones.", null));
                 }
             }
             catch(Exception e)
             {
-                lines.Add("Couldn't check: " + e.Message);
+                lines.Add(("Couldn't check: " + e.Message, null));
             }
             _modelCheck = lines.ToArray();
             _modelChecking = false;
@@ -1636,6 +1845,14 @@ public sealed partial class LimberTab
                 changed = true;
             }
 
+            bool faceBones = _config.ShowFaceBones;
+            if(ImGui.Checkbox("Dots for the face###limber_face_dots_settings", ref faceBones))
+            {
+                _config.ShowFaceBones = faceBones;
+                changed = true;
+            }
+            Tooltip("Small dots on the face bones (brows, eyelids, eyes, cheeks, lips, jaw, tongue): drag to move, use the gizmo to turn.");
+
             bool hideWithUi = _config.HideHandlesWithGameUi;
             if(ImGui.Checkbox("Hide with the game UI", ref hideWithUi))
             {
@@ -1662,6 +1879,7 @@ public sealed partial class LimberTab
                 {
                     if(ImGui.Button("Let go of everything on every character", new Vector2(-1, 0)))
                     {
+                        Motions?.StopAll();
                         _rigs.Checkpoint();
                         _rigs.ClearAll();
                         _selection.Bone = null;
@@ -1688,6 +1906,7 @@ public sealed partial class LimberTab
         {
             if(ImGui.Button("Reset pose###limber_reset_pose", new Vector2(third, 0)))
             {
+                Motions?.StopFor(actor.Address, null);
                 lock(_rigs.Sync)
                 {
                     _rigs.Checkpoint();

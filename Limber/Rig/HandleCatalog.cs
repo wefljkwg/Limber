@@ -86,7 +86,52 @@ public static class HandleCatalog
         if(FriendlyNames.TryGetValue(bone, out var name))
             return name;
 
-        return BodyLabel(bone) ?? bone;
+        return BodyLabel(bone) ?? FaceLabel(bone) ?? bone;
+    }
+
+    /// <summary>A face bone (the face skeleton's j_f_ bones: brows, eyelids, eyes, cheeks, lips, jaw, tongue...).</summary>
+    public static bool IsFaceBone(string bone) => bone.StartsWith("j_f_", System.StringComparison.Ordinal);
+
+    // Face bones by name start (longest first wins), for the face dots and the bone lists.
+    private static readonly (string Start, string Name)[] FaceNames =
+    [
+        ("j_f_mmayu", "Inner eyebrow"),
+        ("j_f_mayu", "Eyebrow"),
+        ("j_f_miken", "Between the brows"),
+        ("j_f_umab", "Upper eyelid"),
+        ("j_f_dmab", "Lower eyelid"),
+        ("j_f_mab", "Eyelid"),
+        ("j_f_eyepuru", "Eye shine"),
+        ("j_f_eye", "Eye"),
+        ("j_f_hana", "Nose"),
+        ("j_f_hoho", "Cheek"),
+        ("j_f_shoho", "Lower cheek"),
+        ("j_f_uslip", "Upper lip (side)"),
+        ("j_f_dslip", "Lower lip (side)"),
+        ("j_f_ulip", "Upper lip"),
+        ("j_f_dlip", "Lower lip"),
+        ("j_f_lip", "Mouth corner"),
+        ("j_f_hagukiu", "Upper teeth"),
+        ("j_f_hagukid", "Lower teeth"),
+        ("j_f_ago", "Jaw"),
+        ("j_f_bero", "Tongue"),
+        ("j_f_face", "Face"),
+    ];
+
+    private static string? FaceLabel(string bone)
+    {
+        if(!IsFaceBone(bone))
+            return null;
+        string side = bone.EndsWith("_l", System.StringComparison.Ordinal) ? " (left)" : bone.EndsWith("_r", System.StringComparison.Ordinal) ? " (right)" : "";
+        string core = side.Length > 0 ? bone[..^2] : bone;
+        foreach(var (start, name) in FaceNames)
+        {
+            if(!core.StartsWith(start, System.StringComparison.Ordinal))
+                continue;
+            string rest = core[start.Length..].Trim('_');
+            return "Face: " + name + (rest.Length > 0 ? " " + rest : "") + side;
+        }
+        return "Face: " + bone[4..];
     }
 
     // Plain names for the body mod bones (IVCS / Limber's rig), so they can be found by searching in English.

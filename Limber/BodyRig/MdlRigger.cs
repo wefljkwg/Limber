@@ -74,6 +74,11 @@ public static class MdlRigger
         public List<Mesh> Meshes = new();
         public List<string> Bones = new();
         public List<List<ushort>> Tables = new();
+        // Shape keys: name, per LoD (first shape mesh, how many); shape meshes (index start of their mesh, values);
+        // values (where in the indices, the vertex that replaces the one there).
+        public List<(string Name, ushort[] Start, ushort[] Count)> Shapes = new();
+        public List<(uint IndexStart, uint ValueCount, uint ValueStart)> ShapeMeshes = new();
+        public List<(ushort Index, ushort Vertex)> ShapeValues = new();
     }
 
     /// <summary>The model with the parts weighted onto their lattices, or null if nothing in it belongs to them.</summary>
@@ -973,6 +978,39 @@ public static class MdlRigger
         return result;
     }
 
+    /// <summary>
+    /// One mesh's shape keys (one LoD): per shape, its name and which vertex replaces the one at each place in the
+    /// mesh's own index list (the game draws the replacement while that shape is on, e.g. a face's chosen lips).
+    /// </summary>
+    public static List<(string Name, (int Index, int Vertex)[] Values)> MeshShapes(byte[] file, int lod, int mesh)
+    {
+        var result = new List<(string, (int, int)[])>();
+        var m = Parse(file);
+        if (lod >= m.LodCount || mesh >= m.Meshes.Count)
+            return result;
+        var me = m.Meshes[mesh];
+        foreach (var (name, start, count) in m.Shapes)
+        {
+            var values = new List<(int, int)>();
+            for (int k = start[lod]; k < start[lod] + count[lod] && k < m.ShapeMeshes.Count; k++)
+            {
+                var (indexStart, valueCount, valueStart) = m.ShapeMeshes[k];
+                if (indexStart != me.StartIndex)
+                    continue;
+                for (long v = valueStart; v < valueStart + valueCount && v < m.ShapeValues.Count; v++)
+                {
+                    var (index, vertex) = m.ShapeValues[(int)v];
+                    int local = index >= me.IndexCount ? index - (int)me.StartIndex : index;
+                    if (local >= 0 && local < me.IndexCount && vertex < me.VertexCount)
+                        values.Add((local, vertex));
+                }
+            }
+            if (values.Count > 0)
+                result.Add((name, values.ToArray()));
+        }
+        return result;
+    }
+
     /// <summary>One mesh's skinning (bone names, each vertex's 8 bone slots and weights) and triangles, for one LoD.</summary>
     public sealed record MeshSkin(int Mesh, string[] Bones, byte[] Indices, float[] Weights, int Slots, ushort[] Triangles);
 
@@ -1127,6 +1165,59 @@ public static class MdlRigger
                 }
                 if (w >= minWeight)
                     list.Add(ReadPosition(file, pa, pe.Type));
+            }
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// The vertices (LoD 0) with at least <paramref name="minWeight"/> on the bones <paramref name="isPart"/> picks,
+    /// each with every bone it's weighted to and how much (for skinning them the way the game does).
+    /// </summary>
+    public static List<(Vector3 Position, string[] Bones, float[] Weights)> WeightedVertices(byte[] file, Func<string, bool> isPart, float minWeight)
+    {
+        var list = new List<(Vector3, string[], float[])>();
+        var m = Parse(file);
+        if (m.LodCount < 1)
+            return list;
+        var (first, count) = m.Lods[0];
+        for (int mi = first; mi < first + count && mi < m.Meshes.Count && mi < m.Declarations.Count; mi++)
+        {
+            var mesh = m.Meshes[mi];
+            var decl = m.Declarations[mi];
+            var pe = decl.FirstOrDefault(e => e.Usage == 0);
+            var we = decl.FirstOrDefault(e => e.Usage == 1);
+            var ie = decl.FirstOrDefault(e => e.Usage == 2);
+            if (pe == null || we == null || ie == null || mesh.BoneTable >= m.Tables.Count || pe.Type is not (2 or 3 or 14))
+                continue;
+            int slots = we.Type == 17 ? 8 : 4;
+            var table = m.Tables[mesh.BoneTable];
+            var names = table.Select(t => t < m.Bones.Count ? m.Bones[t] : "").ToArray();
+            var mine = names.Select(isPart).ToArray();
+            if (!mine.Any(x => x))
+                continue;
+            for (int v = 0; v < mesh.VertexCount; v++)
+            {
+                int Address(Element e) => (int)(m.VertexOffset[0] + mesh.BufferOffset[e.Stream] + v * mesh.Stride[e.Stream] + e.Offset);
+                int wa = Address(we), ia = Address(ie), pa = Address(pe);
+                if (wa + slots > file.Length || ia + slots > file.Length || pa + 12 > file.Length)
+                    break;
+                float w = 0f;
+                var bones = new List<string>(slots);
+                var weights = new List<float>(slots);
+                for (int k = 0; k < slots; k++)
+                {
+                    int bone = file[ia + k];
+                    if (file[wa + k] == 0 || bone >= names.Length)
+                        continue;
+                    float wk = file[wa + k] / 255f;
+                    bones.Add(names[bone]);
+                    weights.Add(wk);
+                    if (mine[bone])
+                        w += wk;
+                }
+                if (w >= minWeight)
+                    list.Add((ReadPosition(file, pa, pe.Type), bones.ToArray(), weights.ToArray()));
             }
         }
         return list;
@@ -1561,7 +1652,28 @@ public static class MdlRigger
         }
         m.BoneTablesEnd = (int)r.BaseStream.Position;
 
-        r.BaseStream.Position += shapeCount * 16 + shapeMeshCount * 12 + shapeValueCount * 4;
+        long shapesAt = r.BaseStream.Position;
+        try
+        {
+            for (int i = 0; i < shapeCount; i++)
+            {
+                uint name = r.ReadUInt32();
+                var start = new[] { r.ReadUInt16(), r.ReadUInt16(), r.ReadUInt16() };
+                var count = new[] { r.ReadUInt16(), r.ReadUInt16(), r.ReadUInt16() };
+                m.Shapes.Add((m.Strings.TryGetValue(name, out var n) ? n : "", start, count));
+            }
+            for (int i = 0; i < shapeMeshCount; i++)
+                m.ShapeMeshes.Add((r.ReadUInt32(), r.ReadUInt32(), r.ReadUInt32()));
+            for (int i = 0; i < shapeValueCount; i++)
+                m.ShapeValues.Add((r.ReadUInt16(), r.ReadUInt16()));
+        }
+        catch (EndOfStreamException)
+        {
+            m.Shapes.Clear();
+            m.ShapeMeshes.Clear();
+            m.ShapeValues.Clear();
+        }
+        r.BaseStream.Position = shapesAt + shapeCount * 16 + shapeMeshCount * 12 + shapeValueCount * 4;
         int boneMap = (int)r.ReadUInt32();
         r.BaseStream.Position += boneMap;
         m.PaddingPos = (int)r.BaseStream.Position;

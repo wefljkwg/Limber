@@ -38,6 +38,10 @@ public sealed unsafe class KoiLink : IDisposable
     public PoseReceiver Receiver { get; }
     public PoseApplier Applier { get; }
     public SyncSession Sync { get; }
+
+    /// <summary>While synced: my character and my partner's character on my screen (0 when not found).</summary>
+    public (nint Address, ushort Index) SyncSelf { get; private set; }
+    public (nint Address, ushort Index) SyncPartner { get; private set; }
     /// <summary>Your character's name and home world (framework thread), or null while loading.</summary>
     public SyncSession.PlayerInfo? CurrentPlayer { get; private set; }
     /// <summary>Whether your sync partner's character was found on this screen this frame.</summary>
@@ -288,6 +292,8 @@ public sealed unsafe class KoiLink : IDisposable
         Sync.Update(me);
 
         var syncActive = Sync.State == SyncSession.Phase.Active && Sync.Partner != null && me != null;
+        SyncSelf = default;
+        SyncPartner = default;
         var syncOverworld = syncActive && !gposing && Config.SyncOutsideGPose && !inCutscene;
         SyncPartnerVisible = false;
         int partnerIndex = -1;
@@ -298,6 +304,10 @@ public sealed unsafe class KoiLink : IDisposable
             var partner = FindCharacter(Sync.Partner!.Name, Sync.Partner.World, gposing, isSelf: false);
             if (partner != null)
                 partnerIndex = partner.ObjectIndex;
+            if (self != null)
+                SyncSelf = (self.Address, self.ObjectIndex);
+            if (partner != null)
+                SyncPartner = (partner.Address, partner.ObjectIndex);
             SyncPartnerVisible = partner != null;
 
             if (Sync.IAmHost)

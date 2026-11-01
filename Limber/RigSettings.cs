@@ -15,6 +15,7 @@ public sealed class RigSettings
 
     public bool ShowHandles { get; set; } = true;
     public bool ShowAllBones { get; set; } = false;
+    public bool ShowFaceBones { get; set; } = false;
     public bool ShowRotationGizmo { get; set; } = true;
     public bool HideHandlesWithGameUi { get; set; } = false;
     public float HandleSize { get; set; } = 10f;
@@ -27,6 +28,8 @@ public sealed class RigSettings
     public bool UndoHotkeys { get; set; } = true;
     public Hotkey UndoKey { get; set; } = new() { Key = 0x5A, Ctrl = true }; // Ctrl+Z
     public Hotkey RedoKey { get; set; } = new() { Key = 0x59, Ctrl = true }; // Ctrl+Y
+    /// <summary>Opens / closes Limber's window (another way in besides /limber and Dalamud's plugin list).</summary>
+    public Hotkey OpenKey { get; set; } = new() { Key = 0x4C, Ctrl = true, Shift = true }; // Ctrl+Shift+L
 
     // Moving the hips keeps the chest and feet where they are (off: the hips carry the whole body).
     public bool HipsMoveAlone { get; set; } = true;
@@ -76,6 +79,30 @@ public sealed class RigSettings
     public System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, float>> BodyShapeBuilt { get; set; } = new();
     public System.Collections.Generic.List<Limber.BodyShape.BodyPreset> BodyPresets { get; set; } = new();
     public bool BodyShapePreview { get; set; } = true;
+
+    // Oral page.
+    public Limber.Rig.OralSettings Oral { get; set; } = new();
+
+    // Dynamic Bones page: per character (by name).
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.DynamicBoneSettings> DynamicBones { get; set; } = new();
+
+    /// <summary>FK poses (FK Posing page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.FkPoseSettings> FkPoses { get; set; } = new();
+
+    /// <summary>Throbbing (Limber Animations page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.ThrobSettings> Throb { get; set; } = new();
+
+    /// <summary>Twerking (Limber Animations page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.TwerkSettings> Twerk { get; set; } = new();
+
+    /// <summary>Ahegao face (Limber Animations page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.AhegaoSettings> Ahegao { get; set; } = new();
+
+    /// <summary>Head / eye tracking (Look at page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.LookAtSettings> LookAt { get; set; } = new();
+
+    // Renderer page: bones marked as breast / butt / testicle bones (pattern with "{side}" -> part key, or "none").
+    public Dictionary<string, string> SoftBoneMarks { get; set; } = new();
 
     // Bone scale page: per character (by name), per bone.
     public Dictionary<string, Dictionary<string, Limber.BodyShape.BoneScaleEntry>> BoneScales { get; set; } = new();

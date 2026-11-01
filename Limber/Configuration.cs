@@ -139,6 +139,10 @@ public class Configuration : IPluginConfiguration
     public bool GvhmrStaticCamera { get; set; } = false;
     public string GvhmrDistro { get; set; } = "";
 
+    /// <summary>VLC Live tracks with NLF (in WSL, NVIDIA) instead of the built-in tracker.</summary>
+    public bool LiveNlf { get; set; } = false;
+    public string NlfDistro { get; set; } = "";
+
     // VLC live tab
     public int LiveVlcPort { get; set; } = 8080;
     /// <summary>VLC's own web-interface password (Lua HTTP). Only ever sent to VLC on this PC (127.0.0.1).</summary>

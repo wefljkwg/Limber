@@ -28,6 +28,15 @@ public sealed class MainWindow : Window
     private readonly RendererTab _rendererTab;
     /// <summary>The Body Shape tab (set by the plugin).</summary>
     public BodyShapeTab? BodyShapeTab { get; set; }
+    /// <summary>The Oral page (set by the plugin).</summary>
+    public OralTab? OralTab { get; set; }
+    public AnimationsTab? AnimationsTab { get; set; }
+    public DynamicBonesTab? DynamicBonesTab { get; set; }
+
+    public FkPosingTab? FkPosingTab { get; set; }
+
+    public LimberAnimationsTab? LimberAnimationsTab { get; set; }
+    public LookAtTab? LookAtTab { get; set; }
     private int _portEdit;
     private string _newPresetName = "";
     /// <summary>Which link the Face tab captures from / shows presets for.</summary>
@@ -71,15 +80,22 @@ public sealed class MainWindow : Window
     [
         new("start", "", "Getting started", "What Limber does and where to begin.", DrawStartPage),
 
-        new("pose", "Posing", "Pose", "Grab the dots on the character and drag them to pose. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
+        new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
+        new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers, like Koikatsu's FK, Brio and Anamnesis. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
+        new("lookat", "Posing", "Look at", "The head and eyes follow another character (their face or any bone), one of their own bones, or the camera.", () => LookAtTab?.Draw(), () => LookAtTab != null),
         new("hands", "Posing", "Hands", "Preset finger poses (fist, open, point...) for one hand or both.", () => _limberTab.DrawHandsPage()),
         new("scale", "Posing", "Bone scale", "Make any bone bigger or smaller, with control over the bones around it.", () => _limberTab.DrawBoneScalePage()),
         new("attach", "Posing", "Attach", "Hold a bone on to another character (hands on shoulders, holding hands...).", () => _limberTab.DrawAttachPage()),
         new("move", "Posing", "Move character", "Move, turn and resize the whole character.", () => _limberTab.DrawMovePage()),
+        new("animations", "Posing", "Animations", "Play any of the game's animations on the character (emotes, poses...), also other races' versions.", () => AnimationsTab?.Draw(), () => AnimationsTab != null),
+        new("actors", "Posing", "Actors", "Add GPose actors (copies of a character) and remove them again.", () => _limberTab.DrawActorsPage()),
 
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
+        new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between (Koikatsu style).", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
         new("shape", "Body", "Body shape", "Sliders for the body's shape (like BodySlide), live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
+        new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): throbbing, twerking and an ahegao face, with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
+        new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
         new("props", "Scene", "Housing props", "Place housing furniture around you in GPose.", () => _housingTab.Draw()),
         new("renderer", "Scene", "Renderer", "Extra models and bones drawn on the character.", () => _rendererTab.Draw()),
@@ -91,7 +107,7 @@ public sealed class MainWindow : Window
         new("advanced", "Settings", "Advanced", "Running outside GPose, unfinished pages.", DrawMainAdvanced),
 
         new("video", "Experimental", "Video (not working)", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
-        new("vlc", "Experimental", "VLC live (not working)", "Motion capture from a live video.", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
+        new("vlc", "Experimental", "VLC live (experimental)", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
     ];
 
     private string CurrentPage
@@ -125,11 +141,14 @@ public sealed class MainWindow : Window
             ImGui.SetTooltip("Turns all of Limber on or off (/limber on|off). Your setup is kept.");
         ImGui.SameLine();
         _limberTab.DrawShowHandles();
+        ImGui.SameLine();
+        _limberTab.DrawFreezeToggle();
         if (!Cfg.PluginEnabled)
             ImGui.TextColored(Warn, "Limber is off: nothing is posed, simulated or linked.");
         else if (!Plugin.ClientState.IsGPosing && !(Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose))
             ImGui.TextColored(Warn, "Enter GPose to use Limber (or turn on \"Also run outside GPose\" in Advanced).");
         _limberTab.DrawActorPicker();
+        _limberTab.DrawResetCharacter();
         ImGui.Separator();
 
         var pages = Pages.Where(p => p.Shown?.Invoke() ?? true).ToArray();
@@ -172,6 +191,7 @@ public sealed class MainWindow : Window
         }
 
         _videoTab.DrawDialogs();
+        _limberTab.DrawDialogs();
     }
 
     // The first page: a checklist of what has to be right, and where to go for what.
@@ -186,16 +206,18 @@ public sealed class MainWindow : Window
         bool here = Plugin.ClientState.IsGPosing || (Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose);
         Check(here, Plugin.ClientState.IsGPosing ? "In GPose" : "Running outside GPose", "Enter GPose (or turn on \"Also run outside GPose\" in Advanced).");
         Check(_limberTab.HasCharacter, "A character is chosen", "Pick one under Character at the top, or tick \"Follow my target\".");
-        Check(_limberTab.PosingOn, "Posing is on", "Tick \"Posing on\" on the Pose page.");
+        Check(_limberTab.PosingOn, "Posing is on", "Tick \"Posing on\" on the IK Posing page.");
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Text("What do you want to do?");
         ImGui.Spacing();
-        Jump("Pose a character", "pose", "Drag the dots. Right-click a dot to pin it; middle-click to let go. Ctrl+Z undoes.");
+        Jump("Pose a character (IK)", "pose", "Drag the dots. Right-click a dot to pin it; middle-click to let go. Ctrl+Z undoes.");
+        Jump("Turn bones one by one (FK)", "fk", "Rings or numbers on any bone, Koikatsu / Brio style. Works with IK.");
         Jump("Pose the hands", "hands", "Fists, open hands, pointing...");
         Jump("Make a bone bigger or smaller", "scale", "Any bone, with or without the bones below it.");
         Jump("Hold on to another character", "attach", "A hand on a shoulder, holding hands...");
+        Jump("Add or remove actors", "actors", "Extra GPose actors, copies of any character.");
         Jump("Add body physics", "rig", "One click rigs your body mod for soft breasts and butt.");
         if (BodyShapeTab != null)
             Jump("Change the body's shape", "shape", "Sliders for every part of the body.");
@@ -858,7 +880,7 @@ public sealed class MainWindow : Window
             SaveLocked();
         }
         var vlc = Cfg.ShowVlcTab;
-        if (ImGui.Checkbox("Show the VLC Live page (not working yet)###limber_show_vlc", ref vlc))
+        if (ImGui.Checkbox("Show the VLC Live page (experimental)###limber_show_vlc", ref vlc))
         {
             Cfg.ShowVlcTab = vlc;
             SaveLocked();

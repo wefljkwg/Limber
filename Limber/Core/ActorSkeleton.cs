@@ -311,6 +311,10 @@ public unsafe struct ActorSkeleton
         return names.ToArray();
     }
 
+    /// <summary>An extra skeleton's own bone that sits on the body (its root), -1 if unknown.</summary>
+    public readonly int PartialRootBone(int partial)
+        => partial > 0 && partial < Skeleton->PartialSkeletonCount ? Skeleton->PartialSkeletons[partial].ConnectedBoneIndex : -1;
+
     /// <summary>The body bone an extra skeleton hangs from (-1 if unknown).</summary>
     public readonly int PartialParentBone(int partial)
         => partial > 0 && partial < Skeleton->PartialSkeletonCount ? Skeleton->PartialSkeletons[partial].ConnectedParentBoneIndex : -1;
@@ -356,21 +360,37 @@ public unsafe struct ActorSkeleton
         return new Frame(ReadPosition(t), Quaternion.Normalize(ReadRotation(t)));
     }
 
-    public readonly void SetPartialRotation(int partial, int bone, Quaternion rotation)
+    public readonly void SetPartialRotation(int partial, int bone, Quaternion rotation, bool children = true)
     {
         var pose = PartialPose(partial);
         if(pose == null || !MathUtil.IsFinite(rotation))
             return;
-        var t = pose->AccessBoneModelSpace(bone, PropagateOrNot.Propagate);
+        var t = pose->AccessBoneModelSpace(bone, children ? PropagateOrNot.Propagate : PropagateOrNot.DontPropagate);
         *(Quaternion*)&t->Rotation = Quaternion.Normalize(rotation);
     }
 
-    public readonly void SetPartialPosition(int partial, int bone, Vector3 position)
+    public readonly Vector3 GetPartialScale(int partial, int bone)
+    {
+        var pose = PartialPose(partial);
+        return pose == null ? Vector3.One : *(Vector3*)&pose->AccessBoneModelSpace(bone, PropagateOrNot.DontPropagate)->Scale;
+    }
+
+    // Scale a bone of an extra skeleton (model space); everything below it scales with it.
+    public readonly void SetPartialScale(int partial, int bone, Vector3 scale, bool children = true)
+    {
+        var pose = PartialPose(partial);
+        if(pose == null || !MathUtil.IsFinite(scale))
+            return;
+        var t = pose->AccessBoneModelSpace(bone, children ? PropagateOrNot.Propagate : PropagateOrNot.DontPropagate);
+        *(Vector3*)&t->Scale = scale;
+    }
+
+    public readonly void SetPartialPosition(int partial, int bone, Vector3 position, bool children = true)
     {
         var pose = PartialPose(partial);
         if(pose == null || !MathUtil.IsFinite(position))
             return;
-        var t = pose->AccessBoneModelSpace(bone, PropagateOrNot.Propagate);
+        var t = pose->AccessBoneModelSpace(bone, children ? PropagateOrNot.Propagate : PropagateOrNot.DontPropagate);
         *(Vector3*)&t->Translation = position;
     }
 
@@ -452,6 +472,86 @@ public unsafe struct ActorSkeleton
                 *(Quaternion*)&t->Rotation = Quaternion.Normalize(turn * rotation);
                 *(Vector3*)&t->Scale = size * scale;
             }
+        }
+    }
+
+    /// <summary>One bone's model-space place, as stored (Freeze motion, pose files).</summary>
+    public readonly record struct BoneTransform(Vector3 Position, Quaternion Rotation, Vector3 Scale);
+
+    /// <summary>Every bone of every part of the skeleton (body, face, hair...), model space, as it is now.</summary>
+    public readonly BoneTransform[][] CaptureModelPose()
+    {
+        int partialCount = Skeleton->PartialSkeletonCount;
+        var parts = new BoneTransform[partialCount][];
+        for(int p = 0; p < partialCount; p++)
+        {
+            var pose = GetPose(&Skeleton->PartialSkeletons[p]);
+            if(pose == null || pose->Skeleton == null)
+            {
+                parts[p] = [];
+                continue;
+            }
+            int count = pose->Skeleton->Bones.Length;
+            var bones = new BoneTransform[count];
+            for(int bone = 0; bone < count; bone++)
+            {
+                var t = pose->AccessBoneModelSpace(bone, PropagateOrNot.DontPropagate);
+                bones[bone] = new BoneTransform(*(Vector3*)&t->Translation, *(Quaternion*)&t->Rotation, *(Vector3*)&t->Scale);
+            }
+            parts[p] = bones;
+        }
+        return parts;
+    }
+
+    /// <summary>Puts back what <see cref="CaptureModelPose"/> took; false (nothing written) if the skeleton isn't the
+    /// same shape any more (a redraw, a different hairstyle).</summary>
+    public readonly bool RestoreModelPose(BoneTransform[][] parts)
+    {
+        int partialCount = Skeleton->PartialSkeletonCount;
+        if(parts.Length != partialCount)
+            return false;
+        for(int p = 0; p < partialCount; p++)
+        {
+            var pose = GetPose(&Skeleton->PartialSkeletons[p]);
+            int count = pose == null || pose->Skeleton == null ? 0 : pose->Skeleton->Bones.Length;
+            if(count != parts[p].Length)
+                return false;
+        }
+        for(int p = 0; p < partialCount; p++)
+        {
+            var pose = GetPose(&Skeleton->PartialSkeletons[p]);
+            if(pose == null)
+                continue;
+            var bones = parts[p];
+            for(int bone = 0; bone < bones.Length; bone++)
+            {
+                var b = bones[bone];
+                if(!MathUtil.IsFinite(b.Position) || !MathUtil.IsFinite(b.Rotation) || !MathUtil.IsFinite(b.Scale))
+                    continue;
+                var t = pose->AccessBoneModelSpace(bone, PropagateOrNot.DontPropagate);
+                *(Vector3*)&t->Translation = b.Position;
+                *(Quaternion*)&t->Rotation = b.Rotation;
+                *(Vector3*)&t->Scale = b.Scale;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Writes one part's bones (model space) directly, as given (same count as the part has).</summary>
+    public readonly void WritePartModelPose(int part, BoneTransform[] bones)
+    {
+        var pose = PartialPose(part);
+        if(pose == null || pose->Skeleton == null || pose->Skeleton->Bones.Length != bones.Length)
+            return;
+        for(int bone = 0; bone < bones.Length; bone++)
+        {
+            var b = bones[bone];
+            if(!MathUtil.IsFinite(b.Position) || !MathUtil.IsFinite(b.Rotation) || !MathUtil.IsFinite(b.Scale))
+                continue;
+            var t = pose->AccessBoneModelSpace(bone, PropagateOrNot.DontPropagate);
+            *(Vector3*)&t->Translation = b.Position;
+            *(Quaternion*)&t->Rotation = b.Rotation;
+            *(Vector3*)&t->Scale = b.Scale;
         }
     }
 

@@ -13,6 +13,7 @@ namespace Limber.Gpu;
 public sealed class LiveMeshSettings
 {
     public bool UsePhysics { get; set; } = true;
+    public bool AutoStart { get; set; } = true;    // start on the chosen character by itself (no buffer list)
     public float Strength { get; set; } = 1f;      // how hard colliders push the skin (1 = all the way out)
     public float Firmness { get; set; } = 0.5f;    // how firmly it holds its shape
     public float Bounce { get; set; } = 0.4f;      // how long it keeps wobbling
@@ -24,6 +25,10 @@ public sealed class LiveMeshSettings
     public float SkinMargin { get; set; } = 2f;    // mm kept between the skin and colliders
     public float ImprintDepth { get; set; } = 3f;  // cm: how deep the exact shape of what touches is pressed in
     public float ClingRange { get; set; } = 3f;    // cm: how far skin reaches to cling onto a collider with Skin cling
+    public float SideFirmness { get; set; } = 0.3f; // how much firmer the skin is sideways than in and out (sloshing)
+    public float MaxBulge { get; set; } = 2f;      // cm: how far skin may swell out past where the body puts it
+    public float Smoothing { get; set; } = 0.5f;   // how smooth dents look (shape kept, nothing shrinks)
+    public float Carry { get; set; } = 0.7f;       // how much skin is carried along by what touches it as that moves
     // The older skin-only dent.
     public float Spread { get; set; } = 3f;
     public float Bulge { get; set; } = 0.6f;
@@ -84,14 +89,14 @@ public static unsafe partial class LiveSoftBody
         public int[] Neighbours = [];
         public float[] Lengths = [];         // rest distance to each neighbour
         public Vector3 RestNormal;           // the surface's normal at rest (from the triangles, welded)
-        public int Side;                     // 0 / 1 = left / right breast, 2 / 3 = left / right butt cheek
+        public int Side;                     // 0 / 1 = left / right breast, 2 / 3 = left / right butt cheek, 4 / 5 testicles
         public float Area;                   // the bit of skin this point stands for (m²)
         public float Nipple;                 // 1 = part of the nipple (moves as one solid piece), fading to 0 at its base
         public Vector3 Offset, Velocity;     // what's shown (model space), and its speed
     }
 
-    // Breasts (sides 0, 1) and butt cheeks (2, 3): each its own soft body; nipples only on the breasts.
-    private const int Sides = 4;
+    // Breasts (sides 0, 1), butt cheeks (2, 3) and testicles (4, 5): each its own soft body; nipples only on the breasts.
+    private const int Sides = 6;
 
     private sealed class MeshState
     {
@@ -267,7 +272,7 @@ public static unsafe partial class LiveSoftBody
 
     // ---- Start / stop (UI, render thread)
 
-    /// <summary><paramref name="partOf"/>: which soft part a bone moves (0 breasts, 1 butt, -1 neither).</summary>
+    /// <summary><paramref name="partOf"/>: which soft part a bone moves (0 breasts, 1 butt, 2 testicles, -1 none).</summary>
     public static string Start(LiveMesh.Found target, nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
     {
         Stop();
@@ -307,7 +312,7 @@ public static unsafe partial class LiveSoftBody
             bool any = false;
             for (int v = 0; v < layout.VertexCount; v++)
             {
-                float breast = 0f, butt = 0f;
+                float breast = 0f, butt = 0f, balls = 0f;
                 for (int k = 0; k < skin.Slots; k++)
                 {
                     int slot = skin.Indices[v * 8 + k];
@@ -318,10 +323,12 @@ public static unsafe partial class LiveSoftBody
                         breast += wk;
                     else if (bonePart[slot] == 1)
                         butt += wk;
+                    else if (bonePart[slot] == 2)
+                        balls += wk;
                 }
-                float w = breast + butt;
+                float w = breast + butt + balls;
                 mask[v] = Math.Min(w, 1f);
-                partOfVertex[v] = butt > breast ? 1 : 0;
+                partOfVertex[v] = balls > breast && balls > butt ? 2 : butt > breast ? 1 : 0;
                 any |= w > 0.02f;
             }
             if (!any)
@@ -400,7 +407,7 @@ public static unsafe partial class LiveSoftBody
                 groups[g].Neighbours = neighbours[g].ToArray();
                 groups[g].Lengths = neighbours[g].Select(o => Vector3.Distance(groups[g].Rest, groups[o].Rest)).ToArray();
                 groups[g].RestNormal = normals[g].LengthSquared() > 1e-20f ? Vector3.Normalize(normals[g]) : Vector3.UnitZ;
-                groups[g].Side += groups[g].Rest.X >= 0f ? 0 : 1; // (breast 0 / 1, butt 2 / 3)
+                groups[g].Side += groups[g].Rest.X >= 0f ? 0 : 1; // (breast 0 / 1, butt 2 / 3, testicles 4 / 5)
                 float spacing = groups[g].Lengths.Length > 0 ? groups[g].Lengths.Average() : 0.003f;
                 groups[g].Area = spacing * spacing;
             }
@@ -409,7 +416,7 @@ public static unsafe partial class LiveSoftBody
             total += groups.Count;
         }
         if (meshes.Count == 0)
-            return "No breast or butt vertices in this model (pick the body / top model's vertices line).";
+            return "No breast, butt or testicle vertices in this model (pick the body model's vertices line, or mark the bones in the Renderer).";
 
         var sim = new Sim
         {
@@ -434,7 +441,7 @@ public static unsafe partial class LiveSoftBody
             ReadFile = readFile, PartOf = partOf };
         LastError = null;
         string physics = sim.Physics != null ? $", soft body of {sim.Physics.Count} particles" : ", no soft body (too few points)";
-        return $"Live soft body on {total} breast / butt points{physics} ({meshes.Count} mesh(es), LoD {lod}). Touch it with a prop.";
+        return $"Live soft body on {total} soft points{physics} ({meshes.Count} mesh(es), LoD {lod}). Touch it with a prop.";
     }
 
     // ---- Starting again by itself after a redraw (a Body Shape build, gear change, ...)
@@ -522,6 +529,66 @@ public static unsafe partial class LiveSoftBody
             LastError = "Starting the live soft body again failed: " + e.Message;
         }
     }
+
+    // ---- Starting without the buffer list
+
+    private static string _autoKey = "";
+
+    /// <summary>
+    /// Finds the character's GPU vertex buffers and starts the live soft body on the right one by itself: the body /
+    /// top model first, then the rest, biggest first; the first that has soft parts (breasts, butt, testicles) wins.
+    /// Returns what happened.
+    /// </summary>
+    public static string AutoStart(nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    {
+        var obj = ActorSkeleton.GetObject(index);
+        if (obj == null || (nint)obj != address || obj->DrawObject == null)
+            return "The character isn't there.";
+        if (!Limber.Koi.Safety.AdultAllowed(address))
+            return "Not available for this character.";
+        var found = LiveMesh.Probe((nint)obj->DrawObject, new List<string>());
+        var candidates = found.Where(f => f.IsVertex)
+            .OrderBy(f => f.Slot == 1 ? 0 : f.Slot == 3 ? 1 : 2)
+            .ThenByDescending(f => f.Desc.ByteWidth)
+            .ToList();
+        string last = "No model with soft parts found on this character.";
+        foreach (var f in candidates)
+        {
+            try
+            {
+                last = Start(f, address, index, readFile, partOf);
+            }
+            catch (Exception e)
+            {
+                last = e.Message;
+            }
+            if (Running)
+                return last;
+        }
+        return last;
+    }
+
+    /// <summary>
+    /// Once a frame from the plugin (cheap): with Auto start on, starts on the given character when it isn't running,
+    /// trying again only when what the character wears changes (probing every frame would cost FPS).
+    /// </summary>
+    public static void AutoTick(nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    {
+        if (address == 0 || Running || Resuming || !Settings().AutoStart)
+            return;
+        var obj = ActorSkeleton.GetObject(index);
+        if (obj == null || (nint)obj != address || obj->DrawObject == null)
+            return;
+        var files = LiveMesh.ModelFiles((nint)obj->DrawObject);
+        string key = address.ToString() + "|" + string.Join("|", files.ConvertAll(x => x.File));
+        if (key == _autoKey)
+            return;
+        _autoKey = key;
+        AutoStatus = AutoStart(address, index, readFile, partOf);
+    }
+
+    /// <summary>What the last automatic start said.</summary>
+    public static string AutoStatus = "";
 
     public static void Stop()
     {
@@ -882,24 +949,8 @@ public static unsafe partial class LiveSoftBody
         }
         // Smooth it: blends where two contacts' areas meet, and rounds the dent's edge (the pressed points are
         // smoothed too, then put back out of the colliders, so the skin follows a sharp corner as a soft curve).
-        var next = new Vector3[n];
-        for (int pass = 0; pass < 8; pass++)
-        {
-            for (int g = 0; g < n; g++)
-            {
-                var nb = groups[g].Neighbours;
-                if (nb.Length == 0 || groups[g].Mask <= 0.35f)
-                {
-                    next[g] = d[g];
-                    continue;
-                }
-                var sum = Vector3.Zero;
-                foreach (var o in nb)
-                    sum += d[o];
-                next[g] = d[g] * 0.5f + sum / nb.Length * 0.5f;
-            }
-            (d, next) = (next, d);
-        }
+        // (Smoothing that keeps the dent's depth: plain averaging made dents shallower and wider each pass.)
+        SmoothKeepingShape(groups, d, 4 + (int)MathF.Round(4f * Math.Clamp(Settings().Smoothing, 0f, 1f)), 0.35f);
         for (int g = 0; g < n; g++)
         {
             if (groups[g].Mask <= 0.35f)
@@ -1035,6 +1086,7 @@ public static unsafe partial class LiveSoftBody
     private static void Solve(Sim sim, Snapshot snap, Physics.Tuning tuning)
     {
         float strength = tuning.Strength;
+        float smoothing = Math.Clamp(Settings().Smoothing, 0f, 1f);
         var physics = sim.Physics;
         if (physics == null || !ReferenceEquals(_sim, sim))
             return;
@@ -1067,6 +1119,7 @@ public static unsafe partial class LiveSoftBody
             int n = groups.Length;
             var offsets = new Vector3[n];
             var facing = new Vector3[n];
+            var posedAt = new Vector3[n];
             for (int g = 0; g < n; g++)
             {
                 var grp = groups[g];
@@ -1090,7 +1143,15 @@ public static unsafe partial class LiveSoftBody
                     var outward = Vector3.TransformNormal(facing[g], worldTurn);
                     grabNormals.Add(outward.LengthSquared() > 1e-20f ? Vector3.Normalize(outward) : Vector3.UnitZ);
                 }
-                var off = physics.Steady(mi, g, physics.Offset(mi, g), tuning.Steadiness);
+                offsets[g] = physics.Steady(mi, g, physics.Offset(mi, g), tuning.Steadiness);
+                posedAt[g] = posed;
+            }
+            // Smoother dents (keeping their depth), before the exact press-in of what touches goes on top.
+            SmoothKeepingShape(groups, offsets, (int)MathF.Round(3f * smoothing), 0.3f);
+            for (int g = 0; g < n; g++)
+            {
+                var posed = posedAt[g];
+                var off = offsets[g];
                 float need = 0f;
                 if (colliders.Length > 0 && strength > 0f)
                 {
@@ -1296,6 +1357,67 @@ public static unsafe partial class LiveSoftBody
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    /// <summary>
+    /// Smooths a field of offsets over the mesh without it shrinking: each pass averages every point with its
+    /// neighbours, then puts back the part of the change that only came from averaging away the shape (measured
+    /// against the field as it started and as it was before the pass, with that correction itself averaged), so
+    /// stair steps and spikes go while a dent keeps its depth and width. Points at or below
+    /// <paramref name="minMask"/> are left alone.
+    /// </summary>
+    private static void SmoothKeepingShape(Group[] groups, Vector3[] field, int passes, float minMask)
+    {
+        int n = groups.Length;
+        if (passes <= 0 || n == 0)
+            return;
+        // Only where something moved (and one ring round it): the rest of the mesh is zero and stays zero.
+        var near = new bool[n];
+        bool any = false;
+        for (int g = 0; g < n; g++)
+        {
+            if (field[g].LengthSquared() < 1e-14f)
+                continue;
+            near[g] = true;
+            any = true;
+            foreach (var o in groups[g].Neighbours)
+                near[o] = true;
+        }
+        if (!any)
+            return;
+        const float KeepStart = 0.1f, Correct = 0.6f; // how much of the starting field is aimed for; own vs. neighbours' correction
+        var start = (Vector3[])field.Clone();
+        var averaged = new Vector3[n];
+        var back = new Vector3[n];
+        for (int pass = 0; pass < passes; pass++)
+        {
+            for (int g = 0; g < n; g++)
+            {
+                if (!near[g] || groups[g].Mask <= minMask || groups[g].Neighbours.Length == 0)
+                {
+                    averaged[g] = field[g];
+                    back[g] = Vector3.Zero;
+                    continue;
+                }
+                var sum = Vector3.Zero;
+                foreach (var o in groups[g].Neighbours)
+                    sum += field[o];
+                averaged[g] = sum / groups[g].Neighbours.Length;
+                // How far averaging moved it from a blend of where it began and where it was.
+                back[g] = averaged[g] - (start[g] * KeepStart + field[g] * (1f - KeepStart));
+            }
+            for (int g = 0; g < n; g++)
+            {
+                if (!near[g] || groups[g].Mask <= minMask || groups[g].Neighbours.Length == 0)
+                    continue;
+                var sum = Vector3.Zero;
+                foreach (var o in groups[g].Neighbours)
+                    sum += back[o];
+                var correction = back[g] * Correct + sum / groups[g].Neighbours.Length * (1f - Correct);
+                var next = averaged[g] - correction;
+                field[g] = MathUtil.IsFinite(next) ? next : field[g];
+            }
+        }
+    }
 
     private static float SmoothStep(float x)
     {

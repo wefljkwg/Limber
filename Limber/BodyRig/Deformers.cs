@@ -95,6 +95,101 @@ public static class Deformers
         return Write(deformers, tree, trailing);
     }
 
+    /// <summary>
+    /// How the game refits a model made for one body (<paramref name="fromBody"/>, like 101) to another
+    /// (<paramref name="toBody"/>): for each bone, the matrix (row vectors, model space) that takes a vertex weighted to
+    /// it from the one body's shape to the other's. Each body's entry fits it from the body above it in the file's
+    /// tree, so the steps from <paramref name="toBody"/> up to <paramref name="fromBody"/> are chained, nearest to the
+    /// model's body first. Null when the file can't be read or <paramref name="fromBody"/> isn't above
+    /// <paramref name="toBody"/> (nothing to refit, as far as the file says).
+    /// </summary>
+    public static Dictionary<string, System.Numerics.Matrix4x4>? Fitting(byte[] pbd, ushort fromBody, ushort toBody, int variant = 0)
+    {
+        if (fromBody == toBody || pbd.Length < 4)
+            return null;
+        int count = BitConverter.ToInt32(pbd, 0);
+        if (count <= 0 || count > 4096 || 4 + count * 20 > pbd.Length)
+            return null;
+        var body = new ushort[count];
+        var link = new short[count];
+        var offset = new int[count];
+        for (int i = 0; i < count; i++)
+        {
+            int at = 4 + i * 12;
+            body[i] = BitConverter.ToUInt16(pbd, at);
+            link[i] = BitConverter.ToInt16(pbd, at + 2);
+            offset[i] = BitConverter.ToInt32(pbd, at + 4);
+        }
+        int links = 4 + count * 12;
+        short Parent(int l) => BitConverter.ToInt16(pbd, links + l * 8);
+        ushort DeformerOf(int l) => BitConverter.ToUInt16(pbd, links + l * 8 + 6);
+
+        // From the target body up the tree to the model's body.
+        int item = Array.IndexOf(body, toBody);
+        if (item < 0)
+            return null;
+        var steps = new List<int>();
+        int l = link[item];
+        for (int guard = 0; guard < 64 && l >= 0 && l < count; guard++)
+        {
+            int d = DeformerOf(l);
+            if (d < 0 || d >= count)
+                return null;
+            if (body[d] == fromBody)
+                break;
+            steps.Add(d);
+            l = Parent(l);
+            if (l < 0)
+                return null; // reached the top without passing the model's body
+        }
+        // Nearest the model's body first.
+        steps.Reverse();
+        var result = new Dictionary<string, System.Numerics.Matrix4x4>(StringComparer.Ordinal);
+        foreach (var d in steps)
+        {
+            if (offset[d] <= 0)
+                continue;
+            var bones = new List<(string, byte[])>();
+            if (ReadDeformer(pbd, offset[d], bones) < 0)
+                return null;
+            foreach (var (name, raw) in bones)
+            {
+                var m = new float[12];
+                for (int k = 0; k < 12; k++)
+                    m[k] = BitConverter.ToSingle(raw, k * 4);
+                // Stored as three rows of four (rotation / scale and a move in the last column, column vectors):
+                // turned into a row-vector matrix.
+                // (variant: bit 0 reads the numbers the other way round, bit 1 undoes each step instead; for
+                // checking which one the game uses, by eye)
+                var step = (variant & 1) == 0
+                    ? new System.Numerics.Matrix4x4(
+                        m[0], m[4], m[8], 0f,
+                        m[1], m[5], m[9], 0f,
+                        m[2], m[6], m[10], 0f,
+                        m[3], m[7], m[11], 1f)
+                    : new System.Numerics.Matrix4x4(
+                        m[0], m[1], m[2], 0f,
+                        m[3], m[4], m[5], 0f,
+                        m[6], m[7], m[8], 0f,
+                        m[9], m[10], m[11], 1f);
+                if ((variant & 2) != 0 && System.Numerics.Matrix4x4.Invert(step, out var undo))
+                    step = undo;
+                result[name] = result.TryGetValue(name, out var before) ? before * step : step;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>The body id (like 101) in a model's file name (c0101b0001_top.mdl), or 0.</summary>
+    public static ushort BodyOf(string file)
+    {
+        var name = Path.GetFileName(file.Replace('\\', '/').Split('|').Last());
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"c(\d{4})[a-z]\d{4}", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) // (a mod's own file name: the folder it's in, chara/human/c0101/...)
+            match = System.Text.RegularExpressions.Regex.Match(file.Replace('\\', '/'), @"/c(\d{4})/", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success && ushort.TryParse(match.Groups[1].Value, out var id) ? id : (ushort)0;
+    }
+
     // One deformer's bones and matrices; returns where its data ends (strings included, 4-aligned), or -1.
     private static int ReadDeformer(byte[] pbd, int at, List<(string, byte[])> bones)
     {

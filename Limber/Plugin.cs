@@ -56,8 +56,18 @@ public sealed class Plugin : IDalamudPlugin
     private int _softBodyTick;
     private readonly Limber.BodyRig.PropService _props;
     private readonly MotionService _motions;
+    private readonly OralService _oral;
+    private readonly DynamicBoneService _dynamicBones;
+    private readonly FkService _fk;
+    private readonly ThrobService _throb;
+    private readonly LookAtService _lookAt;
+    private readonly TwerkService _twerk;
+    private readonly AhegaoService _ahegao;
+    private FkPosingTab? _fkTab;
     private readonly Limber.BodyRig.HousingProps _housing;
     private readonly Limber.Rig.ActorTransforms _actors = new();
+    private readonly Limber.Rig.MotionFreeze _freeze = new();
+    private readonly Limber.Rig.ActorSpawner _spawner = new();
     private readonly PropOverlay _propOverlay;
     private readonly MainWindow _mainWindow;
     private readonly WindowSystem _windows = new("Limber");
@@ -96,6 +106,21 @@ public sealed class Plugin : IDalamudPlugin
             _housing = new Limber.BodyRig.HousingProps(DataManager, Log);
             _motions = new MotionService(_rigs, ObjectTable, ClientState, GameGui, () => _config.Ik.Motions ??= new());
             _rigs.MotionFor = _motions.For;
+            _oral = new OralService(_rigs, ObjectTable, ClientState, () => _config.Ik.Oral ??= new());
+            _throb = new ThrobService(ObjectTable, () => _config.Ik.Throb ??= new()) { InOral = a => _oral.IsPartner(a) };
+            _fk = new FkService(ObjectTable, () => _config.Ik.FkPoses ??= new());
+            _twerk = new TwerkService(ObjectTable, () => _config.Ik.Twerk ??= new());
+            _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 };
+            _lookAt = new LookAtService(ObjectTable, () => _config.Ik.LookAt ??= new()) { Skip = a => _oral.Follows(a) != 0 };
+            _dynamicBones = new DynamicBoneService(ObjectTable, () => _config.Ik.DynamicBones ??= new()) { Skip = a => _oral.IsPartner(a) };
+            _oral.Allowed = () => _config.PluginEnabled && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);
+            _rigs.TargetOverride = _oral.HeadTarget;
+            _rigs.FollowsActor = _oral.Follows;
+            _oral.ReadFile = LimberTab.ReadModelFile;
+            // Oral is never on by itself: off at start (not saved), and off whenever an actor is added.
+            (_config.Ik.Oral ??= new()).Enabled = false;
+            _spawner.Added = () => { if(_config.Ik.Oral != null) _config.Ik.Oral.Enabled = false; };
+            _motions.AlsoStop = _oral.StopFor;
             _rigs.AddUndoPart(new RigService.UndoPart
             {
                 Capture = () => Newtonsoft.Json.JsonConvert.SerializeObject(_config.Ik.Motions ?? new()),
@@ -121,6 +146,7 @@ public sealed class Plugin : IDalamudPlugin
             _softBodyButt.Props = () => _props.World;
             Limber.Gpu.LiveSoftBody.Props = () => _props.World;
             Limber.Gpu.LiveSoftBody.Settings = () => _config.Ik.LiveMesh ??= new Limber.Gpu.LiveMeshSettings();
+            Limber.BodyRig.SoftBoneMarks.Source = () => _config.Ik.SoftBoneMarks ??= new();
             // Grab: the skin the fingers wrap onto (the live mesh breasts when it runs, else the soft body bones' resting surface).
             _rigs.Grab.Surface = () =>
             {
@@ -215,17 +241,21 @@ public sealed class Plugin : IDalamudPlugin
             _softBodyButt.BoneStrength = () => _config.Ik.PropBoneStrength;
             _propOverlay = new PropOverlay(_props, _config.Ik, GameGui) { BodyColliders = [_softBody, _softBodyTesticles, _softBodyButt] };
             _overlay.SuppressGizmo = () => _propOverlay.GizmoWanted;
-            _overlay.MouseTakenElsewhere = () => _propOverlay.OwnsMouse;
+            _overlay.MouseTakenElsewhere = () => _propOverlay.OwnsMouse || _motions.OwnsMouse;
+            _motions.Changed = () => _config.Ik.Save();
+            _overlay.Motions = _motions;
             _hook.Running = () => _config.PluginEnabled;
             _actors.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             _actors.StartPriority(GameInterop);
+            _freeze.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             Limber.BodyShape.BodyShapeBuild.SetWorkDir(PluginInterface.ConfigDirectory.FullName);
             _bodyShape.KeepFeet = () => _config.Ik.BodyShapeKeepFeet;
-            _hook.Start(("Limber actors", _actors.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber posing", _rigs.UpdateFrame),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber actors", _actors.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame),
-                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber body shape (end of frame)", _bodyShape.AfterFrame));
+                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
+                ("Limber freeze motion (end of frame)", _freeze.CaptureFrame));
 
             var pluginDir = PluginInterface.AssemblyLocation.DirectoryName ?? ".";
             _video = new VideoTab(_koi, pluginDir, PluginInterface.ConfigDirectory.FullName);
@@ -233,12 +263,21 @@ public sealed class Plugin : IDalamudPlugin
             Framework.Update += OnFrameworkUpdate;
 
             var syncHelp = new SyncHelpWindow();
-            var limberTab = new LimberTab(_rigs, _selection, _overlay, _config.Ik) { SoftBreasts = _softBody, SoftTesticles = _softBodyTesticles, SoftButt = _softBodyButt, PropService = _props, Actors = _actors };
+            var limberTab = new LimberTab(_rigs, _selection, _overlay, _config.Ik) { SoftBreasts = _softBody, SoftTesticles = _softBodyTesticles, SoftButt = _softBodyButt, PropService = _props, Actors = _actors, Freeze = _freeze, Spawner = _spawner, Motions = _motions };
             _mainWindow = new MainWindow(_koi, _hook, limberTab, _video, _live, syncHelp,
                 new PropsTab(_props, _propOverlay, _selection, _config.Ik) { Motions = _motions },
                 new RendererTab(_rigs, _selection, _config.Ik, limberTab) { PropService = _props },
                 new HousingPropsTab(_housing, _selection));
             _mainWindow.BodyShapeTab = new BodyShapeTab(_selection, _config.Ik) { RigEverything = limberTab.RigEverything };
+            _mainWindow.OralTab = new OralTab(_oral, _selection, _config.Ik);
+            _mainWindow.AnimationsTab = new AnimationsTab(_selection);
+            _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
+            _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik);
+            _mainWindow.FkPosingTab = _fkTab;
+            _overlay.FkEditor = _fkTab;
+            _mainWindow.LimberAnimationsTab = new LimberAnimationsTab(_selection, _config.Ik, _throb, _twerk, _ahegao);
+            _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
+            limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             _windows.AddWindow(syncHelp);
             var physicsHelp = new BodyPhysicsHelpWindow();
@@ -345,9 +384,11 @@ public sealed class Plugin : IDalamudPlugin
         {
             _props.ApplyResults();
             _actors.CheckPriorityHook();
+            _spawner.Update();
             bool here = _config.PluginEnabled && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);
             if(here)
                 _motions.Update(framework.UpdateDelta.TotalSeconds);
+            _oral.Update(framework.UpdateDelta.TotalSeconds);
             // Placed housing props: only while Limber runs here (removed when you leave GPose or turn it off).
             _housing.Update(here);
             _props.UpdateWorld();
@@ -467,6 +508,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string arguments)
     {
+        Log.Information($"Limber: got {command} {arguments}".TrimEnd());
         switch(arguments.Trim().ToLowerInvariant())
         {
             case "on":
@@ -559,14 +601,38 @@ public sealed class Plugin : IDalamudPlugin
                 _overlay.Draw();
                 _propOverlay.Draw();
                 _motions.Draw();
+                _oral.DrawGuide(GameGui);
                 Limber.Gpu.LiveMesh.Update(); // render thread, before the frame is presented
                 Limber.Gpu.LiveSoftBody.Update();
+                _dynamicBones.Refresh();
+                _throb.Refresh();
+                _lookAt.Refresh();
+                _twerk.Refresh();
+                _ahegao.Refresh();
+                bool mirrored = _fk.Refresh();
+                _fkTab?.AfterMirror(mirrored);
+                if(mirrored)
+                    _config.Ik.Save();
+                if(_selection.Actor.IsSet)
+                    Limber.Gpu.LiveSoftBody.AutoTick(_selection.Actor.Address, _selection.Actor.ObjectIndex, LimberTab.ReadModelFile, LimberTab.LivePartOf);
+                _oral.UpdateLipMesh();
+                _ahegao.UpdateFaceRig(LimberTab.ReadModelFile);
             }
-            else if(Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveMesh.Wobbling)
+            else
+            {
+                _fk.Clear();
+                _throb.Clear();
+                _lookAt.Clear();
+                _twerk.Clear();
+                _ahegao.Clear();
+            }
+            if(!(_config.PluginEnabled && here) && (Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveMesh.Wobbling || Limber.Gpu.LipMesh.Running || Limber.Gpu.FaceRig.Running))
             {
                 // Turned off (or left GPose without "Also run outside GPose"): the models' own vertices back.
                 Limber.Gpu.LiveSoftBody.Stop();
                 Limber.Gpu.LiveMesh.StopWobble();
+                Limber.Gpu.LipMesh.Stop();
+                Limber.Gpu.FaceRig.Stop();
             }
             _typing = ImGui.GetIO().WantTextInput;
         }
@@ -588,6 +654,12 @@ public sealed class Plugin : IDalamudPlugin
 
     private void HandleUndoKeys()
     {
+        var open = _config.Ik.OpenKey ??= new();
+        if(open.PressedNow(KeyState) && !LimberTab.CapturingHotkey && !_typing)
+        {
+            _mainWindow.Toggle();
+            Log.Information("Limber: window toggled by its hotkey");
+        }
         var undo = _config.Ik.UndoKey ??= new();
         var redo = _config.Ik.RedoKey ??= new();
         bool undoPressed = undo.PressedNow(KeyState), redoPressed = redo.PressedNow(KeyState);
@@ -646,9 +718,13 @@ public sealed class Plugin : IDalamudPlugin
 
         Limber.Gpu.LiveMesh.StopWobble();
         Limber.Gpu.LiveSoftBody.Stop();
+        Limber.Gpu.LipMesh.Stop();
+        Limber.Gpu.FaceRig.Stop();
+        Limber.Gpu.SkinCapture.Dispose();
         // Unhook first so nothing runs against the parts being torn down.
         _hook.Dispose();
         _actors.Dispose();
+        _spawner.Dispose();
         Framework.Update -= OnFrameworkUpdate;
         _housing.Dispose();
         _video.Dispose();

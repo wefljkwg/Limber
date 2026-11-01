@@ -5,7 +5,7 @@
     or the DALAMUD_HOME environment variable). The plugin manifest is Limber.json.
   -->
   <PropertyGroup>
-    <Version>0.59.4.0</Version>
+    <Version>0.60.0.0</Version>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Platforms>x64</Platforms>
     <Nullable>enable</Nullable>
@@ -74,5 +74,7 @@
     <!-- The sync relay that the plugin deploys to the player's own Cloudflare account. -->
     <None Remove="Koi\Sync\relay.js" />
     <EmbeddedResource Include="Koi\Sync\relay.js" LogicalName="Limber.relay.js" />
+    <!-- The NLF helper for VLC Live: written out to the plugin's settings folder when you click "Set up NLF". -->
+    <EmbeddedResource Include="..\NLF\limber_nlf.py;..\NLF\run.sh;..\NLF\setup_nlf.sh;..\NLF\setup_nlf.bat;..\NLF\README.md" LogicalName="Limber.NLF.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

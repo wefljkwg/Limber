@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Limber.Koi.Net;
 using Limber.Protocol;
@@ -16,7 +17,7 @@ namespace Limber.Video;
 public sealed class LiveTracker : IDisposable
 {
     public sealed record Settings(int Port, string Password, bool Fingers, bool GuessHidden, float Smoothing, int People = 1,
-        bool SwapSides = false, bool Accurate = true, bool Gpu = true);
+        bool SwapSides = false, bool Accurate = true, bool Gpu = true, bool Nlf = false, string Distro = "");
 
     private readonly string _pluginDir;
     private readonly PoseReceiver _receiver;
@@ -30,11 +31,19 @@ public sealed class LiveTracker : IDisposable
     private MotionFrame?[] _latest = new MotionFrame?[2];
     private int _latestVersion;
     private string? _fileError;
+    private string? _nlfError; // why NLF stopped (kept on screen until it runs again)
 
     // Streaming state (framework thread).
     private int _sentVersion = -1;
     private long _lastSendTicks;
     private uint _packetNumber;
+    // In-betweening (framework thread): the game runs faster than tracking, so each game frame shows a blend from
+    // what was on screen when the newest pose came in to that pose, spread over the time between poses.
+    private readonly MotionFrame?[] _from = new MotionFrame?[2];
+    private readonly MotionFrame?[] _to = new MotionFrame?[2];
+    private readonly MotionFrame?[] _shown = new MotionFrame?[2];
+    private long _toTicks;
+    private double _gap = 0.1; // seconds between tracked poses (smoothed)
 
     public volatile string Status = "Off";
     public volatile string? Error;
@@ -60,6 +69,7 @@ public sealed class LiveTracker : IDisposable
             return;
         _settings = settings;
         Error = null;
+        _nlfError = null;
         Status = "Connecting to VLC...";
         var cts = new CancellationTokenSource();
         int run;
@@ -85,6 +95,9 @@ public sealed class LiveTracker : IDisposable
             _latest = new MotionFrame?[2];
         }
         _sentVersion = -1;
+        _toTicks = 0;
+        for (int p = 0; p < 2; p++)
+            _from[p] = _to[p] = _shown[p] = null;
         Status = "Off";
         FileName = null;
         PersonFound = false;
@@ -110,20 +123,55 @@ public sealed class LiveTracker : IDisposable
         }
 
         var now = Stopwatch.GetTimestamp();
-        if (version == _sentVersion && (now - _lastSendTicks) / (double)Stopwatch.Frequency < 0.1)
+        if (version != _sentVersion)
+        {
+            if (_sentVersion >= 0 && _toTicks != 0)
+            {
+                double gap = (now - _toTicks) / (double)Stopwatch.Frequency;
+                if (gap > 0.005 && gap < 1.0)
+                    _gap += (Math.Clamp(gap, 0.016, 0.5) - _gap) * 0.3;
+            }
+            for (int p = 0; p < 2; p++)
+            {
+                var next = p < frames.Length ? frames[p] : null;
+                _from[p] = next == null ? null : _shown[p] ?? next;
+                _to[p] = next;
+            }
+            _toTicks = now;
+            _sentVersion = version;
+        }
+        else if (_to[0] == null && _to[1] == null && (now - _lastSendTicks) / (double)Stopwatch.Frequency < 0.1)
             return;
 
-        for (int p = 0; p < frames.Length && p < channels.Length; p++)
+        float t = (float)Math.Clamp((now - _toTicks) / (double)Stopwatch.Frequency / _gap, 0.0, 1.0);
+        for (int p = 0; p < 2 && p < channels.Length; p++)
         {
-            var frame = frames[p];
-            if (frame == null)
+            var to = _to[p];
+            if (to == null)
+            {
+                _shown[p] = null;
                 continue;
+            }
+            var frame = Blend(_from[p], to, t);
+            _shown[p] = frame;
             if (p > 0 && channels[p] == channels[0])
                 continue; // both people on one channel would fight; person 1 wins
             _receiver.Inject(MotionClip.Encode(frame, p == 0 ? "VLC" : $"VLC ({p + 1})", ++_packetNumber, channels[p], mirror), channels[p]);
         }
-        _sentVersion = version;
         _lastSendTicks = now;
+    }
+
+    private static MotionFrame Blend(MotionFrame? from, MotionFrame to, float t)
+    {
+        if (from == null || t >= 1f)
+            return to;
+        var f = new MotionFrame();
+        for (int j = 0; j < f.P.Length; j++)
+        {
+            f.V[j] = to.V[j];
+            f.P[j] = from.V[j] && to.V[j] ? System.Numerics.Vector3.Lerp(from.P[j], to.P[j], t) : to.P[j];
+        }
+        return f;
     }
 
     /// <summary>Hand the latest poses to the framework thread (an entry is null when that person isn't tracked).</summary>
@@ -158,6 +206,11 @@ public sealed class LiveTracker : IDisposable
         VlcLink? vlc = null;
         (int Port, string Password) vlcFor = (-1, "");
         PoseTracker? tracker = null;
+        NlfClient? nlf = null;
+        string? nlfFor = null;          // the WSL distro it was started in
+        long nlfRetryAt = 0;
+        var nlfPelvis = new System.Numerics.Vector3?[2]; // where each tracked person was last (camera space)
+        var nlfFloor = new[] { float.NaN, float.NaN };
         (bool Fingers, bool Accurate, bool Gpu) trackerFor = (false, false, false);
         VideoCapture? capture = null;
         string? capturePath = null;
@@ -208,7 +261,9 @@ public sealed class LiveTracker : IDisposable
                     try
                     {
                         state = vlc.Read();
-                        Error = _fileError;
+                        Error = _fileError ?? _nlfError;
+                        if (Status.StartsWith("Waiting for VLC", StringComparison.Ordinal))
+                            Status = settings.Nlf ? "Connected. Waiting for NLF's first frames..." : "Connected.";
                     }
                     catch (VlcException e)
                     {
@@ -280,7 +335,51 @@ public sealed class LiveTracker : IDisposable
                     continue;
                 }
 
-                if (tracker == null || trackerFor != (settings.Fingers, settings.Accurate, settings.Gpu))
+                if (settings.Nlf)
+                {
+                    // NLF in WSL: started once, again after the distro changes, retried every 10 s after a failure.
+                    if (nlf == null || nlfFor != settings.Distro || !nlf.Running)
+                    {
+                        if (Stopwatch.GetTimestamp() < nlfRetryAt)
+                        {
+                            Sleep(200, token);
+                            continue;
+                        }
+                        nlf?.Dispose();
+                        nlf = new NlfClient();
+                        nlfFor = settings.Distro;
+                        Status = "Starting NLF in WSL (the first time takes a while)...";
+                        if (!nlf.Start(settings.Distro, token))
+                        {
+                            Error = _nlfError = nlf.LastError.Length > 0 ? "NLF: " + nlf.LastError : "NLF didn't start.";
+                            Status = "NLF isn't running (trying again in 10 s)";
+                            nlfRetryAt = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 10;
+                            nlf.Dispose();
+                            nlf = null;
+                            Publish(run, null);
+                            continue;
+                        }
+                        Model = nlf.Model;
+                        Error = _nlfError = null;
+                    }
+                    if (!nlf.Open(capturePath!, token))
+                    {
+                        Error = _nlfError = "NLF: " + nlf.LastError;
+                        nlf.Dispose();
+                        nlf = null;
+                        nlfRetryAt = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 10;
+                        continue;
+                    }
+                }
+                else if (nlf != null)
+                {
+                    _nlfError = null;
+                    nlf.Dispose();
+                    nlf = null;
+                    nlfFor = null;
+                }
+
+                if (!settings.Nlf && (tracker == null || trackerFor != (settings.Fingers, settings.Accurate, settings.Gpu)))
                 {
                     tracker?.Dispose();
                     tracker = null;
@@ -360,11 +459,53 @@ public sealed class LiveTracker : IDisposable
                         foreach (var slot in slots)
                             slot.Forget();
                         smoothed = new MotionFrame?[2];
+                        nlfPelvis = new System.Numerics.Vector3?[2];
                     }
                 }
                 else if (target < nextFrame)
                 {
                     Sleep(4, token);
+                    continue;
+                }
+
+                if (settings.Nlf && nlf != null)
+                {
+                    // NLF reads the frame itself (from the same file) and sends back the 3D body.
+                    var found3d = nlf.Track(target, token);
+                    nextFrame = target + 1;
+                    lastTracked = target;
+                    if (found3d == null)
+                    {
+                        Error = _nlfError = "NLF: " + nlf.LastError;
+                        nlf.Dispose();
+                        nlf = null;
+                        continue;
+                    }
+                    if (nlf.FrameError != null)
+                        Error = _nlfError = "NLF: " + nlf.FrameError;
+                    else if (_nlfError != null)
+                        Error = _nlfError = null;
+                    var chosen = PickPeople(found3d, people, settings.SwapSides, nlfPelvis);
+                    int count3d = 0;
+                    var out3d = new MotionFrame?[2];
+                    for (int p = 0; p < people; p++)
+                    {
+                        if (chosen[p] is { } person)
+                        {
+                            count3d++;
+                            nlfPelvis[p] = person.Joints[0];
+                            var frame3d = new MotionFrame();
+                            NlfPose.ToFrame(person.Joints, settings.Fingers, frame3d, ref nlfFloor[p]);
+                            smoothed[p] = Smooth(smoothed[p], frame3d, settings.Smoothing);
+                        }
+                        out3d[p] = smoothed[p]?.Clone();
+                    }
+                    PeopleFound = count3d;
+                    PersonFound = count3d > 0;
+                    if (count3d > 0)
+                        Publish(run, out3d);
+                    CountFrame(ref frames, ref fpsWindow);
+                    Status = state.Playback == VlcLink.Playback.Playing ? "Following VLC (NLF)" : "VLC is paused - holding the pose";
                     continue;
                 }
                 while (nextFrame < target && !token.IsCancellationRequested)
@@ -390,7 +531,7 @@ public sealed class LiveTracker : IDisposable
                 var found = new bool[people];
                 for (int p = 0; p < people; p++)
                     poses[p] = new MotionFrame();
-                tracker.ProcessPeople(src, slots, settings.Fingers, settings.GuessHidden, poses, found);
+                tracker!.ProcessPeople(src, slots, settings.Fingers, settings.GuessHidden, poses, found);
 
                 int foundCount = 0;
                 var publish = new MotionFrame?[2];
@@ -409,15 +550,7 @@ public sealed class LiveTracker : IDisposable
                 if (foundCount > 0)
                     Publish(run, publish);
 
-                frames++;
-                var t = Stopwatch.GetTimestamp();
-                var window = (t - fpsWindow) / (double)Stopwatch.Frequency;
-                if (window >= 1)
-                {
-                    TrackFps = (float)(frames / window);
-                    frames = 0;
-                    fpsWindow = t;
-                }
+                CountFrame(ref frames, ref fpsWindow);
                 Status = state.Playback == VlcLink.Playback.Playing ? "Following VLC" : "VLC is paused - holding the pose";
             }
         }
@@ -434,6 +567,7 @@ public sealed class LiveTracker : IDisposable
                 Publish(run, null); // never leave a frozen pose behind
                 capture?.Dispose();
                 tracker?.Dispose();
+                nlf?.Dispose();
                 vlc?.Dispose();
                 frame?.Dispose();
                 bgr?.Dispose();
@@ -443,6 +577,64 @@ public sealed class LiveTracker : IDisposable
                 // Cleanup must never take the game down either.
             }
         }
+    }
+
+    private void CountFrame(ref int frames, ref long fpsWindow)
+    {
+        frames++;
+        var t = Stopwatch.GetTimestamp();
+        var window = (t - fpsWindow) / (double)Stopwatch.Frequency;
+        if (window >= 1)
+        {
+            TrackFps = (float)(frames / window);
+            frames = 0;
+            fpsWindow = t;
+        }
+    }
+
+    // Which of NLF's people is person 1 and person 2: whoever is nearest to where that person was last frame;
+    // at the start, left to right across the picture (or right to left with "swap sides"), or the nearest one
+    // to the camera when only one person is followed.
+    private static NlfClient.Person?[] PickPeople(System.Collections.Generic.List<NlfClient.Person> found, int people, bool swap,
+        System.Numerics.Vector3?[] last)
+    {
+        var chosen = new NlfClient.Person?[2];
+        var left = new System.Collections.Generic.List<NlfClient.Person>(found);
+        for (int p = 0; p < people; p++)
+        {
+            if (last[p] is not { } before || left.Count == 0)
+                continue;
+            int best = -1;
+            float bestDistance = 0.6f; // metres: further than this is someone else
+            for (int i = 0; i < left.Count; i++)
+            {
+                float d = System.Numerics.Vector3.Distance(left[i].Joints[0], before);
+                if (d < bestDistance)
+                {
+                    bestDistance = d;
+                    best = i;
+                }
+            }
+            if (best >= 0)
+            {
+                chosen[p] = left[best];
+                left.RemoveAt(best);
+            }
+        }
+        if (people == 1)
+        {
+            if (chosen[0] == null && left.Count > 0)
+                chosen[0] = left.OrderBy(x => x.Joints[0].Z).First();
+            return chosen;
+        }
+        var byX = left.OrderBy(x => x.Joints[0].X / System.MathF.Max(0.1f, x.Joints[0].Z)).ToList();
+        if (swap)
+            byX.Reverse();
+        int k = 0;
+        for (int p = 0; p < people && k < byX.Count; p++)
+            if (chosen[p] == null)
+                chosen[p] = byX[k++];
+        return chosen;
     }
 
     /// <summary>Light live smoothing (some delay is unavoidable live, so this stays gentle).</summary>

@@ -18,7 +18,53 @@ namespace Limber.BodyRig;
 /// </summary>
 public static class OneClickRig
 {
-    public const string ModelsModName = "Limber Rigged Models";
+    public const string ModelsModName = "Limber Rigged Models"; // (earlier versions' models mod: "Limber Rigged Models (collection)")
+
+    /// <summary>
+    /// The rig's Penumbra mod for a collection: "Limber (Breast Rig) (collection)" when one part was rigged,
+    /// "Limber (Rig) (collection)" for everything. One mod: the skeleton bones and the weighted models together.
+    /// </summary>
+    public static string RigModName(IReadOnlyList<RigPart> parts, string collection)
+    {
+        string what = parts.Count == 1 ? Singular(parts[0].Label) + " Rig" : "Rig";
+        return $"Limber ({what}) ({Safe(collection)})";
+    }
+
+    private static string Singular(string label) => label switch
+    {
+        "Breasts" => "Breast",
+        "Testicles" => "Testicle",
+        _ => label,
+    };
+
+    /// <summary>One of Limber's rig mods (any collection, any part, or an earlier version's): by its folder name.</summary>
+    public static bool IsRigMod(string folder) =>
+        folder.StartsWith(ModelsModName, StringComparison.OrdinalIgnoreCase)
+        || folder.Equals(RigBuilder.ModName, StringComparison.OrdinalIgnoreCase)
+        || Regex.IsMatch(folder, @"^Limber \((?:[^()]+ )?Rig\) \(", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The folder of the rig mod that holds a collection's rigged models (for building on top of them): the
+    /// everything-rig if there is one, else a one-part rig, else an earlier version's; null if none.
+    /// </summary>
+    public static string? RigModFolder(string root, string collection)
+    {
+        string tail = $" ({Safe(collection)})";
+        var names = new List<string>();
+        try
+        {
+            names.AddRange(Directory.GetDirectories(root).Select(d => Path.GetFileName(d)!));
+        }
+        catch
+        {
+            return null;
+        }
+        string? Pick(Func<string, bool> ok) => names.FirstOrDefault(n => n.EndsWith(tail, StringComparison.OrdinalIgnoreCase) && ok(n));
+        var found = Pick(n => n.Equals($"Limber (Rig){tail}", StringComparison.OrdinalIgnoreCase))
+            ?? Pick(n => Regex.IsMatch(n, @"^Limber \([^()]+ Rig\) \(", RegexOptions.IgnoreCase))
+            ?? Pick(n => n.StartsWith(ModelsModName, StringComparison.OrdinalIgnoreCase));
+        return found == null ? null : Path.Combine(root, found);
+    }
     private const int RigPriority = 9998, ModelsPriority = 9999;
 
     public sealed class Progress
@@ -53,7 +99,7 @@ public static class OneClickRig
     /// part's box is first fitted to the part in the models it wears.
     /// </summary>
     public static Progress Start(ushort objectIndex, nint address, IReadOnlyDictionary<string, BreastRigShape> shapes, string workDir,
-        RigPart[] parts, bool fit, IReadOnlyDictionary<string, (float Roundness, float Fill)>? shaping = null)
+        RigPart[] parts, bool fit, IReadOnlyDictionary<string, (float Roundness, float Fill)>? shaping = null, IReadOnlyCollection<string>? only = null)
     {
         var progress = new Progress();
         var copy = shapes.ToDictionary(kv => kv.Key, kv => kv.Value.Clone());
@@ -61,7 +107,7 @@ public static class OneClickRig
         {
             try
             {
-                await Run(objectIndex, address, copy, workDir, parts, fit, shaping, progress);
+                await Run(objectIndex, address, copy, workDir, parts, fit, shaping, progress, only);
             }
             catch (Exception e)
             {
@@ -80,8 +126,13 @@ public static class OneClickRig
     internal static Task<T> Game<T>(Func<T> f) => Plugin.Framework.RunOnFrameworkThread(f);
 
     private static async Task Run(ushort index, nint address, Dictionary<string, BreastRigShape> shapes, string workDir,
-        RigPart[] parts, bool fit, IReadOnlyDictionary<string, (float Roundness, float Fill)>? shaping, Progress progress)
+        RigPart[] parts, bool fit, IReadOnlyDictionary<string, (float Roundness, float Fill)>? shaping, Progress progress,
+        IReadOnlyCollection<string>? only = null)
     {
+        // Just some models ("Rig this one"): added to the rig mod already there, with the boxes as they are.
+        HashSet<string>? onlySet = only is { Count: > 0 } ? new HashSet<string>(only, StringComparer.OrdinalIgnoreCase) : null;
+        if (onlySet != null)
+            fit = false;
         bool allowed = await Game(() => StillThere(index, address) && Limber.Koi.Safety.AdultAllowed(address));
         if (!allowed)
         {
@@ -122,7 +173,9 @@ public static class OneClickRig
         if (paths == null)
             throw new InvalidOperationException("Penumbra couldn't list this character's files");
 
-        var modelsName = $"{ModelsModName} ({Safe(collectionName)})";
+        var modelsName = RigModName(parts, collectionName);
+        if (onlySet != null && RigModFolder(root, collectionName) is { } existing)
+            modelsName = Path.GetFileName(existing);
         var modelsDir = Path.Combine(root, modelsName);
         var originals = Path.Combine(workDir, "originals");
         var models = new List<(string Game, string Code, byte[] Data)>();
@@ -130,9 +183,15 @@ public static class OneClickRig
         {
             foreach (var game in games.Where(g => g.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase) && g.StartsWith("chara/", StringComparison.OrdinalIgnoreCase)))
             {
+                if (onlySet != null && !onlySet.Contains(game))
+                    continue;
                 var code = RaceCode(game);
                 if (code == null || !build.Bones.ContainsKey(code))
+                {
+                    if (onlySet != null)
+                        progress.Add($"  {Path.GetFileName(game)}: not a model for an adult body Limber can rig, skipped.");
                     continue;
+                }
                 var source = await ReadOriginal(actual, game, modelsDir, originals);
                 if (source != null)
                     models.Add((game, code, source));
@@ -162,7 +221,7 @@ public static class OneClickRig
         progress.Add("Building the rig (skeleton bones)...");
         foreach (var line in build.Lines)
             progress.Add("  " + line);
-        var rigDir = await PutMod(root, RigBuilder.ModName, build.Files, RigBuilder.Description, progress);
+        // (the skeleton bones go in the same mod as the models, below)
 
         // 4. Weight the models onto the boxes.
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -186,25 +245,29 @@ public static class OneClickRig
         }
         if (files.Count == 0)
             progress.Add("None of the models on this character have weights for that part.");
-        else
-            await PutMod(root, modelsName, files, $"Models weighted to Limber's rig for the \"{collectionName}\" collection (made by Limber from the models worn there; your own mods aren't changed). Rebuild from Limber's Body physics page after updating them.", progress, keepEarlier: true);
+        // One mod: the skeleton bones and the weighted models.
+        var combined = new Dictionary<string, byte[]>(build.Files, StringComparer.OrdinalIgnoreCase);
+        foreach (var (game, data) in files)
+            combined[game] = data;
+        var rigDir = await PutMod(root, modelsName, combined, $"Limber's rig for the \"{collectionName}\" collection: its skeleton bones, and the models worn there weighted to it (made by Limber; your own mods aren't changed). Rebuild from Limber's Body physics page after updating them.", progress, keepEarlier: true);
 
         // 3. On, and above everything else, in this character's collection.
-        foreach (var (dir, priority) in new[] { (rigDir, RigPriority), (files.Count > 0 ? modelsName : null, ModelsPriority) })
-        {
-            if (dir == null)
-                continue;
-            int on = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
-                .InvokeFunc(collectionId, dir, "", true));
-            int at = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, int, int>("Penumbra.TrySetModPriority.V5")
-                .InvokeFunc(collectionId, dir, "", priority));
-            if (on is not (0 or 1) || at is not (0 or 1)) // Success / NothingChanged
-                progress.Add($"  Couldn't turn on \"{dir}\" in {collectionName} (Penumbra said {on}/{at}); turn it on there yourself, at the top.");
-        }
+        int turnedOn = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
+            .InvokeFunc(collectionId, rigDir, "", true));
+        int raised = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, int, int>("Penumbra.TrySetModPriority.V5")
+            .InvokeFunc(collectionId, rigDir, "", ModelsPriority));
+        if (turnedOn is not (0 or 1) || raised is not (0 or 1)) // Success / NothingChanged
+            progress.Add($"  Couldn't turn on \"{rigDir}\" in {collectionName} (Penumbra said {turnedOn}/{raised}); turn it on there yourself, at the top.");
 
-        // The single shared models mod of earlier versions: off here (each collection now has its own).
-        await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
-            .InvokeFunc(collectionId, ModelsModName, "", false));
+        // Limber's other rig mods (other parts, or earlier versions' names): off in this collection, so they don't fight.
+        var modList = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Dictionary<string, string>>("Penumbra.GetModList").InvokeFunc());
+        foreach (var other in modList.Keys)
+        {
+            if (other == rigDir || !IsRigMod(other))
+                continue;
+            await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
+                .InvokeFunc(collectionId, other, "", false));
+        }
 
         // 4. Redraw.
         await Game(() =>
@@ -246,7 +309,7 @@ public static class OneClickRig
 
     private static List<string> SourceNames(RigPart part, string side)
     {
-        var names = part.Parents.Select(p => p.Replace("{side}", side)).ToList();
+        var names = part.AllParents.Select(p => p.Replace("{side}", side)).ToList();
         if (part == RigParts.Testicles)
             names.Add($"iv_kintama_phys_{side}");
         return names;
@@ -356,7 +419,7 @@ public static class OneClickRig
                     && bones.ContainsKey(part.NippleName(left));
                 float separation = bones.TryGetValue($"#{part.Key}:sep", out var sepBone) ? sepBone.Position.X : part.FallbackSeparation;
                 sides.Add(new MdlRigger.Side(names, names.Select(n => bones[n].Position).ToArray(), bones[names[0]].Parent,
-                    part.Parents.Select(p => p.Replace("{side}", s)).Concat(part == RigParts.Testicles ? new[] { $"iv_kintama_phys_{s}" } : Array.Empty<string>()).ToArray(),
+                    part.AllParents.Select(p => p.Replace("{side}", s)).Concat(part == RigParts.Testicles ? new[] { $"iv_kintama_phys_{s}" } : Array.Empty<string>()).ToArray(),
                     merge, $"{LegacyPrefix(part)}{s}_")
                 {
                     PartKey = part.Key,
@@ -394,7 +457,7 @@ public static class OneClickRig
             // original saved when it was first rigged.
             var root = Path.GetDirectoryName(Path.GetFullPath(modelsDir))!;
             var relative = Path.GetRelativePath(root, full);
-            if (!relative.StartsWith("..", StringComparison.Ordinal) && relative.StartsWith(ModelsModName, StringComparison.OrdinalIgnoreCase))
+            if (!relative.StartsWith("..", StringComparison.Ordinal) && IsRigMod(relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0]))
                 return File.Exists(saved) ? await File.ReadAllBytesAsync(saved) : null;
             // The Body Shape tab's built copy: the original saved when it was first rigged, else the one it was
             // built from.

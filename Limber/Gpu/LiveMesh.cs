@@ -162,10 +162,163 @@ public static unsafe class LiveMesh
         public string Kind => IsVertex ? "vertices" : (Desc.BindFlags & BindIndexBuffer) != 0 ? "indices" : $"bind {Desc.BindFlags}";
     }
 
+    /// <summary>The model files a character is wearing right now (slot, game path or Penumbra's replacement).</summary>
+    public static List<(int Slot, string File)> ModelFiles(nint drawObject)
+    {
+        var list = new List<(int, string)>();
+        if (drawObject == 0 || !Readable(drawObject, 0x100))
+            return list;
+        var cb = (CharacterBase*)drawObject;
+        int slots = cb->SlotCount;
+        if (slots <= 0 || slots > 64 || cb->Models == null)
+            return list;
+        for (int slot = 0; slot < slots; slot++)
+        {
+            var model = cb->Models[slot];
+            if (model == null || !Readable((nint)model, 0x180))
+                continue;
+            var handle = model->ModelResourceHandle;
+            if (handle == null || !Readable((nint)handle, 0x2A0))
+                continue;
+            var file = StdString((nint)handle + 0x48);
+            if (file.Length > 0)
+                list.Add((slot, file));
+        }
+        return list;
+    }
+
     private const int ScanBytes = 0x300, MaxDepth = 4, MaxNodes = 6000;
 
     /// <summary>The Direct3D buffers reachable from the character's worn models (null character: nothing).</summary>
-    public static List<Found> Probe(nint drawObject, List<string> log)
+    /// <summary>
+    /// Research for exact mesh capture: searches the memory reachable from a character's draw object (its models,
+    /// skeleton and what they point to) for given runs of 12 floats (a bone's final skinning matrix, in the layouts
+    /// the game might keep it in), and reports where each was found (the pointer path, and the offset in that block).
+    /// Read only. Slow (a second or so): for the research button, not every frame.
+    /// </summary>
+    public static List<string> FindFloats(nint drawObject, IReadOnlyList<(string Label, float[] Values)> targets, float tolerance, int maxHits = 60)
+    {
+        var report = new List<string>();
+        if (drawObject == 0 || !Readable(drawObject, 0x100))
+        {
+            report.Add("No character model.");
+            return report;
+        }
+        const int Window = 0x4000, Pointers = 0x400, Depth = 4, MaxBlocks = 20000;
+        var seen = new HashSet<nint>();
+        var queue = new Queue<(nint Address, string Path, int Depth)>();
+        var cb = (CharacterBase*)drawObject;
+        // The models first (and what they point to), then the rest of the character.
+        if (cb->SlotCount > 0 && cb->SlotCount <= 64 && cb->Models != null)
+            for (int slot = 0; slot < cb->SlotCount; slot++)
+                if (cb->Models[slot] != null)
+                {
+                    var model = cb->Models[slot];
+                    queue.Enqueue(((nint)model, $"Model[{slot}]", 0));
+                    // Its bone list: the constant buffer(s) the game hands the graphics card with the bone matrices.
+                    if (Readable((nint)model, 0x70))
+                    {
+                        nint list = *(nint*)((nint)model + 0x58);
+                        int count = *(int*)((nint)model + 0x60);
+                        report.Add($"Model[{slot}]: bone list 0x{list:X}, count {count}");
+                        // Raw look at the list (what each entry holds), and every buffer object found inside it.
+                        var buffers = new List<nint>();
+                        int bytes = Math.Clamp(count, 1, 16) * 0x40;
+                        if (slot <= 2 && Readable(list, bytes))
+                        {
+                            var q = (nint*)list;
+                            var raw = new System.Text.StringBuilder("  raw:");
+                            for (int i = 0; i < Math.Min(bytes / 8, 24); i++)
+                                raw.Append($" {(ulong)q[i]:X}");
+                            report.Add(raw.ToString());
+                        }
+                        if (Readable(list, bytes))
+                            for (int i = 0; i < bytes / 8; i++)
+                            {
+                                nint value = ((nint*)list)[i];
+                                if (value == 0 || (value & 7) != 0 || value > 0x7FF000000000 || !Readable(value, 0x30))
+                                    continue;
+                                // A constant buffer: a code address first, a plausible size at +0x20.
+                                int size = *(int*)(value + 0x20);
+                                if (*(nint*)value > 0x7FF000000000 && size > 0 && size <= 0x40000 && size % 16 == 0)
+                                    buffers.Add(value);
+                            }
+                        foreach (var buffer in buffers)
+                        {
+                            if (!Readable(buffer, 0x30))
+                                continue;
+                            var cbuffer = (ConstantBuffer*)buffer;
+                            nint source = (nint)cbuffer->UnsafeSourcePointer;
+                            report.Add($"  buffer 0x{buffer:X}: {cbuffer->ByteSize} bytes, flags 0x{cbuffer->Flags:X}, data 0x{source:X}");
+                            if (source == 0 || cbuffer->ByteSize <= 0 || cbuffer->ByteSize > 0x40000 || !Readable(source, Math.Min(cbuffer->ByteSize, 48)))
+                                continue;
+                            var f = (float*)source;
+                            report.Add($"    first: {f[0]:0.###} {f[1]:0.###} {f[2]:0.###} {f[3]:0.###} | {f[4]:0.###} {f[5]:0.###} {f[6]:0.###} {f[7]:0.###} | {f[8]:0.###} {f[9]:0.###} {f[10]:0.###} {f[11]:0.###}");
+                            // The patterns, searched in the whole buffer (offset / 48 = which bone of this model it is).
+                            int n = cbuffer->ByteSize / 4;
+                            if (!Readable(source, n * 4))
+                                continue;
+                            foreach (var (label, values) in targets)
+                                for (int i = 0; i + 12 <= n; i++)
+                                {
+                                    bool match = true;
+                                    for (int k = 0; k < 12 && match; k++)
+                                        match = float.IsNaN(values[k]) || MathF.Abs(f[i + k] - values[k]) <= tolerance;
+                                    if (match)
+                                        report.Add($"    MATCH {label} at +0x{i * 4:X} (bone {i / 12}, {i % 12} floats in)");
+                                }
+                        }
+                    }
+                }
+        queue.Enqueue((drawObject, "CharacterBase", 0));
+        int blocks = 0, hits = 0;
+        while (queue.Count > 0 && blocks++ < MaxBlocks && hits < maxHits)
+        {
+            var (at, path, depth) = queue.Dequeue();
+            if (!seen.Add(at) || !Readable(at, 16))
+                continue;
+            // How much of this block can be read (up to the window).
+            int length = 16;
+            while (length < Window && Readable(at, length * 2))
+                length *= 2;
+            var floats = (float*)at;
+            int count = length / 4;
+            foreach (var (label, values) in targets)
+            {
+                if (values.Length != 12)
+                    continue;
+                for (int i = 0; i + 12 <= count && hits < maxHits; i++)
+                {
+                    // (a NaN in the pattern matches anything: a part that may be measured from somewhere else)
+                    if (!float.IsNaN(values[0]) && MathF.Abs(floats[i] - values[0]) > tolerance)
+                        continue;
+                    bool match = true;
+                    for (int k = 1; k < 12 && match; k++)
+                        match = float.IsNaN(values[k]) || MathF.Abs(floats[i + k] - values[k]) <= tolerance;
+                    if (match && float.IsNaN(values[0]) && !float.IsFinite(floats[i]))
+                        match = false;
+                    if (!match)
+                        continue;
+                    report.Add($"{label}: {path} +0x{i * 4:X} (block 0x{at:X}, depth {depth})");
+                    hits++;
+                }
+            }
+            if (depth >= Depth)
+                continue;
+            int scan = Math.Min(length, Pointers);
+            for (int off = 0; off + 8 <= scan; off += 8)
+            {
+                nint value = *(nint*)(at + off);
+                if (value == 0 || (value & 7) != 0 || seen.Contains(value) || !Readable(value, 16))
+                    continue;
+                queue.Enqueue((value, $"{path}+0x{off:X}", depth + 1));
+            }
+        }
+        report.Add($"Searched {blocks} memory blocks, {hits} match(es).");
+        return report;
+    }
+
+    public static List<Found> Probe(nint drawObject, List<string> log, Func<string, bool>? onlyFiles = null)
     {
         var found = new List<Found>();
         var cls = BufferClass();
@@ -193,6 +346,8 @@ public static unsafe class LiveMesh
                 continue;
             var handle = model->ModelResourceHandle;
             string file = handle != null && Readable((nint)handle, 0x2A0) ? StdString((nint)handle + 0x48) : "?";
+            if (onlyFiles != null && !onlyFiles(file))
+                continue; // (searching a model's memory is slow: only the ones asked for)
             int before = found.Count;
             var seen = new HashSet<nint>();
             var queue = new Queue<(nint Address, string Path, int Depth)>();

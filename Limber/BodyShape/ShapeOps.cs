@@ -27,6 +27,10 @@ public sealed class ShapeOp
     public bool HoldChildSizes;
     /// <summary>The bones right below it stay where they were (Bone scale: "children move" off).</summary>
     public bool HoldChildPlaces;
+    /// <summary>Every bone further down is carried too (moved out with the scale, not only the ones right below:
+    /// the game doesn't scale how far apart bones are when their parent's scale changes). Off: the old way, the
+    /// ones further down keep their places (Body thickness: every part thicker where it is).</summary>
+    public bool CarryDescendants = true;
 
     public bool IsIdentity => Vector3.DistanceSquared(Scale, Vector3.One) < 1e-12f && MathF.Abs(Turn.W) > 0.999999f
         && Move.LengthSquared() < 1e-14f && MathF.Abs(Stretch - 1f) < 1e-6f;
@@ -35,6 +39,7 @@ public sealed class ShapeOp
     {
         Bone = Bone, Scale = Scale, Turn = Turn, Move = Move, Stretch = Stretch, StretchAxis = StretchAxis, Next = Next,
         Keep = Keep, KeepNames = new HashSet<string>(KeepNames), HoldChildSizes = HoldChildSizes, HoldChildPlaces = HoldChildPlaces,
+        CarryDescendants = CarryDescendants,
     };
 
     /// <summary>This and <paramref name="other"/> (on the same bone) together: other's done after this.</summary>
@@ -56,6 +61,7 @@ public sealed class ShapeOp
         r.KeepNames.UnionWith(other.KeepNames);
         r.HoldChildSizes |= other.HoldChildSizes;
         r.HoldChildPlaces |= other.HoldChildPlaces;
+        r.CarryDescendants &= other.CarryDescendants;
         return r;
     }
 

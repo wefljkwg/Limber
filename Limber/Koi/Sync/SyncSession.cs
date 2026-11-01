@@ -33,7 +33,7 @@ public sealed class SyncSession : IDisposable
     private enum Msg : byte
     {
         Request = 1, Accept = 2, Decline = 3, Bye = 4, Ping = 5,
-        SwapRequest = 6, SwapAccept = 7, SwapDecline = 8, Settings = 9, Frames = 10,
+        SwapRequest = 6, SwapAccept = 7, SwapDecline = 8, Settings = 9, Frames = 10, PoseFile = 11,
     }
 
     public sealed record PlayerInfo(string Name, uint World, string WorldName);
@@ -179,6 +179,64 @@ public sealed class SyncSession : IDisposable
     }
 
     public void Leave() => End("Sync ended.", notify: true);
+
+    // ---------------------------------------------------------------------------------------
+    // Pose files (Limber's pose / duo pose imports), both ways
+
+    /// <summary>A pose file loaded on the other side: its JSON, who it goes on (0 = the sender's character, 1 = the
+    /// receiver's, 255 = nobody), and whether bone positions were loaded too.</summary>
+    public sealed record PoseFileMessage(string Json, int First, int Second, bool Positions);
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<PoseFileMessage> _poseFiles = new();
+
+    /// <summary>Sends a pose file just loaded here to the partner, so it loads on their screen too.</summary>
+    public bool SendPoseFile(string json, int first, int second, bool positions)
+    {
+        if (State != Phase.Active)
+            return false;
+        using var ms = new MemoryStream();
+        ms.WriteByte((byte)first);
+        ms.WriteByte((byte)second);
+        ms.WriteByte(positions ? (byte)1 : (byte)0);
+        using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        {
+            var text = System.Text.Encoding.UTF8.GetBytes(json);
+            gz.Write(text, 0, text.Length);
+        }
+        if (ms.Length > 900_000)
+            return false;
+        Send(Msg.PoseFile, ms.ToArray());
+        return true;
+    }
+
+    /// <summary>The next pose file the partner loaded (null when none).</summary>
+    public PoseFileMessage? TakePoseFile() => _poseFiles.TryDequeue(out var m) ? m : null;
+
+    private void ReadPoseFile(ReadOnlySpan<byte> body)
+    {
+        if (body.Length < 4)
+            return;
+        try
+        {
+            using var input = new MemoryStream(body[3..].ToArray());
+            using var gz = new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            var buffer = new byte[16384];
+            int n;
+            while ((n = gz.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                output.Write(buffer, 0, n);
+                if (output.Length > 8_000_000)
+                    return; // (not a real pose file)
+            }
+            if (_poseFiles.Count < 8)
+                _poseFiles.Enqueue(new PoseFileMessage(System.Text.Encoding.UTF8.GetString(output.ToArray()), body[0], body[1], body[2] != 0));
+        }
+        catch (Exception e)
+        {
+            _log.Warning("Limber sync: couldn't read a pose file from the partner: " + e.Message);
+        }
+    }
 
     // ---------------------------------------------------------------------------------------
     // Framework tick
@@ -381,6 +439,9 @@ public sealed class SyncSession : IDisposable
                 break;
             case Msg.Frames when State == Phase.Active && !IAmHost:
                 ReadFrames(body);
+                break;
+            case Msg.PoseFile when State == Phase.Active:
+                ReadPoseFile(body);
                 break;
         }
     }

@@ -385,6 +385,11 @@ public sealed unsafe class RigService : IDisposable
                     }
                 }
 
+                // A character following another one's body (Oral: the mouth on a partner's shaft) after that one.
+                if(ready && FollowsActor?.Invoke(rig.Address) is nint leader && leader != 0 && leader != rig.Address
+                    && _pending.Any(p => p.Address == leader))
+                    ready = false;
+
                 if(ready)
                 {
                     _order.Add(rig);
@@ -402,6 +407,8 @@ public sealed unsafe class RigService : IDisposable
             }
         }
     }
+
+    private readonly HashSet<string> _heldBones = [];
 
     private void SolveRig(ActorRig rig)
     {
@@ -441,6 +448,11 @@ public sealed unsafe class RigService : IDisposable
                         _mirrorAnim[x] = skeleton.GetModelFrame(x).Rotation;
             }
         }
+
+        _heldBones.Clear();
+        foreach(var goal in _sortedGoals)
+            if(goal.Enabled && !goal.TurnOnly)
+                _heldBones.Add(goal.Bone);
 
         CaptureHelpers(skeleton);
 
@@ -545,12 +557,20 @@ public sealed unsafe class RigService : IDisposable
 
     /// <summary>Motion props (piston, wheel, cycle) by character and bone; set by the plugin.</summary>
     public Func<nint, string, MotionProp?>? MotionFor;
+    /// <summary>Something else steering a held bone (Oral: the head): its target in model space, or null.</summary>
+    public Func<nint, string, Frame, ActorSkeleton, Frame?>? TargetOverride;
+    /// <summary>Another character this one must be posed after (it follows their body), or 0.</summary>
+    public Func<nint, nint>? FollowsActor;
 
     // A held target moved by the motion prop on that bone, if there is one.
     private Frame Moved(ActorRig rig, Goal goal, Frame target, in ActorSkeleton skeleton)
     {
         var motion = MotionFor?.Invoke(rig.Address, goal.Bone);
-        return motion == null ? target : MotionService.Apply(motion, target, skeleton);
+        if(motion != null)
+            target = MotionService.Apply(motion, target, skeleton);
+        if(TargetOverride?.Invoke(rig.Address, goal.Bone, target, skeleton) is { } other)
+            target = other;
+        return target;
     }
 
     // Bones in the extra skeletons: turned (and placed, once moved) on top of the bone they hang from.
@@ -839,7 +859,9 @@ public sealed unsafe class RigService : IDisposable
                 if(Vector3.Distance(skeleton.GetModelPosition(bone), target.Position) > 0.002f)
                 {
                     Solver.CollectChain(info, bone, Math.Max(1, goal.ChainLength), _joints);
-                    solved = Solver.SolveChain(skeleton, _joints, bone, target.Position, 12, 0.5f);
+                    // Bones held by their own handles (solved before this one) stay as they are.
+                    _joints.RemoveAll(j => _heldBones.Contains(info.Names[j]));
+                    solved = _joints.Count == 0 || Solver.SolveChain(skeleton, _joints, bone, target.Position, 12, 0.5f);
                 }
                 if(goal.LockRotation)
                 {
@@ -859,8 +881,13 @@ public sealed unsafe class RigService : IDisposable
                 int spineA = alone ? info.IndexOf("j_sebo_a") : -1, spineB = alone ? info.IndexOf("j_sebo_b") : -1;
                 if(spineA < 0 || spineB < 0)
                     alone = false;
-                Frame ribs = default;
-                if(alone) ribs = skeleton.GetModelFrame(spineB);
+                Frame ribs = default, hipsAnim = default, waistAnim = default;
+                if(alone)
+                {
+                    ribs = skeleton.GetModelFrame(spineB);
+                    hipsAnim = skeleton.GetModelFrame(bone);
+                    waistAnim = skeleton.GetModelFrame(spineA);
+                }
 
                 // Not alone: move the body's centre helper (n_hara) so nothing hanging from it is left behind.
                 int parent = info.ParentOf(bone);
@@ -884,13 +911,33 @@ public sealed unsafe class RigService : IDisposable
                         // The spine starts at the hips again, the lower spine bends toward the ribcage, the ribcage
                         // (and everything on it) keeps its pose; what bending can't take is shared by the waist.
                         skeleton.SetModelPosition(spineA, skeleton.GetModelPosition(spineA) + moved);
+                        // The waist turns halfway between the hips (as they are now) and the ribcage, so a turn
+                        // between them is shared by both waist joints instead of twisting one into a pinch (after
+                        // a new pose, the held hips can face quite another way than the ribcage).
+                        var hipsNow = skeleton.GetModelFrame(bone).Rotation;
+                        var fromHips = Quaternion.Normalize(hipsNow * Quaternion.Inverse(hipsAnim.Rotation) * waistAnim.Rotation);
+                        var fromRibs = waistAnim.Rotation;
+                        if(Quaternion.Dot(fromHips, fromRibs) < 0f)
+                            fromRibs = Quaternion.Negate(fromRibs);
+                        skeleton.SetModelRotation(spineA, Quaternion.Normalize(Quaternion.Slerp(fromHips, fromRibs, 0.5f)));
                         var a = skeleton.GetModelPosition(spineA);
                         var aim = MathUtil.FromTo(skeleton.GetModelPosition(spineB) - a, ribs.Position - a);
                         skeleton.SetModelRotation(spineA, Quaternion.Normalize(aim * skeleton.GetModelFrame(spineA).Rotation));
                         skeleton.SetModelRotation(spineB, ribs.Rotation);
                         var gap = ribs.Position - skeleton.GetModelPosition(spineB);
+                        // Only so much stretch at the waist (a new pose can put the ribcage far from the held
+                        // hips): past that, the ribcage comes along toward the hips instead of the waist tearing.
+                        var ribsAt = ribs.Position;
+                        float waist = Vector3.Distance(ribs.Position, waistAnim.Position);
+                        float allowed = MathF.Max(0.01f, waist * 0.3f), gapLength = gap.Length();
+                        if(gapLength > allowed && MathUtil.IsFinite(gap))
+                        {
+                            var excess = gap * (1f - allowed / gapLength);
+                            ribsAt -= excess;
+                            gap -= excess;
+                        }
                         skeleton.SetModelPosition(spineA, skeleton.GetModelPosition(spineA) + gap * 0.5f);
-                        skeleton.SetModelPosition(spineB, ribs.Position);
+                        skeleton.SetModelPosition(spineB, ribsAt);
                         skeleton.SetModelRotation(spineB, ribs.Rotation);
                     }
                 }
