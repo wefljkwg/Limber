@@ -212,13 +212,23 @@ public sealed class LimberAnimationsTab
         changed |= SliderAh("Tremble", s.Tremble * 100f, v => s.Tremble = v / 100f, 0f, 200f, "%.0f%%", "The eyes trembling.");
         ImGui.TextDisabled("Mouth");
         changed |= SliderAh("Mouth open", s.MouthOpen, v => s.MouthOpen = v, 0f, 70f, "%.0f°", "How far the jaw opens.");
-        changed |= SliderAh("Mouth corners", s.Smile * 100f, v => s.Smile = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners up (+, a smile, lifting the cheeks) or down (-), the lips near them following.");
+        changed |= SliderAh("Mouth corners up / down", s.Smile * 100f, v => s.Smile = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners up (+, a smile, lifting the cheeks) or down (-), the lips near them following.");
+        changed |= SliderAh("Mouth corners wider", s.CornerWide * 100f, v => s.CornerWide = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners further apart (+) or closer together (-).");
+        changed |= SliderAh("Mouth corners in / out", s.CornerDepth * 100f, v => s.CornerDepth = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners forward (+, pursed) or back into the cheeks (-).");
         changed |= SliderAh("Upper lip", s.UpperLip * 100f, v => s.UpperLip = v / 100f, -200f, 200f, "%.0f%%", "The middle of the upper lip up (+) or down (-); the corners stay.");
         changed |= SliderAh("Lower lip", s.LowerLip * 100f, v => s.LowerLip = v / 100f, -200f, 200f, "%.0f%%", "The middle of the lower lip up (+) or down (-); the corners stay.");
         changed |= SliderAh("Tongue out", s.TongueOut * 100f, v => s.TongueOut = v / 100f, 0f, 400f, "%.0f%%", "How far the tongue comes out (past 100% it reaches further than it naturally would).");
         changed |= SliderAh("Tongue length", s.TongueLength * 100f, v => s.TongueLength = v / 100f, 0f, 200f, "%.0f%%", "The tongue longer.");
         changed |= SliderAh("Tongue droop", s.TongueDroop, v => s.TongueDroop = v, 0f, 120f, "%.0f°", "How far the tongue hangs down over the lip.");
         changed |= SliderAh("Tongue up / down", s.TongueUp, v => s.TongueUp = v, -90f, 90f, "%.0f°", "The tongue pointing up (+, the tip curling up toward the upper lip) or down (-). It still stays over the lower lip.");
+        bool collide = s.TongueCollision;
+        if(ImGui.Checkbox("Tongue collision###lanim_ah_tcol", ref collide))
+        {
+            s.TongueCollision = collide;
+            changed = true;
+        }
+        Tooltip("Keeps the tongue off the lips and teeth (with physics on, it bumps off them). Off: it goes exactly where it's posed, even through them.");
+        ImGui.SameLine();
         bool physics = s.TonguePhysics;
         if(ImGui.Checkbox("Tongue physics###lanim_ah_tphys", ref physics))
         {

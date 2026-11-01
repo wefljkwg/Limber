@@ -71,6 +71,12 @@ public sealed class AhegaoSettings
     public float Wiggle { get; set; } = 0.2f;
     /// <summary>Mouth corners up (+) or down (-), -1..1.</summary>
     public float Smile { get; set; } = 0.3f;
+    /// <summary>Mouth corners wider apart (+) or closer together (-), -2..2.</summary>
+    public float CornerWide { get; set; } = 0f;
+    /// <summary>Mouth corners forward (+, pursed) or back into the cheeks (-), -2..2.</summary>
+    public float CornerDepth { get; set; } = 0f;
+    /// <summary>The tongue kept off the lips and teeth (with physics: bumping off them). Off: it goes where it's posed.</summary>
+    public bool TongueCollision { get; set; } = true;
     /// <summary>The head tipped back (degrees, + = chin up).</summary>
     public float HeadTilt { get; set; } = 8f;
     /// <summary>The head leaning to one side (degrees).</summary>
@@ -130,7 +136,9 @@ public sealed unsafe class AhegaoService
         public Quaternion HeadBefore, HeadWritten;
         public bool Wrote;
         // the tongue's physics: where each bone is and how fast it's going (in the character's space)
-        public Vector3[]? TongueAt, TongueSpeed;
+        public Vector3[]? TongueAt, TongueSpeed;   // (in the head's own space: it moves with the head)
+        public Vector3 HeadLast, HeadVelocity;      // the head's place (world) and speed: its moves push the tongue a little
+        public bool HeadKnown;
     }
 
     private readonly IObjectTable _objects;
@@ -547,7 +555,8 @@ public sealed unsafe class AhegaoService
         // 7. The mouth corners up (or down) and out, with the lip bones near them following (less toward the
         //    middle), and the cheeks lifting with a smile.
         float smile = Math.Clamp(s.Smile, -2f, 2f) * level;
-        if(!rig && MathF.Abs(smile) > 1e-4f)
+        float wide = Math.Clamp(s.CornerWide, -2f, 2f) * level, depthIn = Math.Clamp(s.CornerDepth, -2f, 2f) * level;
+        if(!rig && (MathF.Abs(smile) > 1e-4f || MathF.Abs(wide) > 1e-4f || MathF.Abs(depthIn) > 1e-4f))
         {
             var mouthNow = Vector3.Zero;
             var moving = new List<int>(corners);
@@ -567,7 +576,7 @@ public sealed unsafe class AhegaoService
                     if(w <= 0f)
                         continue;
                     var outward = x > 0f ? across : -across;
-                    sk.SetPartialPosition(part, b, f.Position + up * (0.009f * sc * smile * w) + outward * (0.003f * sc * MathF.Abs(smile) * w), children: false);
+                    sk.SetPartialPosition(part, b, f.Position + up * (0.009f * sc * smile * w) + outward * (0.006f * sc * wide * w) + facing * (0.005f * sc * depthIn * w), children: false);
                 }
         }
         if(!rig && smile > 0f)
@@ -613,7 +622,7 @@ public sealed unsafe class AhegaoService
                 float u = i / (float)(Limber.Gpu.FaceRig.LipCount - 1) * 2f - 1f; // -1 the right corner, +1 the left
                 float c = u * u, mid = 1f - c;
                 // corners: up and out with a smile (and back a little), down with a frown
-                var corner = new Vector3(0.0028f * MathF.Abs(smile) * c * MathF.Sign(u), 0.0065f * smile * c, -0.0015f * MathF.Max(0f, smile) * c);
+                var corner = new Vector3(0.006f * wide * c * MathF.Sign(u), 0.0065f * smile * c, 0.005f * depthIn * c);
                 // the middles: their own sliders, and a rounder opening the wider the jaw is
                 o[Limber.Gpu.FaceRig.UpperLip + i] = (corner + new Vector3(0f, 0.0045f * upperLip * mid + 0.0022f * open * mid, 0.0008f * open * mid)) * k;
                 o[Limber.Gpu.FaceRig.LowerLip + i] = (corner + new Vector3(0f, 0.0045f * lowerLip * mid - 0.0022f * open * mid, 0.0008f * open * mid)) * k;
@@ -723,7 +732,9 @@ public sealed unsafe class AhegaoService
                 var goal = new Vector3[n];
                 for(int k = 0; k < n; k++)
                 {
-                    goal[k] = Keep(sk.GetPartialFrame(part, tongue[k].Bone).Position, out bool hit);
+                    var posed = sk.GetPartialFrame(part, tongue[k].Bone).Position;
+                    bool hit = false;
+                    goal[k] = s.TongueCollision ? Keep(posed, out hit) : posed;
                     if(hit && !s.TonguePhysics)
                         sk.SetPartialPosition(part, tongue[k].Bone, goal[k], children: true);
                 }
@@ -796,6 +807,43 @@ public sealed unsafe class AhegaoService
             capsules.Add(new Capsule(at - side * 0.016f * sc, at + side * 0.016f * sc, 0.003f * sc, -1, -1, upperTeeth));
         }
 
+        if(!s.TongueCollision)
+            capsules.Clear(); // collision off: it only springs and sags
+
+        // All of it in the head's own space, so the tongue goes with the head (walking, turning, nodding) instead of
+        // being left behind; the head's speeding up / slowing down only gives it a gentle, capped push.
+        var headFrame = sk.GetPartialFrame(part, 0);
+        var toHead = Quaternion.Inverse(headFrame.Rotation);
+        Vector3 Local(Vector3 v) => Vector3.Transform(v - headFrame.Position, toHead);
+        Vector3 LocalDir(Vector3 v) => Vector3.Transform(v, toHead);
+        for(int k = 0; k < count; k++)
+            target[k] = Local(target[k]);
+        for(int i = 0; i < capsules.Count; i++)
+        {
+            var c = capsules[i];
+            capsules[i] = c with { A = Local(c.A), B = Local(c.B) };
+        }
+        up = LocalDir(up);
+        facing = LocalDir(facing);
+        var headWorld = sk.ModelToWorldPoint(headFrame.Position);
+        var headAccel = Vector3.Zero;
+        if(state.HeadKnown && dt > 1e-4f && Vector3.Distance(headWorld, state.HeadLast) < 1f)
+        {
+            var speed = (headWorld - state.HeadLast) / dt;
+            var smoothed = Vector3.Lerp(state.HeadVelocity, speed, 0.35f);
+            headAccel = (smoothed - state.HeadVelocity) / dt;
+            state.HeadVelocity = smoothed;
+        }
+        else
+        {
+            state.HeadVelocity = Vector3.Zero;
+            state.HeadKnown = true;
+        }
+        state.HeadLast = headWorld;
+        var inertia = LocalDir(Vector3.Transform(headAccel, Quaternion.Inverse(sk.RootRotation)) / MathF.Max(0.01f, sk.RootScale.Y));
+        if(inertia.Length() > 10f)
+            inertia = Vector3.Normalize(inertia) * 10f;
+
         // Start (or start again if it was far off).
         var p = state.TongueAt;
         var v = state.TongueSpeed;
@@ -812,7 +860,8 @@ public sealed unsafe class AhegaoService
         float loose = Math.Clamp(s.TongueJiggle, 0f, 2f);
         float stiff = loose <= 1f ? 320f + (22f - 320f) * loose : 22f / (1f + 2f * (loose - 1f)); // past 100%: looser still                     // pull toward the pose
         float damping = 2f * MathF.Sqrt(stiff) * MathF.Max(0.05f, 0.55f + (0.1f - 0.55f) * MathF.Min(loose, 1f) - 0.04f * MathF.Max(0f, loose - 1f));
-        var gravity = new Vector3(0f, -9.8f * (0.15f + 0.55f * MathF.Min(loose, 1.6f)), 0f);
+        var gravity = LocalDir(new Vector3(0f, -9.8f * (0.15f + 0.55f * MathF.Min(loose, 1.6f)), 0f))
+                      - inertia * (0.25f + 0.15f * MathF.Min(loose, 1f)); // (and the head's push)
         float span = MathF.Min(dt, 0.05f);
         int steps = Math.Max(1, (int)MathF.Ceiling(span / (1f / 240f)));
         float h = span / steps;
@@ -881,20 +930,23 @@ public sealed unsafe class AhegaoService
         state.TongueSpeed = v;
 
         // Put the bones there: the root where the pose has it, each turned to point at the next (the last at the tip).
-        sk.SetPartialPosition(part, tongue[0].Bone, p[0], children: true);
+        var placed = new Vector3[count];
+        for(int k = 0; k < count; k++)
+            placed[k] = headFrame.Position + Vector3.Transform(p[k], headFrame.Rotation); // back to the character's space
+        sk.SetPartialPosition(part, tongue[0].Bone, placed[0], children: true);
         for(int k = 0; k < n; k++)
         {
             var a = sk.GetPartialFrame(part, tongue[k].Bone);
             var next = k + 1 < n ? sk.GetPartialFrame(part, tongue[k + 1].Bone).Position
                                  : a.Position + (a.Position - sk.GetPartialFrame(part, tongue[k - 1].Bone).Position) * 0.8f;
-            var turn = MathUtil.FromTo(next - a.Position, p[k + 1] - a.Position);
+            var turn = MathUtil.FromTo(next - a.Position, placed[k + 1] - a.Position);
             sk.SetPartialRotation(part, tongue[k].Bone, Quaternion.Normalize(turn * a.Rotation), children: true);
         }
         // The lips giving where it pressed (a couple of millimetres at most).
         float most = 0.002f * sc;
         foreach(var (bone, push) in giveAt)
         {
-            var move = push / MathF.Max(1, steps);
+            var move = Vector3.Transform(push, headFrame.Rotation) / MathF.Max(1, steps);
             if(move.Length() > most)
                 move = Vector3.Normalize(move) * most;
             var f = sk.GetPartialFrame(part, bone);
