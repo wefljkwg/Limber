@@ -73,6 +73,16 @@ public sealed class AhegaoSettings
     public float Smile { get; set; } = 0.3f;
     /// <summary>Mouth corners wider apart (+) or closer together (-), -2..2.</summary>
     public float CornerWide { get; set; } = 0f;
+    /// <summary>The lower lip's corners (the ones above are the upper lip's): up / down, wider, in / out.</summary>
+    public float SmileLower { get; set; } = 0.3f;
+    public float CornerWideLower { get; set; } = 0f;
+    public float CornerDepthLower { get; set; } = 0f;
+    /// <summary>The upper / lower lip wider (+, spread out left and right) or narrower (-), -5..5.</summary>
+    public float UpperLipWide { get; set; } = 0f;
+    public float LowerLipWide { get; set; } = 0f;
+    /// <summary>How much the tongue goes along when the jaw opens (1 = all of it, as it's attached; 0 = it stays
+    /// with the head, so it can be posed on its own).</summary>
+    public float TongueFollowsJaw { get; set; } = 0.35f;
     /// <summary>Mouth corners forward (+, pursed) or back into the cheeks (-), -2..2.</summary>
     public float CornerDepth { get; set; } = 0f;
     /// <summary>The tongue kept off the lips and teeth (with physics: bumping off them). Off: it goes where it's posed.</summary>
@@ -111,6 +121,7 @@ public sealed class AhegaoSettings
         };
         (EyesUp, CrossEyes, Lids, LowerLids, Brows, BrowTilt, Furrow, MouthOpen) = (v.Item1, v.Item2, v.Item3, v.Item4, v.Item5, v.Item6, v.Item7, v.Item8);
         (TongueOut, TongueLength, TongueDroop, Wiggle, Smile, HeadTilt, HeadSide, Pant, Tremble) = (v.Item9, v.Item10, v.Item11, v.Item12, v.Item13, v.Item14, v.Item15, v.Item16, v.Item17);
+        SmileLower = Smile; // (both lips' corners alike; change either after)
     }
 }
 
@@ -500,6 +511,27 @@ public sealed unsafe class AhegaoService
             float open = (Math.Clamp(s.MouthOpen, 0f, 70f) + pantNow * 7f) * level;
             var j = sk.GetPartialFrame(part, jaw);
             sk.SetPartialRotation(part, jaw, Quaternion.Normalize(Turn(gazeDown, open) * j.Rotation), children: true);
+            // The tongue hangs from the jaw in the face's skeleton, so opening the jaw swings it down too: turned back
+            // (about the jaw's hinge) by as much as it shouldn't follow, so it can be posed with the head instead.
+            float keepUp = 1f - Math.Clamp(s.TongueFollowsJaw, 0f, 1f);
+            if(tongue.Count > 0 && keepUp > 1e-3f && open > 1e-3f)
+            {
+                bool underJaw = false;
+                for(int b = info.ParentOf(tongue[0].Bone); b >= 0; b = info.ParentOf(b))
+                    if(b == jaw)
+                    {
+                        underJaw = true;
+                        break;
+                    }
+                if(underJaw)
+                {
+                    var back = Turn(gazeDown, -open * keepUp);
+                    var tf = sk.GetPartialFrame(part, tongue[0].Bone);
+                    var hinge = sk.GetPartialFrame(part, jaw).Position;
+                    sk.SetPartialPosition(part, tongue[0].Bone, hinge + Vector3.Transform(tf.Position - hinge, back), children: true);
+                    sk.SetPartialRotation(part, tongue[0].Bone, Quaternion.Normalize(back * sk.GetPartialFrame(part, tongue[0].Bone).Rotation), children: true);
+                }
+            }
         }
 
         // 4. The eyes rolled up (crossed in, trembling).
@@ -554,9 +586,13 @@ public sealed unsafe class AhegaoService
 
         // 7. The mouth corners up (or down) and out, with the lip bones near them following (less toward the
         //    middle), and the cheeks lifting with a smile.
-        float smile = Math.Clamp(s.Smile, -2f, 2f) * level;
-        float wide = Math.Clamp(s.CornerWide, -2f, 2f) * level, depthIn = Math.Clamp(s.CornerDepth, -2f, 2f) * level;
-        if(!rig && (MathF.Abs(smile) > 1e-4f || MathF.Abs(wide) > 1e-4f || MathF.Abs(depthIn) > 1e-4f))
+        // (each lip's corners on their own: the upper lip's and the lower lip's; the corner bones between take the middle)
+        float smileU = Math.Clamp(s.Smile, -5f, 5f) * level, smileL = Math.Clamp(s.SmileLower, -5f, 5f) * level;
+        float wideU = Math.Clamp(s.CornerWide, -5f, 5f) * level, wideL = Math.Clamp(s.CornerWideLower, -5f, 5f) * level;
+        float depthU = Math.Clamp(s.CornerDepth, -5f, 5f) * level, depthL = Math.Clamp(s.CornerDepthLower, -5f, 5f) * level;
+        float smile = (smileU + smileL) * 0.5f;
+        bool anyCorner = MathF.Abs(smileU) + MathF.Abs(smileL) + MathF.Abs(wideU) + MathF.Abs(wideL) + MathF.Abs(depthU) + MathF.Abs(depthL) > 1e-4f;
+        if(!rig && anyCorner)
         {
             var mouthNow = Vector3.Zero;
             var moving = new List<int>(corners);
@@ -576,7 +612,11 @@ public sealed unsafe class AhegaoService
                     if(w <= 0f)
                         continue;
                     var outward = x > 0f ? across : -across;
-                    sk.SetPartialPosition(part, b, f.Position + up * (0.009f * sc * smile * w) + outward * (0.006f * sc * wide * w) + facing * (0.005f * sc * depthIn * w), children: false);
+                    bool upperBone = names[b].StartsWith("j_f_u", StringComparison.Ordinal), lowerBone = names[b].StartsWith("j_f_d", StringComparison.Ordinal);
+                    float sm = upperBone ? smileU : lowerBone ? smileL : smile;
+                    float wd = upperBone ? wideU : lowerBone ? wideL : (wideU + wideL) * 0.5f;
+                    float dp = upperBone ? depthU : lowerBone ? depthL : (depthU + depthL) * 0.5f;
+                    sk.SetPartialPosition(part, b, f.Position + up * (0.009f * sc * sm * w) + outward * (0.006f * sc * wd * w) + facing * (0.005f * sc * dp * w), children: false);
                 }
         }
         if(!rig && smile > 0f)
@@ -588,7 +628,8 @@ public sealed unsafe class AhegaoService
 
         // 8. The middle of the lips up or down (the corners stay).
         float upperLip = Math.Clamp(s.UpperLip, -2f, 2f) * level, lowerLip = Math.Clamp(s.LowerLip, -2f, 2f) * level;
-        if(!rig && (MathF.Abs(upperLip) > 1e-4f || MathF.Abs(lowerLip) > 1e-4f) && lips.Count > 0)
+        float upperWide = Math.Clamp(s.UpperLipWide, -5f, 5f) * level, lowerWide = Math.Clamp(s.LowerLipWide, -5f, 5f) * level;
+        if(!rig && (MathF.Abs(upperLip) + MathF.Abs(lowerLip) + MathF.Abs(upperWide) + MathF.Abs(lowerWide) > 1e-4f) && lips.Count > 0)
         {
             var centre = Vector3.Zero;
             foreach(var b in lips)
@@ -601,12 +642,15 @@ public sealed unsafe class AhegaoService
             {
                 bool top = names[b].StartsWith("j_f_u", StringComparison.Ordinal);
                 float amount = top ? upperLip : lowerLip;
-                if(MathF.Abs(amount) < 1e-4f)
+                float spread = top ? upperWide : lowerWide;
+                if(MathF.Abs(amount) + MathF.Abs(spread) < 1e-4f)
                     continue;
                 var f = sk.GetPartialFrame(part, b);
-                float x = halfWidth > 1e-4f ? MathF.Abs(Vector3.Dot(f.Position - centre, across)) / halfWidth : 0f;
+                float signedX = halfWidth > 1e-4f ? Vector3.Dot(f.Position - centre, across) / halfWidth : 0f;
+                float x = MathF.Abs(signedX);
                 float w = 1f - Smooth((x - 0.25f) / 0.75f); // the middle most, fading out toward the corners
-                sk.SetPartialPosition(part, b, f.Position + up * (0.004f * sc * amount * w), children: false);
+                // wider: each point out from the middle by how far out it already is (the middle stays)
+                sk.SetPartialPosition(part, b, f.Position + up * (0.004f * sc * amount * w) + across * (0.004f * sc * spread * signedX), children: false);
             }
         }
 
@@ -622,10 +666,11 @@ public sealed unsafe class AhegaoService
                 float u = i / (float)(Limber.Gpu.FaceRig.LipCount - 1) * 2f - 1f; // -1 the right corner, +1 the left
                 float c = u * u, mid = 1f - c;
                 // corners: up and out with a smile (and back a little), down with a frown
-                var corner = new Vector3(0.006f * wide * c * MathF.Sign(u), 0.0065f * smile * c, 0.005f * depthIn * c);
+                var corner = new Vector3(0.006f * wideU * c * MathF.Sign(u), 0.0065f * smileU * c, 0.005f * depthU * c);
+                var cornerLow = new Vector3(0.006f * wideL * c * MathF.Sign(u), 0.0065f * smileL * c, 0.005f * depthL * c);
                 // the middles: their own sliders, and a rounder opening the wider the jaw is
-                o[Limber.Gpu.FaceRig.UpperLip + i] = (corner + new Vector3(0f, 0.0045f * upperLip * mid + 0.0022f * open * mid, 0.0008f * open * mid)) * k;
-                o[Limber.Gpu.FaceRig.LowerLip + i] = (corner + new Vector3(0f, 0.0045f * lowerLip * mid - 0.0022f * open * mid, 0.0008f * open * mid)) * k;
+                o[Limber.Gpu.FaceRig.UpperLip + i] = (corner + new Vector3(0.004f * upperWide * u, 0.0045f * upperLip * mid + 0.0022f * open * mid, 0.0008f * open * mid)) * k;
+                o[Limber.Gpu.FaceRig.LowerLip + i] = (cornerLow + new Vector3(0.004f * lowerWide * u, 0.0045f * lowerLip * mid - 0.0022f * open * mid, 0.0008f * open * mid)) * k;
             }
             for(int i = 0; i < Limber.Gpu.FaceRig.BrowCount; i++)
             {
@@ -659,8 +704,10 @@ public sealed unsafe class AhegaoService
             float wig = Math.Clamp(s.Wiggle, 0f, 2f) * level;
             var root = tongue[0].Bone;
             var rf = sk.GetPartialFrame(part, root);
-            float aim = Math.Clamp(s.TongueUp, -90f, 90f);
-            sk.SetPartialPosition(part, root, rf.Position + facing * (0.02f * sc * outAmount) + up * ((0.002f + 0.004f * aim / 45f) * sc * MathF.Min(outAmount, 1f)), children: true);
+            float aim = Math.Clamp(s.TongueUp, -180f, 180f);
+            // (lifted / lowered at the root too, so it can reach right up to the upper lip or down past the chin)
+            float aimLift = Math.Clamp(aim / 90f, -1.5f, 1.5f);
+            sk.SetPartialPosition(part, root, rf.Position + facing * (0.02f * sc * outAmount) + up * ((0.002f + 0.006f * aimLift) * sc * MathF.Max(MathF.Min(outAmount, 1f), 0.4f)), children: true);
             float side = 18f * wig * MathF.Sin((float)(t * 2 * Math.PI * 1.3));
             float bob = 8f * wig * MathF.Sin((float)(t * 2 * Math.PI * 2.1 + 0.7));
             float droop = Math.Clamp(s.TongueDroop, 0f, 120f) * MathF.Min(outAmount, 1f);
@@ -673,7 +720,9 @@ public sealed unsafe class AhegaoService
                 // the root stays level (resting on the lip); the bend is toward the tip
                 float share = n > 1 ? k / (float)(n - 1) * 2f / n : 1f;
                 float even = n > 1 ? 1f / n : 1f;
-                var turn = Turn(up, side * even) * Turn(gazeDown, (droop + bob) * share - aim * MathF.Min(outAmount, 1f) * even);
+                // up / down: mostly at the root (the whole tongue points that way), the rest spread along it
+                float aimShare = n > 1 ? (k == 0 ? 0.6f : 0.4f / (n - 1)) : 1f;
+                var turn = Turn(up, side * even) * Turn(gazeDown, (droop + bob) * share - aim * MathF.Max(MathF.Min(outAmount, 1f), 0.4f) * aimShare);
                 sk.SetPartialRotation(part, b, Quaternion.Normalize(turn * f.Rotation), children: true);
                 if(k > 0 && stretch > 0f)
                 {

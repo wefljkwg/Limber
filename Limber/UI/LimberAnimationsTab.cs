@@ -19,9 +19,11 @@ public sealed class LimberAnimationsTab
     private readonly ThrobService _throb;
     private readonly TwerkService _twerk;
     private readonly AhegaoService _ahegao;
+    private readonly ExpansionService _expansion;
 
-    public LimberAnimationsTab(Selection selection, RigSettings config, ThrobService throb, TwerkService twerk, AhegaoService ahegao)
+    public LimberAnimationsTab(Selection selection, RigSettings config, ThrobService throb, TwerkService twerk, AhegaoService ahegao, ExpansionService expansion)
     {
+        _expansion = expansion;
         _selection = selection;
         _config = config;
         _throb = throb;
@@ -129,6 +131,192 @@ public sealed class LimberAnimationsTab
             DrawTwerk(name, actor);
         if(ImGui.CollapsingHeader("Ahegao###lanim_ahegao", ImGuiTreeNodeFlags.DefaultOpen))
             DrawAhegao(name, actor);
+        if(ImGui.CollapsingHeader("Expansion###lanim_expansion", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawExpansion(name, actor);
+    }
+
+    private static readonly (ExpansionPattern Pattern, string Name, string Tip)[] ExpansionPatterns =
+    [
+        (ExpansionPattern.Steady, "Steady", "Grows evenly, the same amount every second."),
+        (ExpansionPattern.Smooth, "Smooth", "Eases into growing and eases out as it reaches full size."),
+        (ExpansionPattern.Surge, "Surge", "Fast at first, slowing as it fills."),
+        (ExpansionPattern.Accelerating, "Accelerating", "Slow at first, then faster and faster."),
+        (ExpansionPattern.Pulses, "Pulses", "Grows in pulses, swelling a little past where it's heading on each (Speed, Strength)."),
+        (ExpansionPattern.Heartbeat, "Heartbeat", "Grows to a heartbeat: two beats and a rest (Speed, Strength)."),
+        (ExpansionPattern.Steps, "Steps", "Sudden jumps in size (one a beat), holding between (Speed)."),
+        (ExpansionPattern.Stutter, "Stutter", "Grows, stalls, grows again, in four goes."),
+        (ExpansionPattern.Spurts, "Spurts", "Random-sized spurts of growth at uneven moments (Speed, Randomness)."),
+        (ExpansionPattern.Pump, "Pump", "Pumped up: each pump swells it, and it settles back a little between (Speed, Strength)."),
+        (ExpansionPattern.Overinflate, "Overinflate", "Overshoots its full size, then settles back to it (Strength)."),
+        (ExpansionPattern.Wobble, "Wobble", "Grows with a wobble that dies down as it fills (Speed, Strength)."),
+        (ExpansionPattern.Breathing, "Breathing", "Swells and shrinks back, over and over, like breathing (Duration is one breath)."),
+        (ExpansionPattern.Throbbing, "Throbbing", "Grows, then keeps throbbing bigger on each beat (Speed, Strength)."),
+        (ExpansionPattern.Burst, "Burst", "Grows to full and past it, then deflates all at once."),
+        (ExpansionPattern.PingPong, "Grow and shrink", "Grows to full, then shrinks back the same way, over and over."),
+        (ExpansionPattern.Shrink, "Shrink", "Starts at full size and shrinks back to its own."),
+    ];
+
+    private static readonly (ExpansionRepeat Repeat, string Name, string Tip)[] ExpansionRepeats =
+    [
+        (ExpansionRepeat.Hold, "Hold", "Stays where it ends."),
+        (ExpansionRepeat.Loop, "Loop", "Starts over from its own size."),
+        (ExpansionRepeat.Reverse, "Back and forth", "Plays back down to its own size, then up again."),
+    ];
+
+    private static readonly (string Name, Action<ExpansionPart> Apply)[] ExpansionPresets =
+    [
+        ("Slow growth", p => { p.Pattern = ExpansionPattern.Smooth; p.Amount = 1f; p.Duration = 30f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Quick swell", p => { p.Pattern = ExpansionPattern.Surge; p.Amount = 0.8f; p.Duration = 4f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Pumping", p => { p.Pattern = ExpansionPattern.Pump; p.Amount = 1.5f; p.Duration = 20f; p.Speed = 50f; p.Strength = 0.7f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Heartbeat", p => { p.Pattern = ExpansionPattern.Heartbeat; p.Amount = 1f; p.Duration = 25f; p.Speed = 70f; p.Strength = 0.6f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Growth spurts", p => { p.Pattern = ExpansionPattern.Spurts; p.Amount = 2f; p.Duration = 20f; p.Speed = 25f; p.Randomness = 0.7f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Overinflate", p => { p.Pattern = ExpansionPattern.Overinflate; p.Amount = 1.5f; p.Duration = 8f; p.Strength = 0.7f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Breathing", p => { p.Pattern = ExpansionPattern.Breathing; p.Amount = 0.4f; p.Duration = 5f; p.Repeat = ExpansionRepeat.Loop; }),
+        ("Pop", p => { p.Pattern = ExpansionPattern.Burst; p.Amount = 2f; p.Duration = 12f; p.Strength = 0.6f; p.Repeat = ExpansionRepeat.Loop; }),
+        ("Huge", p => { p.Pattern = ExpansionPattern.Accelerating; p.Amount = 4f; p.Duration = 40f; p.Repeat = ExpansionRepeat.Hold; }),
+    ];
+
+    private void DrawExpansion(string name, ActorRef actor)
+    {
+        var all = _config.Expansion ??= new();
+        if(!all.TryGetValue(name, out var s))
+            all[name] = s = new ExpansionSettings();
+        bool changed = false;
+
+        ImGui.TextWrapped("The breasts, butt and penis growing over time, each on its own with its own pattern: steady, eased, in surges, "
+            + "pulses, heartbeats, steps, spurts, pumps, overinflating, wobbling, breathing, throbbing, bursting, back and forth, or "
+            + "shrinking; held at the end, looped, or played back down. Breasts and butt grow with their bones (soft bodies follow); the "
+            + "penis gets longer and thicker, and the testicles can grow with it. Works with the pose, Throbbing and Dynamic Bones. "
+            + "Start all three for full-body expansion.");
+        ImGui.Spacing();
+        if(ImGui.SmallButton("Start all###lanim_ex_all_on"))
+        {
+            s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = true;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Stop all###lanim_ex_all_off"))
+        {
+            s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = false;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Restart all###lanim_ex_all_re"))
+            for(int i = 0; i < 3; i++)
+                _expansion.Restart(actor.Address, i);
+
+        foreach(var (part, index, partName, shapeTip) in new[]
+        {
+            (s.Breasts, 0, "Breasts", "-100%: grows more across (wider). 0: evenly. +100%: grows more forward (projecting)."),
+            (s.Butt, 1, "Butt", "-100%: grows more across (wider). 0: evenly. +100%: grows more outward (rounder at the back)."),
+            (s.Penis, 2, "Penis", "-100%: mostly thicker. 0: evenly. +100%: mostly longer."),
+        })
+        {
+            ImGui.Spacing();
+            using var id = ImRaii.PushId($"lanim_ex_{index}");
+            if(!ImGui.TreeNodeEx($"{partName}###lanim_ex_node_{index}", ImGuiTreeNodeFlags.DefaultOpen))
+                continue;
+            changed |= DrawExpansionPart(part, index, partName, shapeTip, actor);
+            ImGui.TreePop();
+        }
+
+        if(changed)
+            _config.Save();
+    }
+
+    private bool DrawExpansionPart(ExpansionPart p, int index, string partName, string shapeTip, ActorRef actor)
+    {
+        bool changed = false;
+        string label = p.Enabled ? "Stop###go" : "Start###go";
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f), !p.Enabled))
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.55f, 0.25f, 0.25f, 1f), p.Enabled))
+        {
+            if(ImGui.Button(label, new Vector2(90 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                p.Enabled = !p.Enabled;
+                changed = true;
+            }
+        }
+        ImGui.SameLine();
+        if(ImGui.Button("Restart###restart"))
+            _expansion.Restart(actor.Address, index);
+        Tooltip("Start the growth over from its own size.");
+        ImGui.SameLine();
+        float grown = _expansion.ShownOf(actor.Address, index);
+        if(grown >= 0f)
+            ImGui.ProgressBar(Math.Clamp(grown, 0f, 1f), new Vector2(-1, 0), $"+{grown * p.Amount * 100f:0}%");
+        else
+            ImGui.TextDisabled(p.Enabled ? (index == 2 ? "starting... (no penis bones found?)" : "starting...") : "stopped");
+
+        ImGui.Text("Presets:");
+        int n = 0;
+        foreach(var (presetName, apply) in ExpansionPresets)
+        {
+            if(n++ % 5 != 0)
+                ImGui.SameLine();
+            if(ImGui.SmallButton($"{presetName}###preset_{presetName}"))
+            {
+                apply(p);
+                if(index == 2)
+                    p.Amount = MathF.Min(p.Amount, 2f); // (a penis twice as long is already a lot)
+                changed = true;
+            }
+        }
+
+        string current = Array.Find(ExpansionPatterns, x => x.Pattern == p.Pattern).Name ?? p.Pattern.ToString();
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("Pattern###pattern", current))
+        {
+            if(combo.Success)
+                foreach(var (pattern, patternName, tip) in ExpansionPatterns)
+                {
+                    if(ImGui.Selectable($"{patternName}###p_{pattern}", p.Pattern == pattern))
+                    {
+                        p.Pattern = pattern;
+                        changed = true;
+                    }
+                    Tooltip(tip);
+                }
+        }
+        ImGui.TextDisabled(Array.Find(ExpansionPatterns, x => x.Pattern == p.Pattern).Tip ?? "");
+
+        string repeat = Array.Find(ExpansionRepeats, x => x.Repeat == p.Repeat).Name ?? p.Repeat.ToString();
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("At the end###repeat", repeat))
+        {
+            if(combo.Success)
+                foreach(var (r, rName, tip) in ExpansionRepeats)
+                {
+                    if(ImGui.Selectable($"{rName}###r_{r}", p.Repeat == r))
+                    {
+                        p.Repeat = r;
+                        changed = true;
+                    }
+                    Tooltip(tip);
+                }
+        }
+
+        changed |= SliderEx("Amount", p.Amount * 100f, v => p.Amount = v / 100f, -90f, 1000f, "+%.0f%%", $"How much bigger the {partName.ToLowerInvariant()} get at full size (100% = twice the size). Below 0 shrinks them.");
+        changed |= SliderEx("Duration", p.Duration, v => p.Duration = v, 0.5f, 300f, "%.1f s", "Seconds for one growth (or one breath, for Breathing).");
+        changed |= SliderEx("Speed", p.Speed, v => p.Speed = v, 5f, 240f, "%.0f /min", "Beats, pumps, steps or wobbles a minute (for the patterns that have them).");
+        changed |= SliderEx("Strength", p.Strength * 100f, v => p.Strength = v / 100f, 0f, 100f, "%.0f%%", "How strong the pulses, beats, pumps, wobble or overshoot are.");
+        changed |= SliderEx("Randomness", p.Randomness * 100f, v => p.Randomness = v / 100f, 0f, 100f, "%.0f%%", "Uneven beats and spurts.");
+        changed |= SliderEx("Shape", p.Shape * 100f, v => p.Shape = v / 100f, -100f, 100f, "%.0f%%", shapeTip);
+        if(index == 2)
+            changed |= SliderEx("Testicles", p.Testicles * 100f, v => p.Testicles = v / 100f, 0f, 100f, "%.0f%%", "How much the testicles grow with it (100%: as much as the penis).");
+        changed |= SliderEx("Ease in / out", p.Ease, v => p.Ease = v, 0.1f, 10f, "%.1f s", "How long it takes to grow back in when started, and to go back to its own size when stopped.");
+        return changed;
+    }
+
+    // (inside the part's PushId, so the same labels can be used for each part)
+    private static bool SliderEx(string label, float value, Action<float> set, float min, float max, string format, string tip)
+    {
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        bool edited = ImGui.SliderFloat($"{label}###lanim_ex_{label}", ref value, min, max, format);
+        Tooltip(tip + "\nCtrl+click to type a value.");
+        if(edited)
+            set(value);
+        return edited;
     }
 
     private void DrawAhegao(string name, ActorRef actor)
@@ -212,15 +400,21 @@ public sealed class LimberAnimationsTab
         changed |= SliderAh("Tremble", s.Tremble * 100f, v => s.Tremble = v / 100f, 0f, 200f, "%.0f%%", "The eyes trembling.");
         ImGui.TextDisabled("Mouth");
         changed |= SliderAh("Mouth open", s.MouthOpen, v => s.MouthOpen = v, 0f, 70f, "%.0f°", "How far the jaw opens.");
-        changed |= SliderAh("Mouth corners up / down", s.Smile * 100f, v => s.Smile = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners up (+, a smile, lifting the cheeks) or down (-), the lips near them following.");
-        changed |= SliderAh("Mouth corners wider", s.CornerWide * 100f, v => s.CornerWide = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners further apart (+) or closer together (-).");
-        changed |= SliderAh("Mouth corners in / out", s.CornerDepth * 100f, v => s.CornerDepth = v / 100f, -200f, 200f, "%.0f%%", "The mouth corners forward (+, pursed) or back into the cheeks (-).");
+        changed |= SliderAh("Upper corners up / down", s.Smile * 100f, v => s.Smile = v / 100f, -500f, 500f, "%.0f%%", "The upper lip's corners up (+, a smile, lifting the cheeks) or down (-), the lip near them following.");
+        changed |= SliderAh("Lower corners up / down", s.SmileLower * 100f, v => s.SmileLower = v / 100f, -500f, 500f, "%.0f%%", "The lower lip's corners up (+) or down (-), the lip near them following.");
+        changed |= SliderAh("Upper corners wider", s.CornerWide * 100f, v => s.CornerWide = v / 100f, -500f, 500f, "%.0f%%", "The upper lip's corners further apart (+) or closer together (-).");
+        changed |= SliderAh("Lower corners wider", s.CornerWideLower * 100f, v => s.CornerWideLower = v / 100f, -500f, 500f, "%.0f%%", "The lower lip's corners further apart (+) or closer together (-).");
+        changed |= SliderAh("Upper corners in / out", s.CornerDepth * 100f, v => s.CornerDepth = v / 100f, -500f, 500f, "%.0f%%", "The upper lip's corners forward (+, pursed) or back into the cheeks (-).");
+        changed |= SliderAh("Lower corners in / out", s.CornerDepthLower * 100f, v => s.CornerDepthLower = v / 100f, -500f, 500f, "%.0f%%", "The lower lip's corners forward (+, pursed) or back into the cheeks (-).");
         changed |= SliderAh("Upper lip", s.UpperLip * 100f, v => s.UpperLip = v / 100f, -200f, 200f, "%.0f%%", "The middle of the upper lip up (+) or down (-); the corners stay.");
         changed |= SliderAh("Lower lip", s.LowerLip * 100f, v => s.LowerLip = v / 100f, -200f, 200f, "%.0f%%", "The middle of the lower lip up (+) or down (-); the corners stay.");
+        changed |= SliderAh("Upper lip wider", s.UpperLipWide * 100f, v => s.UpperLipWide = v / 100f, -500f, 500f, "%.0f%%", "The upper lip spread out left and right (+) or drawn in narrower (-); its middle stays.");
+        changed |= SliderAh("Lower lip wider", s.LowerLipWide * 100f, v => s.LowerLipWide = v / 100f, -500f, 500f, "%.0f%%", "The lower lip spread out left and right (+) or drawn in narrower (-); its middle stays.");
         changed |= SliderAh("Tongue out", s.TongueOut * 100f, v => s.TongueOut = v / 100f, 0f, 400f, "%.0f%%", "How far the tongue comes out (past 100% it reaches further than it naturally would).");
         changed |= SliderAh("Tongue length", s.TongueLength * 100f, v => s.TongueLength = v / 100f, 0f, 200f, "%.0f%%", "The tongue longer.");
         changed |= SliderAh("Tongue droop", s.TongueDroop, v => s.TongueDroop = v, 0f, 120f, "%.0f°", "How far the tongue hangs down over the lip.");
-        changed |= SliderAh("Tongue up / down", s.TongueUp, v => s.TongueUp = v, -90f, 90f, "%.0f°", "The tongue pointing up (+, the tip curling up toward the upper lip) or down (-). It still stays over the lower lip.");
+        changed |= SliderAh("Tongue up / down", s.TongueUp, v => s.TongueUp = v, -180f, 180f, "%.0f°", "The tongue pointing up (+, the tip curling up toward the upper lip) or down (-). It still stays over the lower lip.");
+        changed |= SliderAh("Tongue follows jaw", s.TongueFollowsJaw * 100f, v => s.TongueFollowsJaw = v / 100f, 0f, 100f, "%.0f%%", "The tongue is attached to the jaw, so opening the mouth swings it down. 100%: it goes all the way with the jaw. Lower: it stays more with the head, so you can pose it on its own.");
         bool collide = s.TongueCollision;
         if(ImGui.Checkbox("Tongue collision###lanim_ah_tcol", ref collide))
         {

@@ -16,6 +16,8 @@ public sealed class RigSettings
     public bool ShowHandles { get; set; } = true;
     public bool ShowAllBones { get; set; } = false;
     public bool ShowFaceBones { get; set; } = false;
+    /// <summary>Dots / list entries for the physics rig's bones (breast, butt, testicle lattices); off by default.</summary>
+    public bool ShowRigBones { get; set; } = false;
     public bool ShowRotationGizmo { get; set; } = true;
     public bool HideHandlesWithGameUi { get; set; } = false;
     public float HandleSize { get; set; } = 10f;
@@ -97,6 +99,24 @@ public sealed class RigSettings
 
     /// <summary>Ahegao face (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.AhegaoSettings> Ahegao { get; set; } = new();
+
+    /// <summary>Expansion (Limber Animations page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.ExpansionSettings> Expansion { get; set; } = new();
+
+    /// <summary>Appearance &amp; gear page: saved looks, and whether changes go on as they're made.</summary>
+    public System.Collections.Generic.List<Limber.Rig.AppearanceData> AppearancePresets { get; set; } = new();
+    public bool AppearanceLive { get; set; } = true;
+
+    /// <summary>Camera page: saved shots, and the unlocked limits.</summary>
+    public System.Collections.Generic.List<Limber.Rig.CameraShot> CameraShots { get; set; } = new();
+    public bool CameraUnlock { get; set; }
+    public float CameraMaxDistance { get; set; } = 60f;
+
+    /// <summary>The Timeline page's animations, which one is open, and its options.</summary>
+    public System.Collections.Generic.List<Limber.Rig.TimelineClip> Timelines { get; set; } = new();
+    public int TimelineIndex { get; set; }
+    public bool TimelineAutoKey { get; set; }
+    public float TimelineSnap { get; set; } = 1f / 30f;
 
     /// <summary>Head / eye tracking (Look at page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.LookAtSettings> LookAt { get; set; } = new();

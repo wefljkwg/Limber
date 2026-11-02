@@ -1691,7 +1691,7 @@ public sealed unsafe class SoftBody
         foreach (var side in new[] { "l", "r" })
         {
             AddCapsule(skeleton, "j_ude_a_" + side, "j_ude_b_" + side, MathF.Max(0.30f * size, 0.045f));
-            AddCapsule(skeleton, "j_asi_a_" + side, "j_asi_b_" + side, MathF.Max(0.45f * size, 0.07f));
+            // (no built-in thigh colliders: attach your own collider prop to a thigh bone where you want one)
         }
     }
 

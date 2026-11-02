@@ -37,6 +37,9 @@ public sealed class MainWindow : Window
 
     public LimberAnimationsTab? LimberAnimationsTab { get; set; }
     public LookAtTab? LookAtTab { get; set; }
+    public TimelineTab? TimelineTab { get; set; }
+    public AppearanceTab? AppearanceTab { get; set; }
+    public CameraTab? CameraTab { get; set; }
     private int _portEdit;
     private string _newPresetName = "";
     /// <summary>Which link the Face tab captures from / shows presets for.</summary>
@@ -94,7 +97,10 @@ public sealed class MainWindow : Window
         new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between (Koikatsu style).", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
         new("shape", "Body", "Body shape", "Sliders for the body's shape (like BodySlide), live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
-        new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): throbbing, twerking and an ahegao face, with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
+        new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes (like Brio / Anamnesis).", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
+        new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
+        new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
+        new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): throbbing, twerking, an ahegao face and expansion (breasts, butt, penis), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
         new("props", "Scene", "Housing props", "Place housing furniture around you in GPose.", () => _housingTab.Draw()),

@@ -214,6 +214,11 @@ public sealed partial class LimberTab
                 ahegao.Enabled = false;
                 done.Add("ahegao");
             }
+            if(_config.Expansion != null && _config.Expansion.TryGetValue(name, out var expansion) && (expansion.Breasts.Enabled || expansion.Butt.Enabled || expansion.Penis.Enabled))
+            {
+                expansion.Breasts.Enabled = expansion.Butt.Enabled = expansion.Penis.Enabled = false;
+                done.Add("expansion");
+            }
             if(_config.BodyShapes != null && _config.BodyShapes.TryGetValue(name, out var shape) && shape.Count > 0)
             {
                 shape.Clear();
@@ -1827,7 +1832,14 @@ public sealed partial class LimberTab
 
         if(ImGui.CollapsingHeader("Handles###limber_settings_handles", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            using var disabled = ImRaii.Disabled(!_config.ShowHandles);
+            // (always editable: these used to grey out whenever the dots were hidden, with no way to tell why)
+            bool shown = _config.ShowHandles;
+            if(ImGui.Checkbox("Show dots###limber_settings_show_dots", ref shown))
+            {
+                _config.ShowHandles = shown;
+                changed = true;
+            }
+            Tooltip("The bone dots in the scene (the settings below apply whenever they're shown).");
 
             bool gizmo = _config.ShowRotationGizmo;
             if(ImGui.Checkbox("Gizmo on the selected dot", ref gizmo))
@@ -1844,6 +1856,16 @@ public sealed partial class LimberTab
                 _config.ShowAllBones = allBones;
                 changed = true;
             }
+
+            bool rigBones = _config.ShowRigBones;
+            if(ImGui.Checkbox("Show rigged bones###limber_rig_dots_settings", ref rigBones))
+            {
+                _config.ShowRigBones = rigBones;
+                HandleCatalog.ShowRigBones = rigBones;
+                changed = true;
+            }
+            Tooltip("The extra bones Limber's physics rig adds (the breast, butt and testicle lattices): shown as dots and in the bone lists. "
+                + "Off (default): hidden, since they aren't for posing.");
 
             bool faceBones = _config.ShowFaceBones;
             if(ImGui.Checkbox("Dots for the face###limber_face_dots_settings", ref faceBones))

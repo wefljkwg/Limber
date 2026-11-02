@@ -77,7 +77,8 @@ public sealed class DynamicBonesTab
         if(ImGui.SmallButton("Flaccid###dyn_flaccid")) { s.Hardness = 0f; changed = true; }
         changed |= Slider("Bounce", () => s.Bounce, v => s.Bounce = v, "How long it keeps swinging after a move (0%: settles at once).");
         changed |= Slider("Weight", () => s.Weight, v => s.Weight = v, "How much it hangs down when it isn't hard.", 2f);
-        changed |= Slider("Inertia", () => s.Inertia, v => s.Inertia = v, "How much it trails behind when the body moves (0%: moves with the body).");
+        changed |= Slider("Inertia", () => s.Inertia, v => s.Inertia = v, "How much the body's speeding up and turning swings it (0%: moves with the body).");
+        changed |= Slider("Stiffness", () => s.Stiffness, v => s.Stiffness = v, "How much it resists bending at each joint: higher keeps its shape and swings as one piece from the base (no warping when it's heavy or soft); lower lets it curl and fold.");
         ImGui.TextDisabled("While this character is Oral's partner, the shaft stays as posed (the mouth follows it).");
 
         // Each bone on its own.
@@ -119,7 +120,7 @@ public sealed class DynamicBonesTab
             {
                 string bone = DynamicBoneService.PenisBones[i];
                 if(!s.Bones.TryGetValue(bone, out var b))
-                    s.Bones[bone] = b = new DynamicBoneSpring { Hardness = s.Hardness, Bounce = s.Bounce, Weight = s.Weight, Inertia = s.Inertia };
+                    s.Bones[bone] = b = new DynamicBoneSpring { Hardness = s.Hardness, Bounce = s.Bounce, Weight = s.Weight, Inertia = s.Inertia, Stiffness = s.Stiffness };
                 string label = i == 0 ? "Base" : i == DynamicBoneService.PenisBones.Length - 1 ? "Tip" : $"Shaft {i}";
                 if(!ImGui.TreeNode($"{label} ({bone})###dyn_b_{bone}"))
                     continue;
@@ -127,6 +128,7 @@ public sealed class DynamicBonesTab
                 changed |= Slider($"Bounce##{bone}", () => b.Bounce, v => b.Bounce = v, "How long this bone keeps swinging.");
                 changed |= Slider($"Weight##{bone}", () => b.Weight, v => b.Weight = v, "How heavy this bone is: how much it hangs down when it isn't hard.", 2f);
                 changed |= Slider($"Inertia##{bone}", () => b.Inertia, v => b.Inertia = v, "How much this bone trails behind when the body moves.");
+                changed |= Slider($"Stiffness##{bone}", () => b.Stiffness, v => b.Stiffness = v, "How much this joint resists bending against the bone before it.");
                 ImGui.TreePop();
             }
         }
@@ -139,7 +141,7 @@ public sealed class DynamicBonesTab
     {
         foreach(var bone in DynamicBoneService.PenisBones)
             if(!onlyMissing || !s.Bones.ContainsKey(bone))
-                s.Bones[bone] = new DynamicBoneSpring { Hardness = s.Hardness, Bounce = s.Bounce, Weight = s.Weight, Inertia = s.Inertia };
+                s.Bones[bone] = new DynamicBoneSpring { Hardness = s.Hardness, Bounce = s.Bounce, Weight = s.Weight, Inertia = s.Inertia, Stiffness = s.Stiffness };
     }
 
     private static bool Slider(string label, Func<float> get, Action<float> set, string tip, float max = 1f)

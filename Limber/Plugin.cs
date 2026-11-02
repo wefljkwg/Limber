@@ -62,7 +62,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ThrobService _throb;
     private readonly LookAtService _lookAt;
     private readonly TwerkService _twerk;
+    private readonly ExpansionService _expansion;
     private readonly AhegaoService _ahegao;
+    private TimelineService? _timeline;
     private FkPosingTab? _fkTab;
     private readonly Limber.BodyRig.HousingProps _housing;
     private readonly Limber.Rig.ActorTransforms _actors = new();
@@ -76,6 +78,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         _config = LoadConfig();
+        HandleCatalog.ShowRigBones = _config.Ik.ShowRigBones;
         // Hotkeys saved by 0.36 (ImGui key numbers): back to the defaults.
         if(_config.Ik.UndoKey is { } uk && uk.Key >= 256) { uk.Key = 0x5A; uk.Ctrl = true; uk.Shift = false; uk.Alt = false; }
         if(_config.Ik.RedoKey is { } rk && rk.Key >= 256) { rk.Key = 0x59; rk.Ctrl = true; rk.Shift = false; rk.Alt = false; }
@@ -110,6 +113,7 @@ public sealed class Plugin : IDalamudPlugin
             _throb = new ThrobService(ObjectTable, () => _config.Ik.Throb ??= new()) { InOral = a => _oral.IsPartner(a) };
             _fk = new FkService(ObjectTable, () => _config.Ik.FkPoses ??= new());
             _twerk = new TwerkService(ObjectTable, () => _config.Ik.Twerk ??= new());
+            _expansion = new ExpansionService(ObjectTable, () => _config.Ik.Expansion ??= new());
             _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 };
             _lookAt = new LookAtService(ObjectTable, () => _config.Ik.LookAt ??= new()) { Skip = a => _oral.Follows(a) != 0 };
             _dynamicBones = new DynamicBoneService(ObjectTable, () => _config.Ik.DynamicBones ??= new()) { Skip = a => _oral.IsPartner(a) };
@@ -250,7 +254,7 @@ public sealed class Plugin : IDalamudPlugin
             _freeze.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             Limber.BodyShape.BodyShapeBuild.SetWorkDir(PluginInterface.ConfigDirectory.FullName);
             _bodyShape.KeepFeet = () => _config.Ik.BodyShapeKeepFeet;
-            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber actors", _actors.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber actors", _actors.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame),
@@ -275,8 +279,13 @@ public sealed class Plugin : IDalamudPlugin
             _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik);
             _mainWindow.FkPosingTab = _fkTab;
             _overlay.FkEditor = _fkTab;
-            _mainWindow.LimberAnimationsTab = new LimberAnimationsTab(_selection, _config.Ik, _throb, _twerk, _ahegao);
+            _fkTab.Overlay = _overlay;
+            _mainWindow.LimberAnimationsTab = new LimberAnimationsTab(_selection, _config.Ik, _throb, _twerk, _ahegao, _expansion);
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
+            _timeline = new TimelineService(ObjectTable, _config.Ik, _rigs, _actors);
+            _mainWindow.TimelineTab = new TimelineTab(_selection, _config.Ik, _timeline);
+            _mainWindow.AppearanceTab = new AppearanceTab(_selection, _config.Ik);
+            _mainWindow.CameraTab = new CameraTab(_config.Ik);
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             _windows.AddWindow(syncHelp);
@@ -604,11 +613,14 @@ public sealed class Plugin : IDalamudPlugin
                 _oral.DrawGuide(GameGui);
                 Limber.Gpu.LiveMesh.Update(); // render thread, before the frame is presented
                 Limber.Gpu.LiveSoftBody.Update();
+                _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
+                CameraControl.Update(_config.Ik.CameraUnlock, _config.Ik.CameraMaxDistance);
                 _dynamicBones.Refresh();
                 _throb.Refresh();
                 _lookAt.Refresh();
                 _twerk.Refresh();
                 _ahegao.Refresh();
+                _expansion.Refresh();
                 bool mirrored = _fk.Refresh();
                 _fkTab?.AfterMirror(mirrored);
                 if(mirrored)
@@ -625,6 +637,7 @@ public sealed class Plugin : IDalamudPlugin
                 _lookAt.Clear();
                 _twerk.Clear();
                 _ahegao.Clear();
+                _expansion.Clear();
             }
             if(!(_config.PluginEnabled && here) && (Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveMesh.Wobbling || Limber.Gpu.LipMesh.Running || Limber.Gpu.FaceRig.Running))
             {

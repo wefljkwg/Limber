@@ -151,6 +151,81 @@ public static class OneClickRig
         var (collectionId, collectionName) = collection.Item3;
         progress.Add($"Collection: {collectionName}.");
 
+        // Limber's earlier rig for this collection off while reading (so the skeletons and models read are your own
+        // mods', not a rigged copy), and the character redrawn and given time to load, so what's read is exactly what
+        // it wears now (a model that hadn't loaded yet, or a mod option just changed, used to be missed).
+        string? earlierDir = null;
+        if (onlySet == null && RigModFolder(root, collectionName) is { } earlierRig)
+        {
+            earlierDir = Path.GetFileName(earlierRig);
+            await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
+                .InvokeFunc(collectionId, earlierDir, "", false));
+        }
+        try
+        {
+            await RunRest(index, address, shapes, workDir, parts, fit, shaping, progress, onlySet, root, collectionId, collectionName);
+        }
+        catch
+        {
+            // Didn't finish: the earlier rig back on, as it was.
+            if (earlierDir != null)
+                await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
+                    .InvokeFunc(collectionId, earlierDir, "", true));
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The character redrawn, then its files read once they stop changing (everything it wears loaded and resolved
+    /// through the current mods). Up to about 8 seconds.
+    /// </summary>
+    private static async Task<Dictionary<string, HashSet<string>>?> WornFiles(ushort index, Progress progress)
+    {
+        await Game(() =>
+        {
+            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
+            return true;
+        });
+        await Task.Delay(600);
+        Dictionary<string, HashSet<string>>? last = null;
+        string lastKey = "";
+        int stable = 0;
+        long start = Environment.TickCount64;
+        while (Environment.TickCount64 - start < 8000)
+        {
+            var paths = await Game(() =>
+            {
+                var all = Plugin.PluginInterface
+                    .GetIpcSubscriber<ushort[], Dictionary<string, HashSet<string>>?[]>("Penumbra.GetGameObjectResourcePaths.V5")
+                    .InvokeFunc(new[] { index });
+                return all.Length > 0 ? all[0] : null;
+            });
+            string key = paths == null ? "" : string.Join("|", paths
+                .SelectMany(kv => kv.Value.Where(g => g.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)).Select(g => g + ">" + kv.Key))
+                .OrderBy(x => x, StringComparer.Ordinal));
+            if (paths != null && key.Length > 0 && key == lastKey)
+            {
+                if (++stable >= 2)
+                    return paths;
+            }
+            else
+                stable = 0;
+            last = paths;
+            lastKey = key;
+            await Task.Delay(400);
+        }
+        progress.Add("  (the character's files were still changing after 8 seconds: using what's loaded now)");
+        return last;
+    }
+
+    private static async Task RunRest(ushort index, nint address, Dictionary<string, BreastRigShape> shapes, string workDir,
+        RigPart[] parts, bool fit, IReadOnlyDictionary<string, (float Roundness, float Fill)>? shaping, Progress progress,
+        HashSet<string>? onlySet, string root, Guid collectionId, string collectionName)
+    {
+        // (redrawn without the earlier rig, so the skeletons below are your own mods')
+        progress.Add("Redrawing the character and waiting for everything it wears to load...");
+        var worn = await WornFiles(index, progress);
+
         // 1. Where the parts' bones are in each skeleton (a first build, also used as is when nothing is fitted).
         progress.Add("Reading the skeletons...");
         var build = await Game(() => RigBuilder.BuildFiles(shapes));
@@ -163,13 +238,7 @@ public static class OneClickRig
 
         // 2. The models the character wears (as your own mods have them).
         progress.Add("Reading the models your character is wearing...");
-        var paths = await Game(() =>
-        {
-            var all = Plugin.PluginInterface
-                .GetIpcSubscriber<ushort[], Dictionary<string, HashSet<string>>?[]>("Penumbra.GetGameObjectResourcePaths.V5")
-                .InvokeFunc(new[] { index });
-            return all.Length > 0 ? all[0] : null;
-        });
+        var paths = worn;
         if (paths == null)
             throw new InvalidOperationException("Penumbra couldn't list this character's files");
 
@@ -195,6 +264,8 @@ public static class OneClickRig
                 var source = await ReadOriginal(actual, game, modelsDir, originals);
                 if (source != null)
                     models.Add((game, code, source));
+                else
+                    progress.Add($"  {Path.GetFileName(game)}: couldn't read its file ({Path.GetFileName(actual.Split('|').Last())}), skipped.");
             }
         }
 
@@ -239,7 +310,12 @@ public static class OneClickRig
                 continue;
             }
             if (rigged == null)
+            {
+                // (most models a character wears have nothing for these parts: only say so when there was a reason)
+                if (log.Count > 0)
+                    progress.Add($"  {Path.GetFileName(game)}: not rigged: " + string.Join("; ", log));
                 continue;
+            }
             files[game] = rigged;
             progress.Add($"  {Path.GetFileName(game)}: " + string.Join("; ", log));
         }
@@ -310,8 +386,20 @@ public static class OneClickRig
     private static List<string> SourceNames(RigPart part, string side)
     {
         var names = part.AllParents.Select(p => p.Replace("{side}", side)).ToList();
-        if (part == RigParts.Testicles)
-            names.Add($"iv_kintama_phys_{side}");
+        // The other names body and part mods use for the same bones (any that a model has are taken too).
+        string[] extra = part == RigParts.Testicles
+            ? ["iv_kintama_phys_{side}", "iv_kintama_{side}", "iv_kougan_phys_{side}", "iv_tama_{side}", "j_kougan_{side}", "iv_balls_{side}", "iv_testicle_{side}"]
+            : part == RigParts.Breasts
+                ? ["iv_mune_{side}", "iv_c_mune_phys_{side}", "j_mune_phys_{side}", "iv_mune_phys_{side}"]
+                : part == RigParts.Butt
+                    ? ["iv_shiri_phys_{side}", "j_shiri_{side}", "iv_shiri_b_{side}"]
+                    : [];
+        foreach (var e in extra)
+        {
+            var n = e.Replace("{side}", side);
+            if (!names.Contains(n))
+                names.Add(n);
+        }
         return names;
     }
 
@@ -419,7 +507,7 @@ public static class OneClickRig
                     && bones.ContainsKey(part.NippleName(left));
                 float separation = bones.TryGetValue($"#{part.Key}:sep", out var sepBone) ? sepBone.Position.X : part.FallbackSeparation;
                 sides.Add(new MdlRigger.Side(names, names.Select(n => bones[n].Position).ToArray(), bones[names[0]].Parent,
-                    part.AllParents.Select(p => p.Replace("{side}", s)).Concat(part == RigParts.Testicles ? new[] { $"iv_kintama_phys_{s}" } : Array.Empty<string>()).ToArray(),
+                    SourceNames(part, s).ToArray(),
                     merge, $"{LegacyPrefix(part)}{s}_")
                 {
                     PartKey = part.Key,

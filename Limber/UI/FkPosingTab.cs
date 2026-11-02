@@ -34,6 +34,9 @@ public sealed class FkPosingTab
     // Undo per character (whole FK pose copies).
     private readonly Dictionary<string, List<FkPoseSettings>> _undo = new(), _redo = new();
 
+    /// <summary>The scene's dots (for Pin / Let go: the same pins as the IK Posing page).</summary>
+    public HandleOverlay? Overlay { get; set; }
+
     public FkPosingTab(Selection selection, RigService rigs, FkService fk, RigSettings config)
     {
         _selection = selection;
@@ -529,11 +532,48 @@ public sealed class FkPosingTab
         ImGui.SameLine();
         ImGui.TextDisabled($"{bone}  ·  {FkService.PartOf(bone)}");
 
+        bool pinned;
+        bool held;
         lock(_rigs.Sync)
         {
-            if(_rigs.GetRig(actor.Address)?.Find(bone) is { Enabled: true })
-                ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "IK has a goal on this bone (IK Posing page): IK decides where it ends up.");
+            var goal = _rigs.GetRig(actor.Address)?.Find(bone);
+            held = goal is { Enabled: true };
+            pinned = goal is { Enabled: true, Space: GoalSpace.Pinned };
+            if(held)
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), pinned ? "Pinned: it stays where it is while the rest of the body moves." : "IK has a goal on this bone (IK Posing page): IK decides where it ends up.");
         }
+
+        // Pin / let go (the same pins as the IK Posing page), and which axes the gizmo and quick turns use.
+        using(ImRaii.Disabled(Overlay == null))
+        {
+            if(ImGui.Button(pinned ? "Unpin###fk_pin" : "Pin###fk_pin"))
+                Overlay?.TogglePin(actor, bone);
+            Tooltip(pinned ? "Stop holding it in place (it keeps any other IK goal it has)." : "Hold this bone where it is now: the body can move and turn, and the limb bends to keep it there.");
+            ImGui.SameLine();
+            using(ImRaii.Disabled(!held))
+            {
+                if(ImGui.Button("Let go###fk_letgo"))
+                    Overlay?.Release(actor, bone);
+            }
+            Tooltip("Removes the pin (or any IK goal) from this bone: FK and the animation move it again.");
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("|");
+        ImGui.SameLine();
+        bool world = _config.GizmoWorldAxes;
+        if(ImGui.RadioButton("Bone axes###fk_axes_bone", !world))
+        {
+            _config.GizmoWorldAxes = false;
+            _config.Save();
+        }
+        Tooltip("The gizmo and the quick turns go round the bone's own axes.");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("World axes###fk_axes_world", world))
+        {
+            _config.GizmoWorldAxes = true;
+            _config.Save();
+        }
+        Tooltip("The gizmo and the quick turns go round the world's axes (X across, Y up, Z forward in the scene), whatever way the bone faces.");
 
         var entry = Entry(name, bone, snapshot, create: false);
         bool posed = entry is { Enabled: true };
@@ -598,9 +638,18 @@ public sealed class FkPosingTab
                 if(ImGui.SmallButton($"{label} {(step > 0 ? "+" : "")}{step:0}###fk_q_{label}{step}"))
                 {
                     Checkpoint(name);
-                    entry ??= Entry(name, bone, snapshot, create: true)!;
-                    entry.Rotation = Quaternion.Normalize(entry.Rotation * Quaternion.CreateFromAxisAngle(axis, step * MathF.PI / 180f));
-                    entry.Enabled = true;
+                    if(_config.GizmoWorldAxes && snapshot.TryGetWorld(bone, out var worldFrame))
+                    {
+                        // round the world's axis: turn it where it is in the scene, then back into FK
+                        var turned = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(axis, step * MathF.PI / 180f) * worldFrame.Rotation);
+                        SetFromWorld(actor, snapshot, bone, turned, null);
+                    }
+                    else
+                    {
+                        entry ??= Entry(name, bone, snapshot, create: true)!;
+                        entry.Rotation = Quaternion.Normalize(entry.Rotation * Quaternion.CreateFromAxisAngle(axis, step * MathF.PI / 180f));
+                        entry.Enabled = true;
+                    }
                     _eulerBone = null;
                     _config.Save();
                 }

@@ -19,6 +19,9 @@ public sealed class DynamicBoneSettings
     public float Weight { get; set; } = 0.6f;
     /// <summary>How much it lags behind when the body moves (0 = moves with the body, 1 = trails a lot).</summary>
     public float Inertia { get; set; } = 0.5f;
+    /// <summary>How much each bone resists bending against the one before it (0 = folds freely at any joint,
+    /// 1 = keeps its posed curve and swings as one piece from the base). Stops it warping when heavy or loose.</summary>
+    public float Stiffness { get; set; } = 0.4f;
     /// <summary>Each penis bone with its own settings (below) instead of the ones above for all.</summary>
     public bool PerBone { get; set; }
     /// <summary>Per bone (by name): its own hardness, bounce, weight and inertia.</summary>
@@ -35,7 +38,7 @@ public sealed class DynamicBoneSettings
 
     /// <summary>The settings one bone uses (its own with Per bone on, else the whole penis's).</summary>
     public DynamicBoneSpring For(string bone)
-        => PerBone && Bones.TryGetValue(bone, out var b) ? b : new DynamicBoneSpring { Hardness = Hardness, Bounce = Bounce, Weight = Weight, Inertia = Inertia };
+        => PerBone && Bones.TryGetValue(bone, out var b) ? b : new DynamicBoneSpring { Hardness = Hardness, Bounce = Bounce, Weight = Weight, Inertia = Inertia, Stiffness = Stiffness };
 }
 
 /// <summary>One bone's spring: how hard, bouncy, heavy and trailing it is.</summary>
@@ -45,6 +48,7 @@ public sealed class DynamicBoneSpring
     public float Bounce { get; set; } = 0.5f;
     public float Weight { get; set; } = 0.6f;
     public float Inertia { get; set; } = 0.5f;
+    public float Stiffness { get; set; } = 0.4f;
     public DynamicBoneSpring Copy() => (DynamicBoneSpring)MemberwiseClone();
 }
 
@@ -203,6 +207,7 @@ public sealed unsafe class DynamicBoneService
         var stiffness = new float[n + 1];
         var gravity = new Vector3[n + 1];
         var inert = new float[n + 1];
+        var bendStiff = new float[n + 1];
         for(int i = 1; i <= n; i++)
         {
             float h = Math.Clamp(spring[i].Hardness, 0f, 1f);
@@ -212,6 +217,7 @@ public sealed unsafe class DynamicBoneService
             gravity[i] = new Vector3(0f, -9.8f * Math.Clamp(spring[i].Weight, 0f, 2f) * (1f - h), 0f);
             // How much of the body's own move the chain takes along at once (the rest it catches up on).
             inert[i] = 1f - Math.Clamp(spring[i].Inertia, 0f, 1f);
+            bendStiff[i] = Math.Clamp(spring[i].Stiffness, 0f, 1f);
         }
         // The character's own moves (walking, running, turning): not a drag that leaves the chain behind, just a
         // gentle push from speeding up / slowing down / turning (capped), as the body's own motion would give it.
@@ -278,6 +284,30 @@ public sealed unsafe class DynamicBoneService
             float len = d.Length();
             if(len > maxLen && len > 1e-7f)
                 P[i] += d * ((len - maxLen) / len);
+            // ...bending only so far against the piece before it (Stiffness), so the shaft curves smoothly and swings
+            // from the base instead of folding sharply at one joint (which warps the mesh there)...
+            float bendMax = (1f - bendStiff[i]) * 50f + 3f;
+            var want = restDir;
+            if(i >= 2)
+            {
+                var prevRest = target[i - 1] - target[i - 2];
+                var prevNow = P[i - 1] - P[i - 2];
+                if(prevRest.LengthSquared() > 1e-12f && prevNow.LengthSquared() > 1e-12f)
+                    want = Vector3.Transform(restDir, MathUtil.FromTo(Vector3.Normalize(prevRest), Vector3.Normalize(prevNow)));
+            }
+            else
+                bendMax = bendMax * 1.6f + 10f; // (the base swings more freely from the body)
+            var cur = P[i] - P[i - 1];
+            if(cur.LengthSquared() > 1e-12f && want.LengthSquared() > 1e-12f)
+            {
+                float cos = Math.Clamp(Vector3.Dot(Vector3.Normalize(cur), Vector3.Normalize(want)), -1f, 1f);
+                float angle = MathF.Acos(cos) * 180f / MathF.PI;
+                if(angle > bendMax && angle > 1e-3f)
+                {
+                    var back = Quaternion.Slerp(Quaternion.Identity, MathUtil.FromTo(Vector3.Normalize(cur), Vector3.Normalize(want)), (angle - bendMax) / angle);
+                    P[i] = P[i - 1] + Vector3.Transform(cur, back);
+                }
+            }
             // ...at its own length from the one before (no stretching).
             var seg = P[i] - P[i - 1];
             float sl = seg.Length();

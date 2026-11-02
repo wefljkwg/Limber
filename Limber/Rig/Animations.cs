@@ -149,6 +149,21 @@ public static unsafe class Animations
         c->Timeline.TimelineSequencer.SetSlotSpeed(1, speed);
     }
 
+    /// <summary>
+    /// Puts the base animation at <paramref name="seconds"/> into it (for the Timeline's playhead). Some animations
+    /// may not take it (the game moves them on its own way): then they just carry on from where they are.
+    /// </summary>
+    public static void Seek(nint address, ushort index, float seconds)
+    {
+        var c = Get(address, index);
+        if(c == null || !float.IsFinite(seconds))
+            return;
+        var timeline = c->Timeline.TimelineSequencer.GetSchedulerTimeline(0);
+        if(timeline == null)
+            return;
+        ((TimelineController*)timeline)->CurrentTimestamp = seconds;
+    }
+
     // ---- Another race's version (experimental): Penumbra swaps this race's file for that race's
 
     /// <summary>The playable races' body ids (101 = Midlander man ... 1801 = Viera woman) with names.</summary>

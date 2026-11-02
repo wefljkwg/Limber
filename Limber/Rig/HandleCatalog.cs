@@ -179,7 +179,14 @@ public static class HandleCatalog
     // Bones the pickers (Pose, Attach, Props, Renderer) list: every bone of every part of the skeleton, the face,
     // hair, tail and any a mod adds included. Body mod bones only on adult bodies.
     public static bool IsPickable(string bone, bool adultBones)
-        => bone.Length > 0 && (adultBones || !IsBodyModBone(bone));
+        => bone.Length > 0 && (adultBones || !IsBodyModBone(bone)) && (ShowRigBones || !IsRigBone(bone));
+
+    /// <summary>Show Limber's physics rig bones (the breast / butt / testicle lattices, the body shape grids) as dots and
+    /// in the bone lists (Settings; off by default: they aren't for posing).</summary>
+    public static bool ShowRigBones;
+
+    /// <summary>One of the bones Limber's physics rig adds (lattices, grids, nipples): not for posing.</summary>
+    public static bool IsRigBone(string bone) => bone.StartsWith("lmb_", System.StringComparison.Ordinal);
 
     // Body mod and Limber body-rig bones (IVCS iv_, ya_, Limber's lmb_ rig): adult bodies only.
     public static bool IsBodyModBone(string bone)
