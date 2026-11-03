@@ -5,7 +5,7 @@
     or the DALAMUD_HOME environment variable). The plugin manifest is Limber.json.
   -->
   <PropertyGroup>
-    <Version>0.63.0.0</Version>
+    <Version>0.64.0.0</Version>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Platforms>x64</Platforms>
     <Nullable>enable</Nullable>
