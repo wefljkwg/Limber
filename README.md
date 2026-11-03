@@ -6,7 +6,8 @@
 
 ### FFXIV plugin
 1. In game, type `/xlsettings` and open the **Experimental** tab.
-2. Under **Custom Plugin Repositories**, paste this link, tick the box next to it, and click **Save and Close**:
+2. Under **Custom Plugin Repositories**, paste this link into the empty box at the bottom, click the **+** button next to it,
+   tick **Enabled** on the new row, and click **Save and Close**:
 
        https://raw.githubusercontent.com/wefljkwg/Limber/main/repo.json
 
