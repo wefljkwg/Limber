@@ -36,6 +36,8 @@ public sealed class MainWindow : Window
     public FkPosingTab? FkPosingTab { get; set; }
 
     public LimberAnimationsTab? LimberAnimationsTab { get; set; }
+    public BustShapeTab? BustShapeTab { get; set; }
+    public HousingPropsTab? WorldPropsTab { get; set; }
     public LookAtTab? LookAtTab { get; set; }
     public TimelineTab? TimelineTab { get; set; }
     public AppearanceTab? AppearanceTab { get; set; }
@@ -95,15 +97,17 @@ public sealed class MainWindow : Window
 
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
         new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between (Koikatsu style).", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
+        new("bust", "Body", "Breast size", "Koikatsu-style breast size for tops made with size shapes: flat at 0 to huge at 100, from the Bust slider or set here.", () => BustShapeTab?.Draw(), () => BustShapeTab != null),
         new("shape", "Body", "Body shape", "Sliders for the body's shape (like BodySlide), live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
         new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes (like Brio / Anamnesis).", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
         new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
         new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
-        new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): throbbing, twerking, an ahegao face and expansion (breasts, butt, penis), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
+        new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
-        new("props", "Scene", "Housing props", "Place housing furniture around you in GPose.", () => _housingTab.Draw()),
+        new("props", "Scene", "Housing props", "Place housing furniture around you in GPose, in sections by type.", () => _housingTab.Draw()),
+        new("worldprops", "Scene", "World props", "Every prop the game world is built from (event objects, field objects, each region's props), in sections, to place around you.", () => WorldPropsTab?.Draw(), () => WorldPropsTab != null),
         new("renderer", "Scene", "Renderer", "Extra models and bones drawn on the character.", () => _rendererTab.Draw()),
 
         new("link", "Koikatsu", "Koikatsu link", "Pose FFXIV characters live from Koikatsu / KoiPose.", DrawKoikatsuPage),

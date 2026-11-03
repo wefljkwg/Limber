@@ -670,6 +670,17 @@ public sealed class FkPosingTab
             _config.Save();
         }
         Tooltip("Holds the bone at a place relative to its parent too (stretches the joint). The gizmo's move mode sets it.");
+        ImGui.SameLine();
+        bool children = !(entry?.KeepChildren ?? false);
+        if(ImGui.Checkbox("Move children###fk_move_children", ref children))
+        {
+            Checkpoint(name);
+            entry ??= Entry(name, bone, snapshot, create: true)!;
+            entry.KeepChildren = !children;
+            _config.Save();
+        }
+        Tooltip("On: the bones under this one go with it when you turn or move it (usual FK).\n"
+            + "Off: they stay where they are; only this bone turns / moves (bones under it that you posed with FK still follow it).");
         if(entry is { Move: true })
         {
             var cm = entry.Position * 100f;

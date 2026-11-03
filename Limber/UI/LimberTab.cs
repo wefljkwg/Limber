@@ -44,8 +44,6 @@ public sealed partial class LimberTab
     // Whole-character move / turn / scale (Actor tab).
     public ActorTransforms? Actors { get; set; }
     private (string Line, string? RigGame)[]? _modelCheck;
-    private bool _recheckAfterRig;
-    private string _rigOneNote = "";
     private bool _modelChecking;
     private List<Limber.Gpu.LiveMesh.Found>? _gpuFound;
     private List<string>? _gpuLog;
@@ -219,6 +217,13 @@ public sealed partial class LimberTab
                 expansion.Breasts.Enabled = expansion.Butt.Enabled = expansion.Penis.Enabled = false;
                 done.Add("expansion");
             }
+            if(_config.BallThrob != null && _config.BallThrob.TryGetValue(name, out var balls) && balls.Enabled)
+            {
+                balls.Enabled = false;
+                done.Add("testicle throbbing");
+            }
+            if(_config.BustShapes != null && _config.BustShapes.Remove(name))
+                done.Add("breast size");
             if(_config.BodyShapes != null && _config.BodyShapes.TryGetValue(name, out var shape) && shape.Count > 0)
             {
                 shape.Clear();
@@ -246,7 +251,7 @@ public sealed partial class LimberTab
         ImGui.Text("Character:");
         ImGui.SameLine();
 
-        ImGui.SetNextItemWidth(MathF.Max(150f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X - 150f * ImGuiHelpers.GlobalScale));
+        ImGui.SetNextItemWidth(MathF.Max(150f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X - 225f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("###limber_actor", preview))
         {
             if(combo.Success)
@@ -272,6 +277,14 @@ public sealed partial class LimberTab
             _config.Save();
         }
         Tooltip("Work on whichever character is targeted (the GPose target while in GPose).\nPicking someone from the list turns this off.");
+
+        ImGui.SameLine();
+        using(ImRaii.Disabled(!_selection.Actor.IsSet))
+        {
+            if(ImGui.Button("Redraw###limber_redraw") && _selection.Actor.IsSet)
+                Limber.Rig.Appearance.Redraw(_selection.Actor.ObjectIndex);
+        }
+        Tooltip("Draws the chosen character again (through Penumbra, so its mods stay on): picks up mod and gear changes.");
     }
 
     /// <summary>"Show Limber handles on the character" (shown under the character picker, above the main tabs).</summary>
@@ -1104,21 +1117,22 @@ public sealed partial class LimberTab
             Tooltip("Opens a guide: what Body physics does, what you need, setting it up, the sliders, and what to do if it doesn't work.");
             ImGui.Spacing();
         }
+        // 1. Rig: one button for everything.
+        SeparatorText("Rig");
         DrawOneClick();
+        DrawModelCheck();
 
+        // 2. Each part: on or off by itself, its physics settings tucked under it.
+        SeparatorText("Parts");
+        ImGui.TextDisabled("Turn each part's physics on or off by itself. Its settings are under it.");
         foreach(var part in Limber.BodyRig.RigParts.All)
         {
-            string title = part.Label;
-            if(!ImGui.CollapsingHeader($"{title}###lmb_rig_section_{part.Key}"))
-                continue;
             using(ImRaii.PushId(part.Key))
-                DrawRigPart(part);
-            ImGui.Spacing();
+                DrawPartRow(part);
         }
 
-        if(ImGui.CollapsingHeader("Manual rig build (advanced)###lmb_rig_manual"))
-            DrawRigBuild();
-        if(ImGui.CollapsingHeader("Live mesh (experimental)###lmb_live_mesh"))
+        ImGui.Spacing();
+        if(ImGui.CollapsingHeader("Experimental###lmb_live_mesh"))
             DrawLiveMesh();
     }
 
@@ -1286,6 +1300,8 @@ public sealed partial class LimberTab
             }
             ImGui.TreePop();
         }
+        if(_gpuStatus == Limber.Gpu.LiveSoftBody.ReadyingText && !Limber.Gpu.LiveSoftBody.Preparing)
+            _gpuStatus = Limber.Gpu.LiveSoftBody.AutoStatus;
         if(_gpuStatus != null)
             ImGui.TextWrapped(_gpuStatus);
         if(Limber.Gpu.LiveMesh.LastError != null)
@@ -1372,9 +1388,37 @@ public sealed partial class LimberTab
         }
     }
 
+    // One part: its switch, collisions and whether it's running, on one line; the rest under "Settings".
+    private void DrawPartRow(Limber.BodyRig.RigPart part)
+    {
+        var soft = SoftFor(part);
+        bool enabled = soft.Enabled;
+        ImGui.AlignTextToFramePadding();
+        if(ImGui.Checkbox($"{part.Label}###lmb_part_on", ref enabled))
+        {
+            soft.Enabled = enabled;
+            _config.Save();
+        }
+        Tooltip($"Soft {part.Label.ToLowerInvariant()}: physics on every nearby character whose models are rigged.");
+        ImGui.SameLine(160 * ImGuiHelpers.GlobalScale);
+        bool collide = soft.Collisions;
+        if(ImGui.Checkbox("Collisions###lmb_part_collide", ref collide))
+        {
+            soft.Collisions = collide;
+            _config.Save();
+        }
+        Tooltip("Arms, hands, thighs, the floor and props push it.");
+        ImGui.SameLine();
+        DrawSoftStatus(part);
+        if(ImGui.TreeNode($"Settings###lmb_part_settings"))
+        {
+            DrawRigPart(part);
+            ImGui.TreePop();
+        }
+    }
+
     private void DrawRigPart(Limber.BodyRig.RigPart part)
     {
-        DrawOneClickPart(part);
         DrawSoftBody(part);
 
         if(!ImGui.TreeNode("Bone placement (advanced)###lmb_rig_placement"))
@@ -1439,18 +1483,6 @@ public sealed partial class LimberTab
         _oneClick = Limber.BodyRig.OneClickRig.Start(actor.ObjectIndex, actor.Address, RigShapes(), dir, parts, _config.RigAutoFit);
     }
 
-    // "Rig this one" (Check the worn models): just that model, every part it has, into the rig mod already there.
-    private void RigOne(string game)
-    {
-        var actor = _selection.Actor;
-        if(!actor.IsSet || OneClickBusy)
-            return;
-        var dir = System.IO.Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "BodyRig", "RiggedModels");
-        _oneClick = Limber.BodyRig.OneClickRig.Start(actor.ObjectIndex, actor.Address, RigShapes(), dir, Limber.BodyRig.RigParts.Rigged, false,
-            only: new[] { game });
-        _recheckAfterRig = true;
-    }
-
     /// <summary>One-click rig of everything (the Body Shape tab's button); false if it can't start now.</summary>
     public bool RigEverything()
     {
@@ -1461,18 +1493,6 @@ public sealed partial class LimberTab
     }
 
     private bool OneClickBusy => _oneClick is { Done: false } || _rigBuild is { IsCompleted: false };
-
-    // The button in each part's section.
-    private void DrawOneClickPart(Limber.BodyRig.RigPart part)
-    {
-        using(ImRaii.Disabled(OneClickBusy || !_selection.Actor.IsSet))
-        {
-            string name = part.Label.ToLowerInvariant();
-            if(ImGui.Button($"Rig the {name} (one click)###lmb_one_click_{part.Key}", new Vector2(-1, 0)))
-                StartOneClick([part]);
-        }
-        Tooltip("Rigs this part on the chosen character's worn models (your mods are only read).");
-    }
 
     private void DrawOneClick()
     {
@@ -1558,61 +1578,41 @@ public sealed partial class LimberTab
                 ImGui.TextWrapped(line);
     }
 
-    // What the physics is doing right now, and whether the worn models use the rig: to see why nothing moves.
+    // What a part's physics is doing right now (on its line).
     private void DrawSoftStatus(Limber.BodyRig.RigPart part)
     {
         var sim = part == Limber.BodyRig.RigParts.Testicles ? SoftTesticles : part == Limber.BodyRig.RigParts.Butt ? SoftButt : SoftBreasts;
-        if(sim != null)
+        if(sim == null || !SoftFor(part).Enabled)
         {
-            bool recent = System.Environment.TickCount64 - sim.LastTicks < 1000;
-            if(!recent || sim.LastCount == 0)
-                ImGui.TextColored(Warning, "Physics: not running on anyone (no nearby character has this part's rig bones, or it's off).");
-            else
-                ImGui.TextDisabled($"Physics: running on {sim.LastCount} character(s), moving the bones up to {sim.LastMove * 100f:0.0} cm.");
+            ImGui.TextDisabled("off");
+            return;
         }
+        bool recent = System.Environment.TickCount64 - sim.LastTicks < 1000;
+        if(!recent || sim.LastCount == 0)
+        {
+            ImGui.TextColored(Warning, "not running");
+            Tooltip("No nearby character has this part's rig bones: rig it above (and check the worn models).");
+        }
+        else
+            ImGui.TextDisabled($"running on {sim.LastCount} (moving up to {sim.LastMove * 100f:0.0} cm)");
+    }
+
+    // Whether the chosen character's worn models use the rig (once for all parts): to see why something doesn't move.
+    private void DrawModelCheck()
+    {
         using(ImRaii.Disabled(_modelChecking || !_selection.Actor.IsSet))
         {
-            if(ImGui.SmallButton($"Check the worn models###lmb_check_models_{part.Key}"))
+            if(ImGui.SmallButton("Check the worn models###lmb_check_models"))
                 CheckModels();
         }
-        Tooltip("Lists the models the selected character is wearing and whether each one is weighted to the rig\n" +
-                "(if a model isn't, it can't move, whatever the sliders say).");
-        // After "Rig this one": check again once the rig is done, so the list shows the result.
-        if(_recheckAfterRig && _oneClick is { Done: true } done && !_modelChecking)
-        {
-            _recheckAfterRig = false;
-            _rigOneNote = done.Lines.Length > 0 ? done.Lines[^1] : "";
-            CheckModels();
-        }
-        if(_recheckAfterRig && _oneClick is { Done: false } running)
-            ImGui.TextDisabled("Rigging: " + (running.Lines.Length > 0 ? running.Lines[^1] : "..."));
-        else if(_rigOneNote.Length > 0 && _modelCheck != null)
-            ImGui.TextDisabled(_rigOneNote);
-        if(_modelCheck != null)
-        {
-            int row = 0;
-            foreach(var (line, rigGame) in _modelCheck)
-            {
-                ImGui.TextWrapped(line);
-                if(rigGame != null)
-                {
-                    ImGui.SameLine();
-                    using(ImRaii.Disabled(OneClickBusy || !_selection.Actor.IsSet))
-                    {
-                        if(ImGui.SmallButton($"Rig this one###lmb_rig_one_{part.Key}_{row}"))
-                            RigOne(rigGame);
-                    }
-                    Tooltip("Rigs just this model (breasts, testicles and butt, whichever it has) and adds it to the character's rig mod.\n" +
-                            "Your own mods are only read. The rest of the rig stays as it is.");
-                }
-                row++;
-            }
-            if(ImGui.SmallButton($"Hide###lmb_check_hide_{part.Key}"))
-            {
-                _modelCheck = null;
-                _rigOneNote = "";
-            }
-        }
+        Tooltip("Lists the models the chosen character wears and which parts each is rigged for\n" +
+                "(a model that isn't can't move, whatever the settings say: rig everything again).");
+        if(_modelCheck == null)
+            return;
+        foreach(var (line, _) in _modelCheck)
+            ImGui.TextWrapped(line);
+        if(ImGui.SmallButton("Hide###lmb_check_hide"))
+            _modelCheck = null;
     }
 
     private void CheckModels()
@@ -1673,20 +1673,9 @@ public sealed partial class LimberTab
 
     private void DrawSoftBody(Limber.BodyRig.RigPart part)
     {
-        ImGui.Spacing();
         string softName = "Soft " + part.Label.ToLowerInvariant();
-        ImGui.TextColored(Accent, softName);
-        ImGui.Separator();
-        DrawSoftStatus(part);
         var soft = SoftFor(part);
         bool changed = false;
-        bool enabled = soft.Enabled;
-        if(ImGui.Checkbox($"{softName} on##lmb_soft", ref enabled)) { soft.Enabled = enabled; changed = true; }
-        Tooltip("Physics on every nearby character with the rig.");
-        bool collide = soft.Collisions;
-        ImGui.SameLine();
-        if(ImGui.Checkbox("Collisions##lmb_soft", ref collide)) { soft.Collisions = collide; changed = true; }
-        Tooltip("Arms, hands, thighs, the floor and props.");
 
         void Slider(string label, float value, Action<float> set, string tip, float min = -3f, float max = 3f)
         {

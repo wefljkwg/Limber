@@ -938,6 +938,20 @@ public static class MdlRigger
         return (offset, size, meshes);
     }
 
+    /// <summary>Where one vertex element (by usage: 0 position, 3 normal, 6 tangent...) of one mesh sits in its LoD's vertex
+    /// block: its first byte, stride and type. (-1, 0, 0) if the mesh has none.</summary>
+    public static (int At, int Stride, byte Type) ElementOf(byte[] file, int mesh, int usage)
+    {
+        var m = Parse(file);
+        if (mesh >= m.Meshes.Count || mesh >= m.Declarations.Count)
+            return (-1, 0, 0);
+        var e = m.Declarations[mesh].FirstOrDefault(x => x.Usage == usage);
+        if (e == null)
+            return (-1, 0, 0);
+        var me = m.Meshes[mesh];
+        return ((int)me.BufferOffset[e.Stream] + e.Offset, me.Stride[e.Stream], e.Type);
+    }
+
     /// <summary>How much of each vertex (per mesh of one LoD) is on the bones <paramref name="isPart"/> picks.</summary>
     public static Dictionary<int, float[]> PartWeights(byte[] file, int lod, Func<string, bool> isPart)
     {

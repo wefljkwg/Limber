@@ -147,19 +147,31 @@ public static class OneClickRig
         var collection = await Game(() =>
             Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index));
         if (!collection.Item1)
-            throw new InvalidOperationException("Penumbra doesn't know this character right now");
+            throw new InvalidOperationException("Penumbra doesn't know this character right now (an actor added in GPose by another tool, or by an older Limber: add it again on the Actors page)");
         var (collectionId, collectionName) = collection.Item3;
         progress.Add($"Collection: {collectionName}.");
 
         // Limber's earlier rig for this collection off while reading (so the skeletons and models read are your own
         // mods', not a rigged copy), and the character redrawn and given time to load, so what's read is exactly what
         // it wears now (a model that hadn't loaded yet, or a mod option just changed, used to be missed).
-        string? earlierDir = null;
-        if (onlySet == null && RigModFolder(root, collectionName) is { } earlierRig)
+        // Every one of Limber's rig mods off in this collection while reading (not just the newest: older ones, other
+        // parts' and earlier versions' would hand over rigged copies instead of your own mods' models, and which parts
+        // got missed depended on which happened to be on). The ones that were on come back if it doesn't finish.
+        var turnedOff = new List<string>();
+        if (onlySet == null)
         {
-            earlierDir = Path.GetFileName(earlierRig);
-            await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
-                .InvokeFunc(collectionId, earlierDir, "", false));
+            var mods = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Dictionary<string, string>>("Penumbra.GetModList").InvokeFunc());
+            foreach (var other in mods.Keys)
+            {
+                if (!IsRigMod(other))
+                    continue;
+                int result = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
+                    .InvokeFunc(collectionId, other, "", false));
+                if (result == 0) // Success: it was on
+                    turnedOff.Add(other);
+            }
+            if (turnedOff.Count > 0)
+                progress.Add($"Limber's earlier rig mods off while reading your own models ({turnedOff.Count}).");
         }
         try
         {
@@ -167,17 +179,17 @@ public static class OneClickRig
         }
         catch
         {
-            // Didn't finish: the earlier rig back on, as it was.
-            if (earlierDir != null)
+            // Didn't finish: the rig mods that were on, back on.
+            foreach (var dir in turnedOff)
                 await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
-                    .InvokeFunc(collectionId, earlierDir, "", true));
+                    .InvokeFunc(collectionId, dir, "", true));
             throw;
         }
     }
 
     /// <summary>
     /// The character redrawn, then its files read once they stop changing (everything it wears loaded and resolved
-    /// through the current mods). Up to about 8 seconds.
+    /// through the current mods). Up to about 10 seconds.
     /// </summary>
     private static async Task<Dictionary<string, HashSet<string>>?> WornFiles(ushort index, Progress progress)
     {
@@ -186,12 +198,12 @@ public static class OneClickRig
             Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
             return true;
         });
-        await Task.Delay(600);
+        await Task.Delay(1000);
         Dictionary<string, HashSet<string>>? last = null;
         string lastKey = "";
         int stable = 0;
         long start = Environment.TickCount64;
-        while (Environment.TickCount64 - start < 8000)
+        while (Environment.TickCount64 - start < 10000)
         {
             var paths = await Game(() =>
             {
@@ -205,7 +217,7 @@ public static class OneClickRig
                 .OrderBy(x => x, StringComparer.Ordinal));
             if (paths != null && key.Length > 0 && key == lastKey)
             {
-                if (++stable >= 2)
+                if (++stable >= 4) // (the same for 1.6 s: genital and butt mods can load a moment after the body)
                     return paths;
             }
             else
@@ -214,7 +226,7 @@ public static class OneClickRig
             lastKey = key;
             await Task.Delay(400);
         }
-        progress.Add("  (the character's files were still changing after 8 seconds: using what's loaded now)");
+        progress.Add("  (the character's files were still changing after 10 seconds: using what's loaded now)");
         return last;
     }
 
@@ -248,6 +260,11 @@ public static class OneClickRig
         var modelsDir = Path.Combine(root, modelsName);
         var originals = Path.Combine(workDir, "originals");
         var models = new List<(string Game, string Code, byte[] Data)>();
+        // The race most of the worn models are made for (the character's own): a model made for another race (a
+        // genital or body part mod shared between races, often under the male Midlander's path) is weighted in it.
+        var codes = paths.SelectMany(kv => kv.Value).Where(g => g.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase) && g.StartsWith("chara/", StringComparison.OrdinalIgnoreCase))
+            .Select(RaceCode).Where(c => c != null && build.Bones.ContainsKey(c!)).GroupBy(c => c!).OrderByDescending(g => g.Count()).Select(g => g.Key).ToList();
+        string? ownCode = codes.FirstOrDefault();
         foreach (var (actual, games) in paths)
         {
             foreach (var game in games.Where(g => g.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase) && g.StartsWith("chara/", StringComparison.OrdinalIgnoreCase)))
@@ -255,11 +272,18 @@ public static class OneClickRig
                 if (onlySet != null && !onlySet.Contains(game))
                     continue;
                 var code = RaceCode(game);
-                if (code == null || !build.Bones.ContainsKey(code))
+                if (code == null)
                 {
                     if (onlySet != null)
                         progress.Add($"  {Path.GetFileName(game)}: not a model for an adult body Limber can rig, skipped.");
                     continue;
+                }
+                if (!build.Bones.ContainsKey(code))
+                {
+                    if (ownCode == null)
+                        continue;
+                    progress.Add($"  {Path.GetFileName(game)}: made for another body ({code}), weighted as {ownCode}.");
+                    code = ownCode;
                 }
                 var source = await ReadOriginal(actual, game, modelsDir, originals);
                 if (source != null)
@@ -267,6 +291,36 @@ public static class OneClickRig
                 else
                     progress.Add($"  {Path.GetFileName(game)}: couldn't read its file ({Path.GetFileName(actual.Split('|').Last())}), skipped.");
             }
+        }
+
+        // Which parts no worn model has (and the bones that might be them, under names Limber doesn't know yet).
+        foreach (var part in parts)
+        {
+            bool any = false;
+            var hints = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var (_, _, data) in models)
+            {
+                List<MdlRigger.MeshSkin> skins;
+                try
+                {
+                    skins = MdlRigger.Skin(data, 0);
+                }
+                catch
+                {
+                    continue;
+                }
+                var names = new HashSet<string>(skins.SelectMany(k => k.Bones), StringComparer.Ordinal);
+                foreach (var side in part.Single ? new[] { "l" } : new[] { "l", "r" })
+                    if (SourceNames(part, side).Any(names.Contains) || names.Any(n => n.StartsWith(part.Prefix, StringComparison.Ordinal)))
+                        any = true;
+                foreach (var n in names)
+                    if (MightBe(part, n))
+                        hints.Add(n);
+            }
+            if (!any)
+                progress.Add($"  {part.Label}: none of the models worn has {part.Label.ToLowerInvariant()} bones Limber knows"
+                    + (hints.Count > 0 ? $" (bones that might be them: {string.Join(", ", hints.Take(12))}; tell Limber's author these names)" : " (is the mod with them on, and loaded?)")
+                    + $". Models read: {string.Join(", ", models.Select(m => Path.GetFileName(m.Game)).Distinct().Take(16))}.");
         }
 
         // 3. Fit each part's box to the part in those models, and build the rig with it.
@@ -379,13 +433,26 @@ public static class OneClickRig
         return clean.Length > 0 ? clean : "collection";
     }
 
+    // A bone name that looks like it could be the part's (for the log, when none Limber knows is found).
+    private static bool MightBe(RigPart part, string bone)
+    {
+        string b = bone.ToLowerInvariant();
+        if (b.StartsWith("lmb_", StringComparison.Ordinal))
+            return false;
+        string[] words = part == RigParts.Testicles ? ["kougan", "tama", "ball", "testic", "scrot", "kinta", "sack", "nuts"]
+            : part == RigParts.Butt ? ["shiri", "butt", "glute", "hip", "ass_", "cheek", "oshiri"]
+            : part == RigParts.Breasts ? ["mune", "breast", "boob", "chest", "oppai"]
+            : [];
+        return words.Any(w => b.Contains(w, StringComparison.Ordinal));
+    }
+
     // The old grid's bone names for a part (its weights are taken over too); the butt never had one.
     private static string LegacyPrefix(RigPart part) => part == RigParts.Testicles ? RigParts.LegacyTesticles.Prefix
         : part == RigParts.Breasts ? RigParts.LegacyBreasts.Prefix : part.Prefix + "old_";
 
     private static List<string> SourceNames(RigPart part, string side)
     {
-        var names = part.AllParents.Select(p => p.Replace("{side}", side)).ToList();
+        var names = part.AllParents.Select(p => SoftBoneMarks.ForSide(p, side == "l")).ToList();
         // The other names body and part mods use for the same bones (any that a model has are taken too).
         string[] extra = part == RigParts.Testicles
             ? ["iv_kintama_phys_{side}", "iv_kintama_{side}", "iv_kougan_phys_{side}", "iv_tama_{side}", "j_kougan_{side}", "iv_balls_{side}", "iv_testicle_{side}"]
@@ -396,7 +463,7 @@ public static class OneClickRig
                     : [];
         foreach (var e in extra)
         {
-            var n = e.Replace("{side}", side);
+            var n = SoftBoneMarks.ForSide(e, side == "l");
             if (!names.Contains(n))
                 names.Add(n);
         }

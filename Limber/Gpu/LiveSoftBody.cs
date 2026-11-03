@@ -272,20 +272,79 @@ public static unsafe partial class LiveSoftBody
 
     // ---- Start / stop (UI, render thread)
 
-    /// <summary><paramref name="partOf"/>: which soft part a bone moves (0 breasts, 1 butt, 2 testicles, -1 none).</summary>
-    public static string Start(LiveMesh.Found target, nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    // ---- Getting ready (in the background: reading the model and building the soft body took long enough to freeze
+    // the game when it ran on the frame), once per model; starting is then just swapping in the buffer.
+
+    private sealed class Prepared
     {
-        Stop();
-        LiveMesh.StopWobble();
-        if (!target.IsVertex)
-            return "That's not a vertex buffer.";
-        var data = readFile(target.File);
+        public required byte[] Original;
+        public required List<MeshState> Meshes;
+        public required string[] Bones;
+        public required Func<Physics?> NewPhysics;
+        public int Total, Lod;
+        public required string Error;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Threading.Tasks.Task<Prepared>> Ready = new();
+
+    // (the marked bones are part of the key: marking one in the Renderer makes it ready again)
+    private static string ReadyKey(string file, uint width)
+    {
+        string marks;
+        try
+        {
+            marks = string.Join(",", SoftBoneMarks.Source().OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value));
+        }
+        catch
+        {
+            marks = "";
+        }
+        string stamp = "";
+        try
+        {
+            // (a model on disk that was rigged again is new)
+            var path = file.StartsWith('|') && file.IndexOf('|', 1) > 0 ? file[(file.IndexOf('|', 1) + 1)..] : file;
+            if (System.IO.Path.IsPathRooted(path) && System.IO.File.Exists(path))
+            {
+                var info = new System.IO.FileInfo(path);
+                stamp = info.Length + "@" + info.LastWriteTimeUtc.Ticks;
+            }
+        }
+        catch
+        {
+        }
+        return file + "|" + width + "|" + stamp + "|" + marks;
+    }
+
+    private static System.Threading.Tasks.Task<Prepared> PrepareAsync(string file, uint width, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    {
+        var key = ReadyKey(file, width);
+        if (Ready.Count > 24 && !Ready.ContainsKey(key))
+            Ready.Clear();
+        return Ready.GetOrAdd(key, _ => System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                return Prepare(file, width, readFile, partOf);
+            }
+            catch (Exception e)
+            {
+                return Fail(e.Message);
+            }
+        }));
+    }
+
+    private static Prepared Fail(string error) => new() { Original = [], Meshes = [], Bones = [], NewPhysics = () => null, Error = error };
+
+    private static Prepared Prepare(string file, uint width, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    {
+        var data = readFile(file);
         if (data == null)
-            return "Couldn't read the model file.";
+            return Fail("Couldn't read the model file.");
         var (offset, size, layouts) = MdlRigger.Layout(data);
-        int lod = Array.FindIndex(size, s => s == target.Desc.ByteWidth);
+        int lod = Array.FindIndex(size, s => s == width);
         if (lod < 0)
-            return $"No vertex block in the file is {target.Desc.ByteWidth} bytes; try another vertices line.";
+            return Fail($"No vertex block in the file is {width} bytes; try another vertices line.");
         var original = data.AsSpan((int)offset[lod], (int)size[lod]).ToArray();
         var skins = MdlRigger.Skin(data, lod);
         var bones = new List<string>();
@@ -416,8 +475,96 @@ public static unsafe partial class LiveSoftBody
             total += groups.Count;
         }
         if (meshes.Count == 0)
-            return "No breast, butt or testicle vertices in this model (pick the body model's vertices line, or mark the bones in the Renderer).";
+            return Fail("No breast, butt or testicle vertices in this model (pick the body model's vertices line, or mark the bones in the Renderer).");
+        return new Prepared { Original = original, Meshes = meshes, Bones = bones.ToArray(), NewPhysics = Physics.Factory(meshes), Total = total, Lod = lod, Error = "" };
+    }
 
+
+    // A start waiting for its model to be ready: the candidates in the order to try them.
+    private sealed class Pending
+    {
+        public required List<(LiveMesh.Found Target, System.Threading.Tasks.Task<Prepared> Task)> Candidates;
+        public nint Address;
+        public ushort Index;
+        public required Func<string, byte[]?> ReadFile;
+        public required Func<string, int> PartOf;
+        public long Since;
+    }
+
+    private static Pending? _pending;
+
+    /// <summary>What a start says while the model is getting ready in the background.</summary>
+    public const string ReadyingText = "Getting the soft body ready in the background (the game keeps running)...";
+
+    /// <summary>Whether it's getting a model ready in the background (to start on it then).</summary>
+    public static bool Preparing => _pending != null;
+
+    /// <summary><paramref name="partOf"/>: which soft part a bone moves (0 breasts, 1 butt, 2 testicles, -1 none).</summary>
+    public static string Start(LiveMesh.Found target, nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
+        => StartFirst([target], address, index, readFile, partOf);
+
+    // The first of these that has soft parts: at once if it's ready, else when it is (the frame goes on meanwhile).
+    private static string StartFirst(List<LiveMesh.Found> targets, nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    {
+        var list = new List<(LiveMesh.Found, System.Threading.Tasks.Task<Prepared>)>();
+        foreach (var t in targets)
+            if (t.IsVertex)
+                list.Add((t, PrepareAsync(t.File, t.Desc.ByteWidth, readFile, partOf)));
+        if (list.Count == 0)
+            return "That's not a vertex buffer.";
+        _pending = new Pending { Candidates = list, Address = address, Index = index, ReadFile = readFile, PartOf = partOf, Since = Environment.TickCount64 };
+        return TryPending() ?? ReadyingText;
+    }
+
+    // Render thread: the first candidate (in order) that's ready with soft parts goes on; null while still waiting.
+    private static readonly object PendingLock = new();
+
+    private static string? TryPending()
+    {
+        lock (PendingLock)
+            return TryPendingLocked();
+    }
+
+    private static string? TryPendingLocked()
+    {
+        var p = _pending;
+        if (p == null)
+            return null;
+        string last = "No model with soft parts found on this character.";
+        foreach (var (target, task) in p.Candidates)
+        {
+            if (!task.IsCompleted)
+                return null; // (keep the order: wait for this one)
+            var ready = task.Result;
+            if (ready.Meshes.Count == 0)
+            {
+                last = ready.Error;
+                continue;
+            }
+            _pending = null;
+            if (!LiveMesh.StillHolds(target, target.Buffer))
+                return LastError = "The model was redrawn while it was getting ready; start it again (Auto start does by itself).";
+            return Begin(target, ready, p.Address, p.Index, p.ReadFile, p.PartOf);
+        }
+        _pending = null;
+        return LastError = last;
+    }
+
+    // Swapping the buffer in and starting (quick: everything slow was done in the background).
+    private static string Begin(LiveMesh.Found target, Prepared ready, nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
+    {
+        Stop();
+        LiveMesh.StopWobble();
+        var original = ready.Original;
+        var meshes = ready.Meshes;
+        var bones = ready.Bones.ToList();
+        int total = ready.Total, lod = ready.Lod;
+        foreach (var mesh in meshes)
+            foreach (var g in mesh.Groups)
+            {
+                g.Offset = Vector3.Zero;
+                g.Velocity = Vector3.Zero;
+            }
         var sim = new Sim
         {
             Target = target,
@@ -433,7 +580,7 @@ public static unsafe partial class LiveSoftBody
                 return "Couldn't swap in a writable copy of the buffer.";
         }
         (sim.DrawObject, sim.Model) = ModelOf(address, index, target.Slot);
-        sim.Physics = Physics.Build(meshes);
+        sim.Physics = ready.NewPhysics();
         _snapshot = null;
         _owner = sim.Owner;
         _sim = sim;
@@ -455,7 +602,8 @@ public static unsafe partial class LiveSoftBody
         public ushort Index;
         public required Func<string, byte[]?> ReadFile;
         public required Func<string, int> PartOf;
-        public long Since, Next;
+        public long Since, Next, Steady, NextProbe;
+        public string Key = "";
     }
 
     private static Resume? _resume;
@@ -472,6 +620,8 @@ public static unsafe partial class LiveSoftBody
         {
             r.Since = Environment.TickCount64;
             r.Next = r.Since + 300;
+            r.Key = "";
+            r.NextProbe = 0;
             LastError = "The model was reloaded; starting the live soft body again...";
         }
         else
@@ -506,22 +656,30 @@ public static unsafe partial class LiveSoftBody
             LastError = "The model was reloaded and didn't come back; probe and start the live soft body again.";
             return;
         }
-        r.Next = now + 500;
+        r.Next = now + 250;
         try
         {
             var obj = ActorSkeleton.GetObject(r.Index);
             if (obj == null || (nint)obj != r.Address || !Limber.Koi.Safety.AdultAllowed(r.Address) || obj->DrawObject == null)
                 return;
+            // Only once what it wears has stopped changing for a moment (cheap to check): searching the model's memory
+            // while it's still loading found nothing and cost a hitch each time.
+            var files = LiveMesh.ModelFiles((nint)obj->DrawObject);
+            string key = (nint)obj->DrawObject + "|" + string.Join("|", files.ConvertAll(x => x.File));
+            if (key != r.Key)
+            {
+                r.Key = key;
+                r.Steady = now;
+                return;
+            }
+            if (now - r.Steady < 600 || now < r.NextProbe)
+                return;
+            r.NextProbe = now + 1500;
             var found = LiveMesh.Probe((nint)obj->DrawObject, new List<string>());
             var candidates = found.Where(f => f.IsVertex && f.Slot == r.Slot)
                 .OrderBy(f => f.Path == r.Path ? 0 : 1).ThenBy(f => f.Desc.ByteWidth == r.Width ? 0 : 1).ToList();
-            foreach (var f in candidates)
-            {
-                Start(f, r.Address, r.Index, r.ReadFile, r.PartOf);
-                if (Running)
-                    return; // (Start keeps it for the next redraw)
-            }
-            _resume = r; // (each failed Start forgot it)
+            if (candidates.Count > 0)
+                StartFirst(candidates, r.Address, r.Index, r.ReadFile, r.PartOf); // (ready at once when it's the same model)
         }
         catch (Exception e)
         {
@@ -551,21 +709,16 @@ public static unsafe partial class LiveSoftBody
             .OrderBy(f => f.Slot == 1 ? 0 : f.Slot == 3 ? 1 : 2)
             .ThenByDescending(f => f.Desc.ByteWidth)
             .ToList();
-        string last = "No model with soft parts found on this character.";
-        foreach (var f in candidates)
+        if (candidates.Count == 0)
+            return "No model with soft parts found on this character.";
+        try
         {
-            try
-            {
-                last = Start(f, address, index, readFile, partOf);
-            }
-            catch (Exception e)
-            {
-                last = e.Message;
-            }
-            if (Running)
-                return last;
+            return StartFirst(candidates, address, index, readFile, partOf);
         }
-        return last;
+        catch (Exception e)
+        {
+            return e.Message;
+        }
     }
 
     /// <summary>
@@ -574,7 +727,7 @@ public static unsafe partial class LiveSoftBody
     /// </summary>
     public static void AutoTick(nint address, ushort index, Func<string, byte[]?> readFile, Func<string, int> partOf)
     {
-        if (address == 0 || Running || Resuming || !Settings().AutoStart)
+        if (address == 0 || Running || Resuming || Preparing || !Settings().AutoStart)
             return;
         var obj = ActorSkeleton.GetObject(index);
         if (obj == null || (nint)obj != address || obj->DrawObject == null)
@@ -593,6 +746,7 @@ public static unsafe partial class LiveSoftBody
     public static void Stop()
     {
         _resume = null;
+        _pending = null;
         var sim = _sim;
         _sim = null;
         _owner = null;
@@ -722,7 +876,20 @@ public static unsafe partial class LiveSoftBody
     {
         var sim = _sim;
         var snap = _snapshot;
-        if (sim == null && _resume != null)
+        if (_pending != null)
+        {
+            try
+            {
+                if (TryPending() is { } said)
+                    AutoStatus = said;
+            }
+            catch (Exception e)
+            {
+                _pending = null;
+                AutoStatus = LastError = e.Message;
+            }
+        }
+        else if (sim == null && _resume != null)
             TryResume();
         if (sim == null)
             return;

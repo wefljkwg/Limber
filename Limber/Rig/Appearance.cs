@@ -99,7 +99,16 @@ public static unsafe class Appearance
                 if(redraw)
                     c->DrawData.Equipment((EquipSlot)s) = id;  // (the redraw puts it on)
                 else
+                {
                     c->DrawData.LoadEquipment((EquipSlot)s, &id, true);
+                    // Didn't take (the game skips it on some characters, e.g. while it's still loading): written in
+                    // and redrawn instead, so a change always shows.
+                    if(c->DrawData.Equipment((EquipSlot)s).Value != look.Gear[s])
+                    {
+                        c->DrawData.Equipment((EquipSlot)s) = id;
+                        redraw = true;
+                    }
+                }
             }
         if(weapons && look.Weapons.Length >= 2)
             for(int w = 0; w < 2; w++)
@@ -113,6 +122,136 @@ public static unsafe class Appearance
         if(redraw)
             Redraw(index);
         return redraw ? "Applied (redrawn)." : "Applied.";
+    }
+
+    /// <summary>
+    /// A look written straight into a character that hasn't been drawn yet (a new actor): it then appears already
+    /// wearing it, no redraw needed. A child body isn't allowed.
+    /// </summary>
+    public static bool WriteUndrawn(Character* c, AppearanceData look)
+    {
+        if(c == null || look.Customize.Length < 26 || look.Customize[2] == 4)
+            return false;
+        var cz = (byte*)&c->DrawData.CustomizeData;
+        if(cz[2] == 4)
+            return false;
+        for(int i = 0; i < 26; i++)
+            cz[i] = look.Customize[i];
+        if(look.Gear.Length >= 10)
+            for(int s = 0; s < 10; s++)
+                c->DrawData.Equipment((EquipSlot)s) = new EquipmentModelId { Value = look.Gear[s] };
+        if(look.Weapons.Length >= 2)
+            for(int w = 0; w < 2; w++)
+                c->DrawData.Weapon((WeaponSlot)w).ModelId = new WeaponModelId { Value = look.Weapons[w] };
+        return true;
+    }
+
+    // ---- NPC looks (from the game's data: the event NPCs, with their own names)
+
+    public sealed record NpcLook(uint Id, string Name, AppearanceData Look);
+
+    private static volatile IReadOnlyList<NpcLook>? _npcs;
+    private static int _npcsStarted;
+
+    /// <summary>Every named event NPC with a human body (adults only), read once in the background; empty until ready.</summary>
+    public static IReadOnlyList<NpcLook> Npcs
+    {
+        get
+        {
+            if(_npcs != null)
+                return _npcs;
+            if(System.Threading.Interlocked.Exchange(ref _npcsStarted, 1) == 0)
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        _npcs = ReadNpcs();
+                    }
+                    catch(Exception e)
+                    {
+                        Plugin.Log.Warning(e, "Limber: couldn't read the NPC list");
+                        _npcs = Array.Empty<NpcLook>();
+                    }
+                });
+            return Array.Empty<NpcLook>();
+        }
+    }
+
+    public static bool NpcsReady => _npcs != null;
+
+    // A sheet field as a byte / number, whatever it is (a plain number or a link to another sheet's row).
+    private static ulong Num(object? v)
+    {
+        switch(v)
+        {
+            case null: return 0;
+            case byte b: return b;
+            case sbyte sb: return (byte)sb;
+            case ushort us: return us;
+            case short sh: return (ushort)sh;
+            case uint ui: return ui;
+            case int i: return (uint)i;
+            case ulong ul: return ul;
+            case long l: return (ulong)l;
+            case bool bo: return bo ? 1u : 0u;
+        }
+        var rowId = v.GetType().GetProperty("RowId");
+        return rowId != null && rowId.GetValue(v) is { } r ? Num(r) : 0;
+    }
+
+    private static List<NpcLook> ReadNpcs()
+    {
+        var list = new List<NpcLook>();
+        var bases = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcBase>();
+        var names = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ENpcResident>();
+        if(bases == null || names == null)
+            return list;
+        foreach(var row in bases)
+        {
+            if(!names.TryGetRow(row.RowId, out var resident))
+                continue;
+            string name = resident.Singular.ExtractText();
+            if(name.Length == 0)
+                continue;
+            byte race = (byte)Num(row.Race), body = (byte)Num(row.BodyType);
+            if(race == 0 || race > 8 || body == 4 || body == 0 || Num(row.ModelChara) != 0)
+                continue; // (not a human, or a child body)
+            var look = new AppearanceData { Name = name };
+            var c = look.Customize;
+            c[0] = race; c[1] = (byte)Num(row.Gender); c[2] = body; c[3] = (byte)Num(row.Height); c[4] = (byte)Num(row.Tribe);
+            c[5] = (byte)Num(row.Face); c[6] = (byte)Num(row.HairStyle); c[7] = (byte)(Num(row.HairHighlight) != 0 ? 0x80 : 0);
+            c[8] = (byte)Num(row.SkinColor); c[9] = (byte)Num(row.EyeHeterochromia); c[10] = (byte)Num(row.HairColor);
+            c[11] = (byte)Num(row.HairHighlightColor); c[12] = (byte)Num(row.FacialFeature); c[13] = (byte)Num(row.FacialFeatureColor);
+            c[14] = (byte)Num(row.Eyebrows); c[15] = (byte)Num(row.EyeColor); c[16] = (byte)Num(row.EyeShape); c[17] = (byte)Num(row.Nose);
+            c[18] = (byte)Num(row.Jaw); c[19] = (byte)Num(row.Mouth); c[20] = (byte)Num(row.LipColor); c[21] = (byte)Num(row.BustOrTone1);
+            c[22] = (byte)Num(row.ExtraFeature1); c[23] = (byte)Num(row.ExtraFeature2OrBust); c[24] = (byte)Num(row.FacePaint);
+            c[25] = (byte)Num(row.FacePaintColor);
+            if(c[9] == 0)
+                c[9] = c[15]; // (no second eye colour: the same)
+
+            // Gear: the shared NPC outfit when it has one, else its own.
+            static ulong Gear(object model, object dye, object dye2) => (Num(model) & 0xFFFFFF) | (Num(dye) & 0xFF) << 24 | (Num(dye2) & 0xFF) << 32;
+            static ulong Weapon(object model, object dye, object dye2) => (Num(model) & 0xFFFFFFFFFFFF) | (Num(dye) & 0xFF) << 48 | (Num(dye2) & 0xFF) << 56;
+            if(Num(row.NpcEquip) != 0 && row.NpcEquip.ValueNullable is { } e)
+            {
+                look.Gear = [Gear(e.ModelHead, e.DyeHead, e.Dye2Head), Gear(e.ModelBody, e.DyeBody, e.Dye2Body), Gear(e.ModelHands, e.DyeHands, e.Dye2Hands),
+                    Gear(e.ModelLegs, e.DyeLegs, e.Dye2Legs), Gear(e.ModelFeet, e.DyeFeet, e.Dye2Feet), Gear(e.ModelEars, e.DyeEars, e.Dye2Ears),
+                    Gear(e.ModelNeck, e.DyeNeck, e.Dye2Neck), Gear(e.ModelWrists, e.DyeWrists, e.Dye2Wrists),
+                    Gear(e.ModelRightRing, e.DyeRightRing, e.Dye2RightRing), Gear(e.ModelLeftRing, e.DyeLeftRing, e.Dye2LeftRing)];
+                look.Weapons = [Weapon(e.ModelMainHand, e.DyeMainHand, e.Dye2MainHand), Weapon(e.ModelOffHand, e.DyeOffHand, e.Dye2OffHand)];
+            }
+            else
+            {
+                look.Gear = [Gear(row.ModelHead, row.DyeHead, row.Dye2Head), Gear(row.ModelBody, row.DyeBody, row.Dye2Body), Gear(row.ModelHands, row.DyeHands, row.Dye2Hands),
+                    Gear(row.ModelLegs, row.DyeLegs, row.Dye2Legs), Gear(row.ModelFeet, row.DyeFeet, row.Dye2Feet), Gear(row.ModelEars, row.DyeEars, row.Dye2Ears),
+                    Gear(row.ModelNeck, row.DyeNeck, row.Dye2Neck), Gear(row.ModelWrists, row.DyeWrists, row.Dye2Wrists),
+                    Gear(row.ModelRightRing, row.DyeRightRing, row.Dye2RightRing), Gear(row.ModelLeftRing, row.DyeLeftRing, row.Dye2LeftRing)];
+                look.Weapons = [Weapon(row.ModelMainHand, row.DyeMainHand, row.Dye2MainHand), Weapon(row.ModelOffHand, row.DyeOffHand, row.Dye2OffHand)];
+            }
+            list.Add(new NpcLook(row.RowId, name, look));
+        }
+        list.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        return list;
     }
 
     /// <summary>One gear slot: model id, variant and the two dyes.</summary>
@@ -187,6 +326,47 @@ public static unsafe class Appearance
     // ---- The game's lists: gear by slot, weapons, dyes
 
     public sealed record Item(uint Id, string Name, ulong Model, ulong SubModel, int Slot); // Slot: 0..9 gear, 10 main hand, 11 off hand
+
+    /// <summary>Whether the item goes in that slot (rings are listed once, as right rings, and fit either hand).</summary>
+    public static bool Fits(Item item, int slot) => item.Slot == slot || (slot == 9 && item.Slot == 8);
+
+    /// <summary>Whole outfits for the gear buttons (weapons kept): each slot's model id (EquipmentModelId value).</summary>
+    public enum Outfit { Smallclothes, NpcSmallclothes, Emperors }
+
+    public static ulong[] OutfitGear(Outfit outfit)
+    {
+        var gear = new ulong[10];  // 0: nothing on the head and accessories, smallclothes elsewhere
+        switch(outfit)
+        {
+            case Outfit.NpcSmallclothes:
+                // the NPCs' smallclothes (e9903, variant 1) on body, hands, legs and feet
+                foreach(int s in new[] { 1, 2, 3, 4 })
+                    gear[s] = 9903 | 1UL << 16;
+                break;
+            case Outfit.Emperors:
+                // the Emperor's New set, from the item list (the hat, robe, gloves, breeches, boots and accessories)
+                foreach(var item in Items)
+                    if(item.Slot is >= 0 and < 10 && item.Name.StartsWith("Emperor's New ", StringComparison.OrdinalIgnoreCase) && gear[item.Slot] == 0)
+                        gear[item.Slot] = item.Model & 0xFFFFFF;
+                // (the right ring slot takes the ring too)
+                if(gear[8] == 0)
+                    gear[8] = gear[9];
+                if(gear[9] == 0)
+                    gear[9] = gear[8];
+                break;
+        }
+        return gear;
+    }
+
+    /// <summary>Puts a whole outfit on (weapons kept); the dyes come off with it.</summary>
+    public static string PutOn(nint address, ushort index, Outfit outfit)
+    {
+        var look = Read(address, index);
+        if(look == null)
+            return "The character isn't there.";
+        look.Gear = OutfitGear(outfit);
+        return Apply(address, index, look, customize: false, gear: true, weapons: false);
+    }
     public sealed record Dye(byte Id, string Name, uint Color);
 
     private static List<Item>? _items;

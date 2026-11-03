@@ -460,9 +460,11 @@ public sealed class TimelineService
     public static readonly (string Property, string Name, int Depth)[] Features =
     [
         (nameof(RigSettings.Throb), "Throbbing", 0),
+        (nameof(RigSettings.BallThrob), "Testicle throbbing", 0),
         (nameof(RigSettings.Twerk), "Twerking", 0),
         (nameof(RigSettings.Ahegao), "Ahegao", 0),
         (nameof(RigSettings.Expansion), "Expansion", 1),
+        (nameof(RigSettings.BustShapes), "Breast size", 0),
         (nameof(RigSettings.LookAt), "Look at", 0),
         (nameof(RigSettings.DynamicBones), "Dynamic bones", 2),
         (nameof(RigSettings.FkPoses), "FK pose (switches)", 0),

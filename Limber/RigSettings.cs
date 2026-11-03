@@ -103,6 +103,12 @@ public sealed class RigSettings
     /// <summary>Expansion (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.ExpansionSettings> Expansion { get; set; } = new();
 
+    /// <summary>Breast size for tops with size shapes (Breast size page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.BustShapeSettings> BustShapes { get; set; } = new();
+
+    /// <summary>Testicle throbbing (Limber Animations page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.BallThrobSettings> BallThrob { get; set; } = new();
+
     /// <summary>Appearance &amp; gear page: saved looks, and whether changes go on as they're made.</summary>
     public System.Collections.Generic.List<Limber.Rig.AppearanceData> AppearancePresets { get; set; } = new();
     public bool AppearanceLive { get; set; } = true;

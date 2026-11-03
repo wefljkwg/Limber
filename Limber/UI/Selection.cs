@@ -87,7 +87,29 @@ public sealed class Selection
             list.Add(ActorRef.From(gameObject));
         }
 
-        return list.OrderBy(a => a.ObjectIndex).ToList();
+        // You first (out of GPose, then in it), then the actors Limber added, other players, NPCs, the rest.
+        var kinds = new Dictionary<ushort, Dalamud.Game.ClientState.Objects.Enums.ObjectKind>();
+        foreach(var gameObject in _objects)
+            if(gameObject.Address != 0)
+                kinds[gameObject.ObjectIndex] = gameObject.ObjectKind;
+        var made = ActorSpawner.Current?.Made;
+        int Rank(ActorRef a)
+        {
+            if(a.ObjectIndex == 0)
+                return 0;
+            if(a.ObjectIndex == 201)
+                return 1;
+            if(made != null && made.Contains(a.ObjectIndex))
+                return 2;
+            var kind = kinds.GetValueOrDefault(a.ObjectIndex);
+            if(kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
+                return 3;
+            if(kind is Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc or Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc
+               or Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Retainer or Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion)
+                return 4;
+            return 5;
+        }
+        return list.OrderBy(Rank).ThenBy(a => a.ObjectIndex).ToList();
     }
 
     public IEnumerable<(nint, ushort)> Watched()

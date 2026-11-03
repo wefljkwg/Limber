@@ -608,6 +608,7 @@ public sealed partial class LimberTab
     public Limber.Rig.ActorSpawner? Spawner { get; set; }
 
     private bool _spawnSamePlace;
+    private string _spawnNpcSearch = "";
     private string? _spawnStatus;
 
     public void DrawActorsPage()
@@ -621,6 +622,24 @@ public sealed partial class LimberTab
         }
         var chosen = _selection.Actor;
         var me = Plugin.ObjectTable.LocalPlayer;
+
+        // The quick one: a new actor (a copy of you), chosen at once.
+        var quick = me ?? (chosen.IsSet ? Plugin.ObjectTable.CreateObjectReference(chosen.Address) as Dalamud.Game.ClientState.Objects.Types.ICharacter : null);
+        using(ImRaii.Disabled(quick == null))
+        {
+            if(ImGui.Button("Add new actor###lmb_spawn_new", new System.Numerics.Vector2(-1, 0)) && quick != null)
+            {
+                int index = Spawner.Spawn(quick, _spawnSamePlace);
+                Spawned(index);
+                if(index >= 0 && Plugin.ObjectTable[index] is { } added)
+                {
+                    _config.FollowTarget = false;
+                    _config.Save();
+                    _selection.Select(ActorRef.From(added));
+                }
+            }
+        }
+        Tooltip("Adds a new actor (named Limber 1, Limber 2, ...) a step in front of you, and chooses it at the top.");
 
         SeparatorText("Add an actor");
         using(ImRaii.Disabled(!chosen.IsSet))
@@ -643,6 +662,61 @@ public sealed partial class LimberTab
         Tooltip("Off: it appears a step in front of the one it copies. On: exactly where that one stands.");
         if(_spawnStatus != null)
             ImGui.TextDisabled(_spawnStatus);
+
+        // A new actor wearing a look: an NPC's, a saved one, or one copied as text (Appearance & gear > Looks > Copy as text).
+        SeparatorText("Add an actor with a look");
+        ImGui.TextDisabled("It appears next to the chosen character (or you) already wearing the look.");
+        var at = chosen.IsSet ? Plugin.ObjectTable.CreateObjectReference(chosen.Address) as Dalamud.Game.ClientState.Objects.Types.ICharacter : null;
+        at ??= me;
+        void SpawnLook(Limber.Rig.AppearanceData look)
+        {
+            if(at == null)
+            {
+                _spawnStatus = "Choose a character first (the new actor appears next to it).";
+                return;
+            }
+            Spawned(Spawner.Spawn(at, _spawnSamePlace, look.Copy()));
+        }
+        using(ImRaii.Disabled(at == null))
+        {
+            if(ImGui.Button("From copied text###lmb_spawn_paste"))
+            {
+                try
+                {
+                    var pasted = Newtonsoft.Json.JsonConvert.DeserializeObject<Limber.Rig.AppearanceData>(ImGui.GetClipboardText() ?? "");
+                    if(pasted is { Customize.Length: 26 })
+                        SpawnLook(pasted);
+                    else
+                        _spawnStatus = "The copied text isn't a look (use Copy as text on Appearance & gear > Looks).";
+                }
+                catch
+                {
+                    _spawnStatus = "The copied text isn't a look (use Copy as text on Appearance & gear > Looks).";
+                }
+            }
+            Tooltip("A new actor wearing the look you copied as text (Appearance & gear > Looks > Copy as text, from here or from someone else).");
+            var presets = _config.AppearancePresets ?? new();
+            if(presets.Count > 0)
+            {
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                using var combo = ImRaii.Combo("###lmb_spawn_saved", "From a saved look...");
+                if(combo.Success)
+                    for(int i = 0; i < presets.Count; i++)
+                        if(ImGui.Selectable($"{presets[i].Name}###lmb_spawn_saved_{i}"))
+                            SpawnLook(presets[i]);
+            }
+            if(ImGui.TreeNode("From an NPC###lmb_spawn_npc"))
+            {
+                AppearanceTab.DrawNpcPicker(ref _spawnNpcSearch, "lmb_spawn_npc", npc =>
+                {
+                    ImGui.SameLine();
+                    if(ImGui.SmallButton("Add as an actor"))
+                        SpawnLook(npc.Look);
+                });
+                ImGui.TreePop();
+            }
+        }
 
         SeparatorText($"Actors added by Limber ({Spawner.Made.Count})");
         if(Spawner.Made.Count == 0)
@@ -704,7 +778,8 @@ public sealed partial class LimberTab
             _spawnStatus = Spawner?.LastError ?? "Couldn't add an actor.";
             return;
         }
-        _spawnStatus = $"Added actor #{index}. It appears in a moment.";
+        int number = Spawner?.NumberOf((ushort)index) ?? 0;
+        _spawnStatus = number > 0 ? $"Added Limber {number}. It appears in a moment." : $"Added actor #{index}. It appears in a moment.";
     }
 
     // ---- Bone scale

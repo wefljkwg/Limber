@@ -13,12 +13,17 @@ using System.Threading.Tasks;
 namespace Limber.BodyRig;
 
 /// <summary>One housing item (indoor furnishing or outdoor yard item) from the game's data.</summary>
-public sealed record HousingItem(string Name, ushort ModelKey, bool Indoors, uint Icon)
+/// <summary>
+/// One placeable prop: a housing item (indoor furnishing or outdoor yard item), or a world prop (one of the game's
+/// shared groups, by its .sgb path in <paramref name="Sgb"/>), with the section it's listed under.
+/// </summary>
+public sealed record HousingItem(string Name, ushort ModelKey, bool Indoors, uint Icon, string Category = "", string? Sgb = null)
 {
     private string Folder => Indoors ? $"bgcommon/hou/indoor/general/{ModelKey:D4}" : $"bgcommon/hou/outdoor/general/{ModelKey:D4}";
     private string Stem => Indoors ? $"fun_b0_m{ModelKey:D4}" : $"gar_b0_m{ModelKey:D4}";
-    public string GroupPath => $"{Folder}/asset/{Stem}.sgb";
-    public string MainModelPath => $"{Folder}/bgparts/{Stem}.mdl";
+    public string GroupPath => Sgb ?? $"{Folder}/asset/{Stem}.sgb";
+    public string MainModelPath => Sgb != null ? Sgb.Replace("/asset/", "/bgparts/").Replace(".sgb", ".mdl") : $"{Folder}/bgparts/{Stem}.mdl";
+    public bool World => Sgb != null;
 }
 
 /// <summary>One model of a housing item, placed relative to the item.</summary>
@@ -87,7 +92,7 @@ public sealed unsafe class HousingProps : IDisposable
                 continue;
             var name = item.Value.Name.ExtractText();
             if(!string.IsNullOrWhiteSpace(name))
-                list.Add(new HousingItem(name, (ushort)row.ModelKey, true, item.Value.Icon));
+                list.Add(new HousingItem(name, (ushort)row.ModelKey, true, item.Value.Icon, CategoryOf(item.Value, "Furnishings")));
         }
         var outdoor = _data.GetExcelSheet<Lumina.Excel.Sheets.HousingYardObject>();
         foreach(var row in outdoor)
@@ -97,9 +102,189 @@ public sealed unsafe class HousingProps : IDisposable
                 continue;
             var name = item.Value.Name.ExtractText();
             if(!string.IsNullOrWhiteSpace(name))
-                list.Add(new HousingItem(name, (ushort)row.ModelKey, false, item.Value.Icon));
+                list.Add(new HousingItem(name, (ushort)row.ModelKey, false, item.Value.Icon, CategoryOf(item.Value, "Outdoor Furnishings")));
         }
         return list.GroupBy(i => (i.ModelKey, i.Indoors)).Select(g => g.First()).OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    // An item's section: its own category in the game (Table, Tabletop, Wall-mounted, Rug, Ceiling Light...).
+    private static string CategoryOf(Lumina.Excel.Sheets.Item item, string fallback)
+    {
+        try
+        {
+            var name = item.ItemUICategory.ValueNullable?.Name.ExtractText();
+            return string.IsNullOrWhiteSpace(name) ? fallback : name!;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    // ---- World props (every shared group the game lists: event objects, field objects, each region's props)
+
+    private Task<HousingItem[]>? _world;
+
+    public HousingItem[]? WorldCatalog
+    {
+        get
+        {
+            _world ??= Task.Run(LoadWorld);
+            return _world.IsCompletedSuccessfully ? _world.Result : null;
+        }
+    }
+
+    public bool WorldFailed => _world?.IsFaulted == true;
+
+    private static ulong Num(object? v)
+    {
+        switch(v)
+        {
+            case null: return 0;
+            case byte b: return b;
+            case ushort us: return us;
+            case short sh: return (ushort)sh;
+            case uint ui: return ui;
+            case int i: return (uint)i;
+            case ulong ul: return ul;
+        }
+        var rowId = v.GetType().GetProperty("RowId");
+        return rowId != null && rowId.GetValue(v) is { } r ? Num(r) : 0;
+    }
+
+    private HousingItem[] LoadWorld()
+    {
+        var groups = _data.GetExcelSheet<Lumina.Excel.Sheets.ExportedSG>();
+        // Names: the event objects that use a group (EObj -> its shared group; EObjName: what the game calls it).
+        var names = new Dictionary<uint, string>();
+        try
+        {
+            var eobj = _data.GetExcelSheet<Lumina.Excel.Sheets.EObj>();
+            var eobjNames = _data.GetExcelSheet<Lumina.Excel.Sheets.EObjName>();
+            var link = typeof(Lumina.Excel.Sheets.EObj).GetProperties().FirstOrDefault(p => p.PropertyType.ToString().Contains("ExportedSG"))
+                ?? typeof(Lumina.Excel.Sheets.EObj).GetProperty("SgbPath");
+            if(link != null)
+            {
+                var votes = new Dictionary<uint, Dictionary<string, int>>();
+                foreach(var row in eobj)
+                {
+                    uint sg = (uint)Num(link.GetValue(row));
+                    if(sg == 0 || !eobjNames.TryGetRow(row.RowId, out var n))
+                        continue;
+                    string name = n.Singular.ExtractText();
+                    if(string.IsNullOrWhiteSpace(name))
+                        continue;
+                    if(!votes.TryGetValue(sg, out var v))
+                        votes[sg] = v = new Dictionary<string, int>();
+                    v[name] = v.TryGetValue(name, out var c) ? c + 1 : 1;
+                }
+                foreach(var (sg, v) in votes)
+                    names[sg] = v.OrderByDescending(kv => kv.Value).First().Key;
+            }
+        }
+        catch(Exception e)
+        {
+            _log.Debug(e, "Limber: couldn't read the world props' names");
+        }
+
+        var list = new List<HousingItem>(4600);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach(var row in groups)
+        {
+            string path = row.SgbPath.ExtractText();
+            if(path.Length == 0 || !path.EndsWith(".sgb", StringComparison.OrdinalIgnoreCase) || path.Contains("/for_vfx/", StringComparison.OrdinalIgnoreCase)
+               || !seen.Add(path))
+                continue;
+            string file = path[(path.LastIndexOf('/') + 1)..^4];
+            string name = names.TryGetValue(row.RowId, out var nice) ? Capitalise(nice) + $"  ({file})" : Readable(file);
+            list.Add(new HousingItem(name, 0, false, 0, WorldSection(path), path));
+        }
+        return list.OrderBy(i => i.Category, StringComparer.Ordinal).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static string Capitalise(string s) => s.Length > 0 ? char.ToUpperInvariant(s[0]) + s[1..] : s;
+
+    // A shared group's file name made easier to read (its usual prefixes off, words apart).
+    private static string Readable(string file)
+    {
+        string s = file;
+        foreach(var prefix in new[] { "sgbg_", "sgpl_a_", "sgpl_w_", "sgpl_", "sgvf_", "sg_" })
+            if(s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                s = s[prefix.Length..];
+                break;
+            }
+        return s.Replace('_', ' ') + $"  ({file})";
+    }
+
+    // The section a world prop goes under: common props by kind, the rest by region and expansion.
+    private static string WorldSection(string path)
+    {
+        var p = path.Split('/');
+        if(p.Length > 2 && p[0] == "bgcommon")
+        {
+            string kind = p.Length > 2 ? p[2] : "";
+            if(p[1] == "mji")
+                return "Common: Island Sanctuary";
+            if(p[1] == "hou")
+                return "Common: Housing";
+            return "Common: " + (kind switch
+            {
+                "evt" => "Event objects",
+                "btl" => "Battle",
+                "lvd" => "Field objects",
+                "cnt" => "Content",
+                "tbx" => "Treasure and boxes",
+                "pvp" => "PvP",
+                "xma" or "hal" or "emp" or "mkd" => "Seasonal events",
+                "aet" => "Aetherytes",
+                "gld" => "Guilds",
+                "gte" => "Gates",
+                "sys" => "System",
+                _ => kind.ToUpperInvariant(),
+            });
+        }
+        if(p.Length > 2 && p[0] == "bg")
+        {
+            string ex = p[1], zone = p[2];
+            string area = zone.Contains('_') ? zone[(zone.IndexOf('_') + 1)..] : zone;
+            string code = area.Length >= 3 ? area[..3] : area;
+            if(zone.Length > 3 && char.IsDigit(zone[0]) && zone.IndexOf('_') > 0)
+            {
+                code = zone[(zone.IndexOf('_') + 1)..];
+                code = code.Length >= 3 ? code[..3] : code;
+            }
+            string region = code switch
+            {
+                "sea" => "La Noscea",
+                "fst" => "The Black Shroud",
+                "wil" => "Thanalan",
+                "roc" => "Coerthas",
+                "lak" => "Mor Dhona",
+                "hou" => "Residential areas",
+                "zon" => "Dungeons and trials",
+                "pvp" => "PvP",
+                "dra" => "Dravania",
+                "abr" => "Abalathia's Spine",
+                "gyr" => "Gyr Abania",
+                "nvt" => "Norvrandt",
+                "xkt" => "Xak Tural",
+                "ykt" => "Yok Tural",
+                _ => "area " + code.ToUpperInvariant(),
+            };
+            string expansion = ex switch
+            {
+                "ffxiv" => "A Realm Reborn",
+                "ex1" => "Heavensward",
+                "ex2" => "Stormblood",
+                "ex3" => "Shadowbringers",
+                "ex4" => "Endwalker",
+                "ex5" => "Dawntrail",
+                _ => ex,
+            };
+            return $"{expansion}: {region}";
+        }
+        return "Other";
     }
 
     // ---- The models an item is made of (from its shared group file; just the main model if that can't be read)

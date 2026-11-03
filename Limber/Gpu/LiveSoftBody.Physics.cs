@@ -135,7 +135,22 @@ public static unsafe partial class LiveSoftBody
 
         // ---- Building (once, when the live mesh starts)
 
-        public static Physics? Build(List<MeshState> meshes)
+        public static Physics? Build(List<MeshState> meshes) => Factory(meshes)();
+
+        /// <summary>
+        /// Does the slow part (particles, clusters, what each point follows) once, off the frame; what it returns makes
+        /// a fresh soft body from that at once (each start, each redraw of the same model).
+        /// </summary>
+        public static Func<Physics?> Factory(List<MeshState> meshes)
+        {
+            var parts = Parts(meshes);
+            if (parts == null)
+                return () => null;
+            var (particles, clusters, embed) = parts.Value;
+            return () => new Physics(particles, clusters, embed);
+        }
+
+        private static (List<Particle>, List<int[]>, (int[] P, float[] W)[][])? Parts(List<MeshState> meshes)
         {
             var particles = new List<Particle>();
             for (int side = 0; side < Sides; side++)
@@ -143,15 +158,39 @@ public static unsafe partial class LiveSoftBody
             if (particles.Count < 40)
                 return null;
 
+            // A grid over the particles (each cell the clusters' reach): neighbours are only looked for in the cells
+            // round a point, not among every particle (that was most of the wait when the soft body started).
+            float cell = Spacing * ClusterReach;
+            var grid = new Dictionary<(int, int, int), List<int>>();
+            (int, int, int) Cell(Vector3 v) => ((int)MathF.Floor(v.X / cell), (int)MathF.Floor(v.Y / cell), (int)MathF.Floor(v.Z / cell));
+            for (int i = 0; i < particles.Count; i++)
+            {
+                var c = Cell(particles[i].Rest);
+                if (!grid.TryGetValue(c, out var list))
+                    grid[c] = list = new List<int>();
+                list.Add(i);
+            }
+            IEnumerable<int> Near(Vector3 v, int rings)
+            {
+                var (cx, cy, cz) = Cell(v);
+                for (int x = -rings; x <= rings; x++)
+                    for (int y = -rings; y <= rings; y++)
+                        for (int z = -rings; z <= rings; z++)
+                            if (grid.TryGetValue((cx + x, cy + y, cz + z), out var list))
+                                foreach (var i in list)
+                                    yield return i;
+            }
+
             // Clusters: each particle and its neighbours on the same breast (at rest).
             var clusters = new List<int[]>(particles.Count);
             float reach2 = Spacing * ClusterReach * Spacing * ClusterReach;
             for (int i = 0; i < particles.Count; i++)
             {
                 var list = new List<int>();
-                for (int j = 0; j < particles.Count; j++)
+                foreach (int j in Near(particles[i].Rest, 1))
                     if (particles[j].Side == particles[i].Side && Vector3.DistanceSquared(particles[i].Rest, particles[j].Rest) <= reach2)
                         list.Add(j);
+                list.Sort();
                 clusters.Add(list.ToArray());
             }
 
@@ -165,15 +204,15 @@ public static unsafe partial class LiveSoftBody
                 for (int g = 0; g < groups.Length; g++)
                 {
                     int found = 0;
-                    for (int p = 0; p < particles.Count; p++)
+                    void Consider(int p)
                     {
                         if (particles[p].Side != groups[g].Side)
-                            continue;
+                            return;
                         float d = Vector3.DistanceSquared(groups[g].Rest, particles[p].Rest);
                         if (found < EmbedCount)
                         {
                             best[found++] = (d, p);
-                            continue;
+                            return;
                         }
                         int worst = 0;
                         for (int k = 1; k < EmbedCount; k++)
@@ -181,6 +220,19 @@ public static unsafe partial class LiveSoftBody
                                 worst = k;
                         if (d < best[worst].D)
                             best[worst] = (d, p);
+                    }
+                    // the cells round it first (wider if too few there), every particle only as a last resort
+                    for (int rings = 1; rings <= 3 && found < EmbedCount; rings++)
+                    {
+                        found = 0;
+                        foreach (int p in Near(groups[g].Rest, rings))
+                            Consider(p);
+                    }
+                    if (found < EmbedCount)
+                    {
+                        found = 0;
+                        for (int p = 0; p < particles.Count; p++)
+                            Consider(p);
                     }
                     var ids = new int[found];
                     var ws = new float[found];
@@ -203,7 +255,7 @@ public static unsafe partial class LiveSoftBody
                     embed[m][g] = (ids, ws);
                 }
             }
-            return new Physics(particles, clusters, embed);
+            return (particles, clusters, embed);
         }
 
         private static void BuildSide(List<MeshState> meshes, int side, List<Particle> particles)
@@ -270,33 +322,124 @@ public static unsafe partial class LiveSoftBody
             }
 
             // The inside: a grid on the base, kept where a ray out along the breast crosses its skin an odd number of
-            // times; the layer on the chest wall is held to the body.
+            // times; the layer on the chest wall is held to the body. (Each column of the grid is one line out along the
+            // breast: its crossings with the skin are found once, among only the triangles over that column, and each
+            // point on it counts the ones in front of it; the nearest skin point comes from a grid. Both used to go
+            // through everything for every point: most of the wait when the soft body started.)
+            float cell2 = InnerSpacing;
+            var columns = new Dictionary<(int, int), List<int>>();
+            for (int k = 0; k < triangles.Count; k++)
+            {
+                var (ta, tb, tc) = triangles[k];
+                float a0 = Vector3.Dot(ta - centre, u), a1 = Vector3.Dot(tb - centre, u), a2 = Vector3.Dot(tc - centre, u);
+                float b0 = Vector3.Dot(ta - centre, v), b1 = Vector3.Dot(tb - centre, v), b2 = Vector3.Dot(tc - centre, v);
+                int i0 = (int)MathF.Floor(MathF.Min(a0, MathF.Min(a1, a2)) / cell2), i1 = (int)MathF.Floor(MathF.Max(a0, MathF.Max(a1, a2)) / cell2);
+                int j0 = (int)MathF.Floor(MathF.Min(b0, MathF.Min(b1, b2)) / cell2), j1 = (int)MathF.Floor(MathF.Max(b0, MathF.Max(b1, b2)) / cell2);
+                if (i1 - i0 > 64 || j1 - j0 > 64)
+                    continue; // (a degenerate sliver along the line: never crossed)
+                for (int i = i0; i <= i1; i++)
+                    for (int j = j0; j <= j1; j++)
+                    {
+                        if (!columns.TryGetValue((i, j), out var list))
+                            columns[(i, j)] = list = new List<int>();
+                        list.Add(k);
+                    }
+            }
+            float skinCell = ShellSpacing * 2f;
+            var skinGrid = new Dictionary<(int, int, int), List<Group>>();
+            (int, int, int) SkinCell(Vector3 q) => ((int)MathF.Floor(q.X / skinCell), (int)MathF.Floor(q.Y / skinCell), (int)MathF.Floor(q.Z / skinCell));
+            foreach (var g in skin)
+            {
+                var c = SkinCell(g.Rest);
+                if (!skinGrid.TryGetValue(c, out var list))
+                    skinGrid[c] = list = new List<Group>();
+                list.Add(g);
+            }
+            Group? Nearest(Vector3 q, out float best)
+            {
+                best = float.MaxValue;
+                Group? found = null;
+                var (cx, cy, cz) = SkinCell(q);
+                for (int ring = 1; ring <= 8; ring++)
+                {
+                    for (int x = -ring; x <= ring; x++)
+                        for (int y = -ring; y <= ring; y++)
+                            for (int z = -ring; z <= ring; z++)
+                            {
+                                if (Math.Max(Math.Abs(x), Math.Max(Math.Abs(y), Math.Abs(z))) != ring && ring > 1)
+                                    continue; // (only the new shell of cells)
+                                if (!skinGrid.TryGetValue((cx + x, cy + y, cz + z), out var list))
+                                    continue;
+                                foreach (var g in list)
+                                {
+                                    float d = Vector3.DistanceSquared(q, g.Rest);
+                                    if (d < best)
+                                    {
+                                        best = d;
+                                        found = g;
+                                    }
+                                }
+                            }
+                    // anything further out is at least (ring) cells away
+                    if (found != null && MathF.Sqrt(best) <= ring * skinCell)
+                        break;
+                }
+                return found;
+            }
+            var hitsAt = new List<float>();
             for (float a = minU + InnerSpacing * 0.5f; a < maxU; a += InnerSpacing)
             {
                 for (float b = minV + InnerSpacing * 0.5f; b < maxV; b += InnerSpacing)
                 {
+                    // where this column's line crosses the skin (distance out from the base)
+                    var o = centre + u * a + v * b;
+                    hitsAt.Clear();
+                    if (columns.TryGetValue(((int)MathF.Floor(a / cell2), (int)MathF.Floor(b / cell2)), out var near))
+                        foreach (int k in near)
+                            if (Cross(o, normal, triangles[k], out float t))
+                                hitsAt.Add(t);
+                    if (hitsAt.Count == 0)
+                        continue;
                     for (float h = InnerSpacing * 0.5f; h < maxH; h += InnerSpacing)
                     {
-                        var p = centre + u * a + v * b + normal * h;
-                        Group? nearest = null;
-                        float best = float.MaxValue;
-                        foreach (var g in skin)
-                        {
-                            float d = Vector3.DistanceSquared(p, g.Rest);
-                            if (d < best)
-                            {
-                                best = d;
-                                nearest = g;
-                            }
-                        }
-                        if (nearest == null || MathF.Sqrt(best) < ShellSpacing * 0.6f || nearest.Mask < 0.3f)
+                        int ahead = 0;
+                        foreach (float t in hitsAt)
+                            if (t - h > 1e-6f)
+                                ahead++;
+                        if ((ahead & 1) == 0)
                             continue;
-                        if ((Crossings(p, normal, triangles) & 1) == 0)
+                        var p = o + normal * h;
+                        var nearest = Nearest(p, out float best);
+                        if (nearest == null || MathF.Sqrt(best) < ShellSpacing * 0.6f || nearest.Mask < 0.3f)
                             continue;
                         particles.Add(new Particle { Rest = p, Bone = nearest.Bone, Weight = nearest.Weight, Pin = h < InnerSpacing * 1.2f ? 1f : 0f, Side = side, Normal = normal });
                     }
                 }
             }
+        }
+
+        // Where a line (origin, direction) crosses one triangle: its distance along the line (either way).
+        private static bool Cross(Vector3 origin, Vector3 dir, (Vector3 A, Vector3 B, Vector3 C) tri, out float t)
+        {
+            t = 0f;
+            var (a, b, c) = tri;
+            var e1 = b - a;
+            var e2 = c - a;
+            var p = Vector3.Cross(dir, e2);
+            float det = Vector3.Dot(e1, p);
+            if (MathF.Abs(det) < 1e-12f)
+                return false;
+            float inv = 1f / det;
+            var s = origin - a;
+            float uu = Vector3.Dot(s, p) * inv;
+            if (uu < 0f || uu > 1f)
+                return false;
+            var q = Vector3.Cross(s, e1);
+            float vv = Vector3.Dot(dir, q) * inv;
+            if (vv < 0f || uu + vv > 1f)
+                return false;
+            t = Vector3.Dot(e2, q) * inv;
+            return true;
         }
 
         private static int Crossings(Vector3 origin, Vector3 dir, List<(Vector3 A, Vector3 B, Vector3 C)> triangles)

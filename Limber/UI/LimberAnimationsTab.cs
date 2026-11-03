@@ -20,6 +20,8 @@ public sealed class LimberAnimationsTab
     private readonly TwerkService _twerk;
     private readonly AhegaoService _ahegao;
     private readonly ExpansionService _expansion;
+    /// <summary>Testicle throbbing (set by the plugin).</summary>
+    public BallThrobService? BallThrob { get; set; }
 
     public LimberAnimationsTab(Selection selection, RigSettings config, ThrobService throb, TwerkService twerk, AhegaoService ahegao, ExpansionService expansion)
     {
@@ -127,6 +129,8 @@ public sealed class LimberAnimationsTab
         ImGui.Spacing();
         if(ImGui.CollapsingHeader("Throbbing###lanim_throb", ImGuiTreeNodeFlags.DefaultOpen))
             DrawThrob(name, actor);
+        if(BallThrob != null && ImGui.CollapsingHeader("Testicle throbbing###lanim_balls", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawBallThrob(name, actor);
         if(ImGui.CollapsingHeader("Twerking###lanim_twerk", ImGuiTreeNodeFlags.DefaultOpen))
             DrawTwerk(name, actor);
         if(ImGui.CollapsingHeader("Ahegao###lanim_ahegao", ImGuiTreeNodeFlags.DefaultOpen))
@@ -682,6 +686,111 @@ public sealed class LimberAnimationsTab
 
         if(changed)
             _config.Save();
+    }
+
+    private static readonly (BallThrobPattern Pattern, string Name, string Tip)[] BallPatterns =
+    [
+        (BallThrobPattern.Pulse, "Pulse", "An even pulse on every beat: a little bigger and drawn up."),
+        (BallThrobPattern.Heartbeat, "Heartbeat", "Two pulses close together, then a rest."),
+        (BallThrobPattern.Clench, "Clench", "Drawn up tight and held a moment, then let go."),
+        (BallThrobPattern.Bounce, "Bounce", "Bobbing up and down."),
+        (BallThrobPattern.Pump, "Pump", "Rhythmic contractions: quickly up, slowly down."),
+        (BallThrobPattern.Alternate, "Alternate", "Left, then right."),
+        (BallThrobPattern.Shiver, "Shiver", "A fast tremble."),
+        (BallThrobPattern.Rolling, "Rolling", "Round in small circles, each its own way."),
+        (BallThrobPattern.Climax, "Climax", "Strong contractions, close together, then further apart and weaker; a rest; again."),
+        (BallThrobPattern.Twitch, "Twitch", "Sudden jerks at random moments."),
+        (BallThrobPattern.Breathing, "Breathing", "Slow swelling and easing."),
+        (BallThrobPattern.WithPenis, "With the penis", "On the penis throbbing's beat (turn that on too)."),
+    ];
+
+    private void DrawBallThrob(string name, ActorRef actor)
+    {
+        var all = _config.BallThrob ??= new();
+        if(!all.TryGetValue(name, out var s))
+            all[name] = s = new BallThrobSettings();
+        bool changed = false;
+
+        ImGui.TextWrapped("The testicles pulse by themselves: swelling, drawing up and tightening, bouncing and swaying, each a little after the other. "
+            + "Separate from the penis throbbing above: either, or both at once (\"With the penis\" follows its beat). Needs a body with testicle bones.");
+        ImGui.Spacing();
+        float level = BallThrob!.LevelOf(actor.Address);
+        string label = s.Enabled ? "Stop###lanim_balls_go" : "Start###lanim_balls_go";
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f), !s.Enabled))
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.55f, 0.25f, 0.25f, 1f), s.Enabled))
+        {
+            if(ImGui.Button(label, new Vector2(120 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                s.Enabled = !s.Enabled;
+                changed = true;
+            }
+        }
+        ImGui.SameLine();
+        if(level >= 0f)
+            ImGui.ProgressBar(Math.Clamp(level, 0f, 1f), new Vector2(-1, 0), "beat");
+        else
+            ImGui.TextDisabled(s.Enabled ? "starting... (no testicle bones found on this character?)" : "stopped");
+
+        bool auto = s.Auto;
+        if(ImGui.Checkbox("Change patterns by itself###lanim_balls_auto", ref auto))
+        {
+            s.Auto = auto;
+            changed = true;
+        }
+        Tooltip("Moves from one pattern to another on its own (blending between them).");
+        if(s.Auto)
+        {
+            ImGui.SameLine();
+            float secs = s.AutoSeconds;
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("every###lanim_balls_auto_secs", ref secs, 3f, 120f, "%.0f s"))
+            {
+                s.AutoSeconds = secs;
+                changed = true;
+            }
+        }
+        using(ImRaii.Disabled(s.Auto))
+        {
+            string current = Array.Find(BallPatterns, p => p.Pattern == s.Pattern).Name ?? s.Pattern.ToString();
+            ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+            using(var combo = ImRaii.Combo("Pattern###lanim_balls_pattern", current))
+            {
+                if(combo.Success)
+                    foreach(var (pattern, patternName, tip) in BallPatterns)
+                    {
+                        if(ImGui.Selectable($"{patternName}###lanim_balls_p_{pattern}", s.Pattern == pattern))
+                        {
+                            s.Pattern = pattern;
+                            changed = true;
+                        }
+                        Tooltip(tip);
+                    }
+            }
+        }
+        if(!s.Auto)
+            ImGui.TextDisabled(Array.Find(BallPatterns, p => p.Pattern == s.Pattern).Tip ?? "");
+
+        changed |= SliderBt("Speed", s.Speed, v => s.Speed = v, 10f, 240f, "%.0f beats/min", "How fast it beats.");
+        changed |= SliderBt("Swell", s.Swell * 100f, v => s.Swell = v / 100f, 0f, 50f, "%.0f%%", "How much bigger on a beat.");
+        changed |= SliderBt("Draw up", s.DrawUp, v => s.DrawUp = v, 0f, 4f, "%.1f cm", "How far they draw up toward the body on a beat.");
+        changed |= SliderBt("Squeeze", s.Squeeze * 100f, v => s.Squeeze = v / 100f, 0f, 100f, "%.0f%%", "How much they tighten as they draw up.");
+        changed |= SliderBt("Bounce", s.Bounce, v => s.Bounce = v, 0f, 3f, "%.1f cm", "Up and down (most in Bounce, Rolling and Shiver).");
+        changed |= SliderBt("Sway", s.Sway, v => s.Sway = v, 0f, 3f, "%.1f cm", "Side to side (most in Rolling and Shiver).");
+        changed |= SliderBt("Left / right offset", s.Offset * 100f, v => s.Offset = v / 100f, 0f, 100f, "%.0f%%", "0%: both together. Higher: the second a little after the first.");
+        changed |= SliderBt("Randomness", s.Randomness * 100f, v => s.Randomness = v / 100f, 0f, 100f, "%.0f%%", "0%: machine-like. Higher: uneven timing and strength.");
+        changed |= SliderBt("Ease in / out", s.Ease, v => s.Ease = v, 0.1f, 6f, "%.1f s", "How long it takes to start and stop.");
+        if(changed)
+            _config.Save();
+    }
+
+    private static bool SliderBt(string label, float value, Action<float> set, float min, float max, string format, string tip)
+    {
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        bool edited = ImGui.SliderFloat($"{label}###lanim_balls_{label}", ref value, min, max, format);
+        Tooltip(tip + "\nCtrl+click to type a value.");
+        if(edited)
+            set(value);
+        return edited;
     }
 
     private static bool SliderTw(string label, float value, Action<float> set, float min, float max, string format, string tip)

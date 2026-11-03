@@ -18,6 +18,8 @@ public sealed class FkBoneSettings
     /// <summary>Also put it at <see cref="Position"/> (relative to its parent), not only turn it.</summary>
     public bool Move { get; set; }
     public Vector3 Position { get; set; }
+    /// <summary>Off ("Move children" unticked): turning or moving this bone leaves the bones under it where they were.</summary>
+    public bool KeepChildren { get; set; }
 
     [Newtonsoft.Json.JsonIgnore]
     public Quaternion Rotation
@@ -37,7 +39,7 @@ public sealed class FkBoneSettings
         }
     }
 
-    public FkBoneSettings Copy() => new() { Enabled = Enabled, X = X, Y = Y, Z = Z, W = W, Move = Move, Position = Position };
+    public FkBoneSettings Copy() => new() { Enabled = Enabled, X = X, Y = Y, Z = Z, W = W, Move = Move, Position = Position, KeepChildren = KeepChildren };
 }
 
 /// <summary>One character's FK pose (kept by name).</summary>
@@ -106,7 +108,7 @@ public sealed unsafe class FkService
         return null;
     }
 
-    private readonly record struct Item(string Bone, Quaternion Rotation, bool Move, Vector3 Position);
+    private readonly record struct Item(string Bone, Quaternion Rotation, bool Move, Vector3 Position, bool KeepChildren = false);
 
     private readonly record struct Target(nint Address, ushort Index, Item[] Bones, bool Layered);
 
@@ -188,7 +190,7 @@ public sealed unsafe class FkService
             {
                 if(!s.Enabled || pose.PartsOff.Contains(PartOf(bone)) || !HandleCatalog.IsPickable(bone, adult))
                     continue;
-                items.Add(new Item(bone, s.Rotation, s.Move, s.Position));
+                items.Add(new Item(bone, s.Rotation, s.Move, s.Position, s.KeepChildren));
             }
             if(items.Count > 0)
                 list.Add(new Target(obj.Address, obj.ObjectIndex, items.ToArray(), pose.Layered));
@@ -263,6 +265,65 @@ public sealed unsafe class FkService
         return false;
     }
 
+    // Each skeleton's children lists (from its parents), made once.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SkeletonInfo, int[][]> Children = new();
+
+    private static int[][] ChildrenOf(SkeletonInfo info) => Children.GetValue(info, i =>
+    {
+        var lists = new List<int>[i.Parents.Length];
+        for(int b = 0; b < lists.Length; b++)
+            lists[b] = new List<int>();
+        for(int b = 0; b < i.Parents.Length; b++)
+        {
+            int p = i.Parents[b];
+            if(p >= 0 && p < lists.Length)
+                lists[p].Add(b);
+        }
+        var result = new int[lists.Length][];
+        for(int b = 0; b < lists.Length; b++)
+            result[b] = lists[b].ToArray();
+        return result;
+    });
+
+    // The frames of a bone's direct children (those not posed with FK themselves: theirs is relative to it anyway).
+    private static List<(int Bone, Frame Frame)>? Keep(in ActorSkeleton sk, SkeletonInfo info, int partial, int bone, Item[] posed)
+    {
+        var kids = ChildrenOf(info);
+        if(bone < 0 || bone >= kids.Length || kids[bone].Length == 0)
+            return null;
+        var names = new HashSet<string>();
+        foreach(var p in posed)
+            names.Add(p.Bone);
+        var list = new List<(int, Frame)>(kids[bone].Length);
+        foreach(int c in kids[bone])
+        {
+            if(c < info.Names.Length && names.Contains(info.Names[c]))
+                continue;
+            list.Add((c, partial == 0 ? sk.GetModelFrame(c) : sk.GetPartialFrame(partial, c)));
+        }
+        return list;
+    }
+
+    // Those children back where they were (each takes the bones under it along).
+    private static void Restore(in ActorSkeleton sk, int partial, List<(int Bone, Frame Frame)>? kept)
+    {
+        if(kept == null)
+            return;
+        foreach(var (c, f) in kept)
+        {
+            if(partial == 0)
+            {
+                sk.SetModelRotation(c, f.Rotation);
+                sk.SetModelPosition(c, f.Position);
+            }
+            else
+            {
+                sk.SetPartialRotation(partial, c, f.Rotation);
+                sk.SetPartialPosition(partial, c, f.Position);
+            }
+        }
+    }
+
     private void Apply(in Target t)
     {
         if(!ActorSkeleton.TryGet(t.Address, t.Index, _cache, out var sk) || sk.Info.Count == 0)
@@ -282,6 +343,8 @@ public sealed unsafe class FkService
             seen.Add(item.Bone);
             if(at.Partial == 0)
             {
+                // "Move children" off: where the bones under it are now, to put them back after.
+                var kept = item.KeepChildren ? Keep(sk, sk.Info, 0, at.Bone, t.Bones) : null;
                 int parent = sk.Info.ParentOf(at.Bone);
                 var pf = parent >= 0 ? sk.GetModelFrame(parent) : Frame.Identity;
                 if(t.Layered)
@@ -297,6 +360,7 @@ public sealed unsafe class FkService
                     if(item.Move && MathUtil.IsFinite(item.Position))
                         sk.SetModelPosition(at.Bone, pf.Position + Vector3.Transform(item.Position, pf.Rotation));
                 }
+                Restore(sk, 0, kept);
                 body = true;
                 continue;
             }
@@ -306,6 +370,7 @@ public sealed unsafe class FkService
                 sk.RealignPartials(_cache);
                 realigned = true;
             }
+            var keptP = item.KeepChildren && sk.PartialInfo(at.Partial, _cache) is { } pinfo ? Keep(sk, pinfo, at.Partial, at.Bone, t.Bones) : null;
             var ppf = sk.GetPartialParentFrame(at.Partial, at.Bone, _cache);
             if(t.Layered)
             {
@@ -313,11 +378,13 @@ public sealed unsafe class FkService
                 sk.SetPartialRotation(at.Partial, at.Bone, Quaternion.Normalize(ppf.Rotation * local));
                 if(item.Move)
                     sk.SetPartialPosition(at.Partial, at.Bone, ppf.Position + Vector3.Transform(pos, ppf.Rotation));
+                Restore(sk, at.Partial, keptP);
                 continue;
             }
             sk.SetPartialRotation(at.Partial, at.Bone, Quaternion.Normalize(ppf.Rotation * item.Rotation));
             if(item.Move && MathUtil.IsFinite(item.Position))
                 sk.SetPartialPosition(at.Partial, at.Bone, ppf.Position + Vector3.Transform(item.Position, ppf.Rotation));
+            Restore(sk, at.Partial, keptP);
         }
         if(body && !realigned)
             sk.RealignPartials(_cache);

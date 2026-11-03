@@ -30,45 +30,59 @@ public sealed unsafe class HousingPropsTab
 
     private static readonly string[] WhereNames = ["Indoor and outdoor", "Indoor", "Outdoor"];
 
-    public HousingPropsTab(HousingProps props, Selection selection)
+    private readonly bool _world;
+    private string Id => _world ? "world" : "housing";
+
+    /// <param name="world">The World props page (the game's shared groups) instead of the housing items.</param>
+    public HousingPropsTab(HousingProps props, Selection selection, bool world = false)
     {
         _props = props;
         _selection = selection;
+        _world = world;
     }
 
     public void Draw()
     {
-        var catalog = _props.Catalog;
+        var catalog = _world ? _props.WorldCatalog : _props.Catalog;
         if(catalog == null)
         {
-            ImGui.TextDisabled(_props.CatalogFailed ? "Couldn't read the housing items from the game data." : "Reading the housing items...");
+            bool failed = _world ? _props.WorldFailed : _props.CatalogFailed;
+            ImGui.TextDisabled(failed ? $"Couldn't read the {(_world ? "world props" : "housing items")} from the game data." : $"Reading the {(_world ? "world props" : "housing items")}...");
             return;
         }
+        if(_world)
+            ImGui.TextWrapped("Every prop the game's world is built from (event objects, field objects, each region's props), "
+                + "in sections. Place them like housing items; only on your screen. Some are invisible markers or effects only.");
 
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.6f);
-        ImGui.InputTextWithHint("###housing_search", "Search housing items", ref _search, 64);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(-1);
-        ImGui.Combo("###housing_where", ref _where, WhereNames, WhereNames.Length);
+        ImGui.SetNextItemWidth(_world ? -1 : ImGui.GetContentRegionAvail().X * 0.6f);
+        ImGui.InputTextWithHint($"###{Id}_search", _world ? $"Search {catalog.Length} world props" : "Search housing items", ref _search, 64);
+        if(!_world)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1);
+            ImGui.Combo("###housing_where", ref _where, WhereNames, WhereNames.Length);
+        }
 
         if(_filteredFor != _search || _filteredWhere != _where || _filteredCount != catalog.Length)
         {
             _filteredFor = _search;
             _filteredWhere = _where;
             _filteredCount = catalog.Length;
-            _filtered = catalog.Where(i => (_where == 0 || (_where == 1) == i.Indoors)
-                && (_search.Length == 0 || i.Name.Contains(_search, StringComparison.OrdinalIgnoreCase))).ToArray();
+            _filtered = catalog.Where(i => (_world || _where == 0 || (_where == 1) == i.Indoors)
+                && (_search.Length == 0 || i.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                    || i.Category.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(i => i.Category, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
         float height = Math.Max(220f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().Y * 0.55f);
         float listWidth = ImGui.GetContentRegionAvail().X * 0.45f;
-        using(var list = ImRaii.Child("###housing_list", new Vector2(listWidth, height), true))
+        using(var list = ImRaii.Child($"###{Id}_list", new Vector2(listWidth, height), true))
         {
             if(list.Success)
                 DrawList();
         }
         ImGui.SameLine();
-        using(var preview = ImRaii.Child("###housing_preview", new Vector2(-1, height), true))
+        using(var preview = ImRaii.Child($"###{Id}_preview", new Vector2(-1, height), true))
         {
             if(preview.Success)
                 DrawPreview();
@@ -77,23 +91,45 @@ public sealed unsafe class HousingPropsTab
         DrawPlaced();
     }
 
+    // In sections by type (each item's category), open by themselves while searching.
     private void DrawList()
     {
-        int shown = 0;
-        const int Limit = 600;
-        foreach(var item in _filtered)
-        {
-            if(++shown > Limit)
-            {
-                ImGui.TextDisabled($"... and {_filtered.Length - Limit} more: search to narrow it down.");
-                break;
-            }
-            string label = $"{item.Name}{(item.Indoors ? "" : "  (outdoor)")}###housing_{(item.Indoors ? "i" : "o")}{item.ModelKey}";
-            if(ImGui.Selectable(label, _chosen == item))
-                _chosen = item;
-        }
         if(_filtered.Length == 0)
+        {
             ImGui.TextDisabled("Nothing matches.");
+            return;
+        }
+        bool searching = _search.Length > 0;
+        const int Limit = 500;
+        int i = 0;
+        while(i < _filtered.Length)
+        {
+            string section = _filtered[i].Category.Length > 0 ? _filtered[i].Category : "Other";
+            int end = i;
+            while(end < _filtered.Length && (_filtered[end].Category.Length > 0 ? _filtered[end].Category : "Other") == section)
+                end++;
+            if(searching)
+                ImGui.SetNextItemOpen(true, ImGuiCond.Always);
+            bool open = ImGui.TreeNodeEx($"{section} ({end - i})###{Id}_sec_{section}", ImGuiTreeNodeFlags.SpanAvailWidth);
+            if(open)
+            {
+                int shown = 0;
+                for(int k = i; k < end; k++)
+                {
+                    if(++shown > Limit)
+                    {
+                        ImGui.TextDisabled($"... and {end - i - Limit} more: search to narrow it down.");
+                        break;
+                    }
+                    var item = _filtered[k];
+                    string label = $"{item.Name}{(item.World || item.Indoors ? "" : "  (outdoor)")}###{Id}_{item.GroupPath}";
+                    if(ImGui.Selectable(label, _chosen == item))
+                        _chosen = item;
+                }
+                ImGui.TreePop();
+            }
+            i = end;
+        }
     }
 
     private void DrawPreview()

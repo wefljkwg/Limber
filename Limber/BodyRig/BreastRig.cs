@@ -98,7 +98,7 @@ public sealed class RigPart
     {
         foreach (var pattern in AllParents)
         {
-            var name = pattern.Replace("{side}", left ? "l" : "r");
+            var name = SoftBoneMarks.ForSide(pattern, left);
             if (has(name))
                 return name;
         }
@@ -175,7 +175,8 @@ public static class RigParts
     {
         Key = "breasts", Label = "Breasts", Prefix = "lmb_lat_mune_", Rows = 3, Columns = 3, Layers = 3, Lattice = true, BackLayerBones = true,
         Nipples = true,
-        Parents = ["iv_c_mune_{side}", "j_mune_{side}"],
+        // (the names body and skeleton mods use for these bones: the first one a skeleton / model has is taken)
+        Parents = ["iv_c_mune_{side}", "j_mune_{side}", "iv_mune_{side}", "breast_{side}", "j_breast_{side}"],
         DefaultShape = () => new BreastRigShape { Size = 1.0f, Forward = -0.05f, Up = -0.05f, Out = 0.05f, Depth = 0.9f },
         FallbackSeparation = 0.17f,
     };
@@ -184,7 +185,8 @@ public static class RigParts
     {
         Key = "testicles", Label = "Testicles", Prefix = "lmb_lat_kougan_", Rows = 3, Columns = 3, Layers = 3, Lattice = true, BackLayerBones = true,
         GrowsFromTop = true,
-        Parents = ["iv_kougan_{side}"],
+        Parents = ["iv_kougan_{side}", "j_kougan_{side}", "iv_kintama_{side}", "kintama_{side}", "j_kintama_{side}", "iv_tama_{side}", "j_tama_{side}",
+            "balls_{side}", "ball_{side}", "testicle_{side}", "testicles_{side}", "iv_balls_{side}"],
         DefaultShape = () => new BreastRigShape { Size = 1.4f, Forward = -0.3f, Up = -0.25f, Out = 0f, Depth = 1.0f },
         FallbackSeparation = 0.04f,
     };
@@ -194,7 +196,7 @@ public static class RigParts
     {
         Key = "butt", Label = "Butt", Prefix = "lmb_lat_shiri_", Rows = 3, Columns = 3, Layers = 3, Lattice = true, BackLayerBones = true,
         Backward = true,
-        Parents = ["iv_shiri_{side}"],
+        Parents = ["iv_shiri_{side}", "butt_{side}", "j_shiri_{side}", "iv_butt_{side}", "j_butt_{side}", "n_shiri_{side}", "buttock_{side}", "j_buttock_{side}"],
         DefaultShape = () => new BreastRigShape { Size = 1.3f, Forward = -0.35f, Up = -0.1f, Out = 0.05f, Depth = 1.0f },
         FallbackSeparation = 0.12f,
     };

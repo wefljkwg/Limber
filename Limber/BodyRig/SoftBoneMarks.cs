@@ -18,13 +18,11 @@ public static class SoftBoneMarks
 
     public static string Pattern(string bone)
     {
-        foreach (var (l, r) in new[] { ("_l", "_r"), ("_L", "_R") })
-        {
-            if (bone.EndsWith(l, StringComparison.Ordinal))
-                return bone[..^2] + "_{side}";
-            if (bone.EndsWith(r, StringComparison.Ordinal))
-                return bone[..^2] + "_{side}";
-        }
+        // (capital sides keep their case: "{SIDE}" is filled in with L / R, "{side}" with l / r)
+        if (bone.EndsWith("_l", StringComparison.Ordinal) || bone.EndsWith("_r", StringComparison.Ordinal))
+            return bone[..^2] + "_{side}";
+        if (bone.EndsWith("_L", StringComparison.Ordinal) || bone.EndsWith("_R", StringComparison.Ordinal))
+            return bone[..^2] + "_{SIDE}";
         return bone;
     }
 
@@ -54,6 +52,9 @@ public static class SoftBoneMarks
             return [];
         }
     }
+
+    /// <summary>A pattern's bone for one side ("{side}" -> l / r, "{SIDE}" -> L / R).</summary>
+    public static string ForSide(string pattern, bool left) => pattern.Replace("{side}", left ? "l" : "r").Replace("{SIDE}", left ? "L" : "R");
 
     public static void Set(string bone, string? part)
     {

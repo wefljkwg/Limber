@@ -233,6 +233,7 @@ public static class RigBuilder
         replaced = skeleton.RemoveTrailing(RigParts.IsRigBone);
         var model = skeleton.ModelPose();
         var report = new List<string>();
+        var missing = new List<string>();
 
         foreach (var part in parts)
         {
@@ -240,7 +241,13 @@ public static class RigBuilder
             var leftName = part.ParentBone(n => skeleton.IndexOf(n) >= 0, left: true);
             var rightName = part.ParentBone(n => skeleton.IndexOf(n) >= 0, left: false);
             if (leftName == null || rightName == null)
+            {
+                // (for the soft parts: what it looked for, marked ones first, so the log says why there's no rig for it)
+                if (!part.Legacy && !part.Shape)
+                    missing.Add($"{part.Label.ToLowerInvariant()} (looked for {string.Join(", ", part.AllParents.Take(6).Select(p => SoftBoneMarks.ForSide(p, true)))}"
+                        + (SoftBoneMarks.ParentsFor(part.Key).Length > 0 ? "; your marked bones aren't in this skeleton: if the Renderer shows them under another skeleton part, they're in an extra skeleton, which the rig doesn't add to yet" : "") + ")");
                 continue;
+            }
             int leftParent = skeleton.IndexOf(leftName), rightParent = skeleton.IndexOf(rightName);
             float separation = Vector3.Distance(model[leftParent].Position, model[rightParent].Position);
             if (!(separation > 0.005f && separation < 1f))
@@ -293,7 +300,7 @@ public static class RigBuilder
             }
             report.Add($"{part.Label.ToLowerInvariant()} {(part.PerSide + (part.Nipples ? 1 : 0)) * (part.Single ? 1 : 2)} bones");
         }
-        added = report.Count > 0 ? "added " + string.Join(", ", report) : "";
+        added = (report.Count > 0 ? "added " + string.Join(", ", report) : "") + (missing.Count > 0 ? (report.Count > 0 ? "; " : "") + "no " + string.Join("; no ", missing) : "");
         if (report.Count == 0)
             return null;
         for (int i = 0; i < skeleton.Count; i++)

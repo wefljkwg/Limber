@@ -64,6 +64,27 @@ public sealed class AppearanceTab
             _dirty = false;
         }
         var look = _edit;
+        if(_applySoon && _dirty && !ImGui.IsAnyItemActive() && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            _applySoon = false;
+            Apply(actor, look);
+        }
+
+        // Which Penumbra collection draws this character (like Brio).
+        DrawCollection(actor);
+
+        // Whole outfits.
+        if(ImGui.Button("All smallclothes###app_out_small"))
+            _status = Appearance.PutOn(actor.Address, actor.ObjectIndex, Appearance.Outfit.Smallclothes);
+        Tooltip("Takes off all gear: smallclothes, nothing on the head, no accessories (weapons kept).");
+        ImGui.SameLine();
+        if(ImGui.Button("All smallclothes NPC###app_out_npc"))
+            _status = Appearance.PutOn(actor.Address, actor.ObjectIndex, Appearance.Outfit.NpcSmallclothes);
+        Tooltip("The NPCs' smallclothes on body, hands, legs and feet; nothing on the head, no accessories.");
+        ImGui.SameLine();
+        if(ImGui.Button("All emperor's###app_out_emp"))
+            _status = Appearance.PutOn(actor.Address, actor.ObjectIndex, Appearance.Outfit.Emperors);
+        Tooltip("The whole Emperor's New set (hat, robe, gloves, breeches, boots and accessories).");
 
         // Apply / back / auto.
         using(ImRaii.Disabled(!_dirty))
@@ -95,14 +116,19 @@ public sealed class AppearanceTab
             DrawGear(actor, look);
         if(ImGui.CollapsingHeader("Looks###app_looks"))
             DrawLooks(actor, look);
+        if(ImGui.CollapsingHeader("NPC looks###app_npcs"))
+            DrawNpcs(actor);
     }
 
     private void Changed(ActorRef actor, AppearanceData look)
     {
         _dirty = true;
-        if(_config.AppearanceLive && !ImGui.IsAnyItemActive())
-            Apply(actor, look);
+        // (put on once nothing's being dragged or typed in: a pick made while a box was still active used to be
+        // left waiting for Apply, so it looked like it did nothing)
+        _applySoon = _config.AppearanceLive;
     }
+
+    private bool _applySoon;
 
     private void Apply(ActorRef actor, AppearanceData look)
     {
@@ -234,7 +260,7 @@ public sealed class AppearanceTab
                     int shown = 0;
                     foreach(var item in Appearance.Items)
                     {
-                        if(item.Slot != s)
+                        if(!Appearance.Fits(item, s))
                             continue;
                         if(_search[s].Length > 0 && !item.Name.Contains(_search[s], StringComparison.OrdinalIgnoreCase))
                             continue;
@@ -368,7 +394,7 @@ public sealed class AppearanceTab
         }
         var g = new FFXIVClientStructs.FFXIV.Client.Game.Character.EquipmentModelId { Value = value };
         foreach(var item in Appearance.Items)
-            if(item.Slot == slot && (ushort)(item.Model & 0xFFFF) == g.Id && (byte)((item.Model >> 16) & 0xFF) == g.Variant)
+            if(Appearance.Fits(item, slot) && (ushort)(item.Model & 0xFFFF) == g.Id && (byte)((item.Model >> 16) & 0xFF) == g.Variant)
                 return item.Name;
         return $"Model {g.Id}, variant {g.Variant}";
     }
@@ -450,6 +476,127 @@ public sealed class AppearanceTab
             presets.RemoveAt(remove);
             _config.Save();
         }
+    }
+
+    private string _npcSearch = "";
+    private Dictionary<Guid, string>? _collections;
+    private long _collectionsAt;
+
+    // The Penumbra collection the chosen character is drawn with; another one picked for it (Brio style), or back to
+    // Penumbra's own rules. Redrawn either way.
+    private void DrawCollection(ActorRef actor)
+    {
+        try
+        {
+            long now = Environment.TickCount64;
+            if(_collections == null || now - _collectionsAt > 5000)
+            {
+                _collections = Plugin.PluginInterface.GetIpcSubscriber<Dictionary<Guid, string>>("Penumbra.GetCollections.V5").InvokeFunc();
+                _collectionsAt = now;
+            }
+            var current = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5")
+                .InvokeFunc(actor.ObjectIndex);
+            var (valid, own, (currentId, currentName)) = current;
+            ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+            using(var combo = ImRaii.Combo("Penumbra collection###app_collection", valid ? currentName + (own ? "" : " (by Penumbra's rules)") : "(none)"))
+            {
+                if(combo.Success)
+                {
+                    if(ImGui.Selectable("(Penumbra's own rules)###app_coll_none", !own))
+                        SetCollection(actor, null);
+                    foreach(var (id, name) in _collections.OrderBy(c => c.Value, StringComparer.OrdinalIgnoreCase))
+                        if(ImGui.Selectable($"{name}###app_coll_{id}", own && id == currentId))
+                            SetCollection(actor, id);
+                }
+            }
+            Tooltip("Which Penumbra collection (mods) this character is drawn with, like Brio's. Picking one gives this character its own;\n"
+                + "\"Penumbra's own rules\" takes that away again. It's redrawn either way.");
+        }
+        catch
+        {
+            ImGui.TextDisabled("Penumbra collection: Penumbra isn't available.");
+        }
+    }
+
+    private void SetCollection(ActorRef actor, Guid? id)
+    {
+        try
+        {
+            var (ec, _) = Plugin.PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5")
+                .InvokeFunc(actor.ObjectIndex, id, true, true);
+            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(actor.ObjectIndex, 0);
+            _status = ec is 0 or 1 ? (id == null ? "Back to Penumbra's own rules (redrawn)." : "Collection set (redrawn).") : $"Penumbra couldn't set it (error {ec}).";
+        }
+        catch(Exception e)
+        {
+            _status = "Penumbra couldn't set it: " + e.Message;
+        }
+    }
+
+    private void DrawNpcs(ActorRef actor)
+    {
+        ImGui.TextWrapped("Any named NPC's look from the game (body, face, hair, outfit and weapons) put on the chosen character, or kept as a look. "
+            + "Only on your screen.");
+        DrawNpcPicker(ref _npcSearch, "app_npc", npc =>
+        {
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Put on"))
+                Apply(actor, npc.Look.Copy());
+            Tooltip("The NPC's whole look on the chosen character.");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Save"))
+            {
+                var presets = _config.AppearancePresets ??= new();
+                var copy = npc.Look.Copy();
+                copy.Name = npc.Name;
+                presets.RemoveAll(p => p.Name == copy.Name);
+                presets.Add(copy);
+                _config.Save();
+                _status = $"Saved \"{npc.Name}\" under Looks.";
+            }
+            Tooltip("Keeps it under Looks (and for new actors on the Actors page).");
+        });
+    }
+
+    /// <summary>A searchable list of the game's NPC looks; <paramref name="row"/> draws each one's buttons.</summary>
+    public static void DrawNpcPicker(ref string search, string id, Action<Appearance.NpcLook> row)
+    {
+        var npcs = Appearance.Npcs;
+        if(!Appearance.NpcsReady)
+        {
+            ImGui.TextDisabled("Reading the NPCs from the game's data...");
+            return;
+        }
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint($"###{id}_search", $"Search {npcs.Count} NPCs by name", ref search, 64);
+        string q = search.Trim();
+        if(q.Length < 2)
+        {
+            ImGui.TextDisabled("Type at least two letters of a name.");
+            return;
+        }
+        int shown = 0, total = 0;
+        using var child = ImRaii.Child($"###{id}_list", new Vector2(-1, 220 * ImGuiHelpers.GlobalScale), true);
+        if(!child.Success)
+            return;
+        foreach(var npc in npcs)
+        {
+            if(npc.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
+                continue;
+            total++;
+            if(shown >= 150)
+                continue;
+            shown++;
+            using var pid = ImRaii.PushId((int)npc.Id);
+            ImGui.TextUnformatted(npc.Name);
+            ImGui.SameLine();
+            ImGui.TextDisabled($"#{npc.Id}");
+            row(npc);
+        }
+        if(total > shown)
+            ImGui.TextDisabled($"... and {total - shown} more: type more of the name.");
+        if(total == 0)
+            ImGui.TextDisabled("No NPC by that name.");
     }
 
     private static void Tooltip(string text)
