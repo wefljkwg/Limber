@@ -2097,6 +2097,9 @@ public sealed partial class LimberTab
 
     private string _restNote = "";
 
+    /// <summary>The character chosen at the top of the window.</summary>
+    public ActorRef ChosenActor => _selection.Actor;
+
     /// <summary>The FK posing page (its rest pose), set by the plugin.</summary>
     public FkPosingTab? Fk { get; set; }
 

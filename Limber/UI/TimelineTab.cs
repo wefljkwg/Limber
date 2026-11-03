@@ -103,15 +103,7 @@ public sealed class TimelineTab
     public void Draw()
     {
         var all = _config.Timelines ??= new();
-        bool own = _config.TimelineOwnWindow;
-        if(ImGui.Checkbox("Move to a new window###tl_own_window", ref own))
-        {
-            _config.TimelineOwnWindow = own;
-            _config.Save();
-        }
-        if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("The Timeline in a window of its own (move and size it anywhere). Untick to put it back on its page.");
-        ImGui.Separator();
+
 
         DrawClips(all);
         var clip = _timeline.Clip;

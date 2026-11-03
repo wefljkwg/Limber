@@ -130,6 +130,8 @@ public sealed class RigSettings
     public bool CameraNoCollide { get; set; }
     /// <summary>The Timeline shown in a window of its own instead of on its page.</summary>
     public bool TimelineOwnWindow { get; set; }
+    /// <summary>Your own presets: page -> preset name -> the page's settings (saved with the preset bar).</summary>
+    public Dictionary<string, Dictionary<string, string>> Presets { get; set; } = new();
     /// <summary>The camera moved off its place: sideways (+ right), up, forward (metres, the way it looks).</summary>
     public System.Numerics.Vector3 CameraOffset { get; set; }
 

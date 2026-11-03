@@ -316,11 +316,13 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
             _timeline = new TimelineService(ObjectTable, _config.Ik, _rigs, _actors);
             _mainWindow.TimelineTab = new TimelineTab(_selection, _config.Ik, _timeline);
-            _windows.AddWindow(new TimelineWindow(_mainWindow.TimelineTab, _config.Ik));
             _mainWindow.AppearanceTab = new AppearanceTab(_selection, _config.Ik);
             _mainWindow.CameraTab = new CameraTab(_config.Ik);
+            _mainWindow.VoiceTab = new VoiceTab(_selection);
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
+            foreach(var pageWindow in _mainWindow.PageWindows())
+                _windows.AddWindow(pageWindow);
             _windows.AddWindow(syncHelp);
             var physicsHelp = new BodyPhysicsHelpWindow();
             _windows.AddWindow(physicsHelp);
@@ -642,6 +644,10 @@ public sealed class Plugin : IDalamudPlugin
             bool here = ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             // The camera works in GPose and out of it (whenever Limber is on).
             UpdateCamera(_config.PluginEnabled);
+            if(_config.PluginEnabled)
+                VoiceSwitcher.Update();
+            else
+                VoiceSwitcher.ResetAll();
             if(_config.PluginEnabled && here)
             {
                 _overlay.Draw();
@@ -850,6 +856,7 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         CameraControl.Dispose();
+        try { VoiceSwitcher.ResetAll(); } catch { }
         PluginInterface.UiBuilder.Draw -= OnDraw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleWindow;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleWindow;

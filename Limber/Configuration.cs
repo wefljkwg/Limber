@@ -98,6 +98,8 @@ public class Configuration : IPluginConfiguration
     public bool ShowVlcTab { get; set; } = false;
     /// <summary>The Breast size page (Body), and the breast size shapes it drives: experimental, off by default.</summary>
     public bool ShowBustTab { get; set; } = false;
+    /// <summary>The pages moved into windows of their own ("Move to a new window" at the top of each page).</summary>
+    public HashSet<string> PoppedPages { get; set; } = new();
 
     // Links
     /// <summary>Master switch for all links.</summary>

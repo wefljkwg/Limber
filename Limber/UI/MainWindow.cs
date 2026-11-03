@@ -43,6 +43,7 @@ public sealed class MainWindow : Window
     public TimelineTab? TimelineTab { get; set; }
     public AppearanceTab? AppearanceTab { get; set; }
     public CameraTab? CameraTab { get; set; }
+    public VoiceTab? VoiceTab { get; set; }
     private int _portEdit;
     private string _newPresetName = "";
     /// <summary>Which link the Face tab captures from / shows presets for.</summary>
@@ -100,11 +101,12 @@ public sealed class MainWindow : Window
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
         new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between.", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
         new("bust", "Body", "Breast size", "Breast size for tops made with size shapes: flat at 0 to huge at 100, from the Bust slider or set here.", () => BustShapeTab?.Draw(), () => BustShapeTab != null && Cfg.ShowBustTab),
-        new("shape", "Body", "Body shape", "Sliders for the body's shape (like BodySlide), live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
+        new("shape", "Body", "Body shape", "Sliders for the body's shape, live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
         new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes.", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
+        new("voice", "Scene", "Voice Switcher", "Give any character, each actor on its own, any player voice: from the game's list, another character's, or by number.", () => VoiceTab?.Draw(), () => VoiceTab != null),
         new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
-        new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.DrawPage(), () => TimelineTab != null),
+        new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
         new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
@@ -121,6 +123,114 @@ public sealed class MainWindow : Window
         new("video", "Experimental", "Video (not working)", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
         new("vlc", "Experimental", "VLC Live", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
     ];
+
+    // ---- Each page: "Move to a new window", your own presets (where the page has settings), then the page itself
+
+    private void DrawPageContents(Page page, bool inWindow)
+    {
+        bool popped = Cfg.PoppedPages.Contains(page.Id);
+        if (ImGui.Checkbox($"Move to a new window###limber_pop_{page.Id}", ref popped))
+        {
+            if (popped)
+                Cfg.PoppedPages.Add(page.Id);
+            else
+                Cfg.PoppedPages.Remove(page.Id);
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(inWindow ? "Untick to put this page back in the main window." : "This page in a window of its own (move and size it anywhere). Untick to put it back.");
+        ImGui.Separator();
+        if (PresetParts(page.Id) is { } parts)
+            PresetBar.Draw(Cfg.Ik, page.Id, parts);
+        ImGui.Spacing();
+        page.Draw();
+    }
+
+    private static T For<T>(Dictionary<string, T> all, string name) where T : new()
+    {
+        if (!all.TryGetValue(name, out var s))
+            all[name] = s = new T();
+        return s;
+    }
+
+    // What each page's presets hold (the chosen character's settings for the pages that keep them per character).
+    // Pages that already save their own (looks, body shapes, hands, pose files, camera shots) aren't here.
+    private Func<Dictionary<string, object>?>? PresetParts(string page)
+    {
+        var ik = Cfg.Ik;
+        string Name() => _limberTab.ChosenActor.IsSet ? _limberTab.ChosenActor.Name ?? "" : "";
+        Func<Dictionary<string, object>?> PerCharacter(Func<string, Dictionary<string, object>> make)
+            => () => Name() is { Length: > 0 } n ? make(n) : null;
+        return page switch
+        {
+            "limberanims" => PerCharacter(n => new()
+            {
+                ["Throb"] = For(ik.Throb ??= new(), n),
+                ["BallThrob"] = For(ik.BallThrob ??= new(), n),
+                ["Twerk"] = For(ik.Twerk ??= new(), n),
+                ["Ahegao"] = For(ik.Ahegao ??= new(), n),
+                ["Expansion"] = For(ik.Expansion ??= new(), n),
+            }),
+            "dynamic" => PerCharacter(n => new() { ["DynamicBones"] = For(ik.DynamicBones ??= new(), n) }),
+            "lookat" => PerCharacter(n => new() { ["LookAt"] = For(ik.LookAt ??= new(), n) }),
+            "face" => PerCharacter(n => new() { ["Face"] = For(ik.FacePoses ??= new(), n) }),
+            "fk" => PerCharacter(n => new() { ["Fk"] = For(ik.FkPoses ??= new(), n) }),
+            "scale" => PerCharacter(n => new() { ["BoneScale"] = For(ik.BoneScales ??= new(), n) }),
+            "rig" => () => new()
+            {
+                ["Breasts"] = ik.SoftBody ??= new(),
+                ["Testicles"] = ik.SoftBodyTesticles ??= Limber.BodyRig.SoftBodySettings.TesticleDefaults(),
+                ["Butt"] = ik.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults(),
+                ["LiveMesh"] = ik.LiveMesh ??= new(),
+            },
+            "oral" => () => new() { ["Oral"] = ik.Oral ??= new() },
+            _ => null,
+        };
+    }
+
+    /// <summary>A window for each page, shown while that page is moved out of the main window.</summary>
+    public IEnumerable<Window> PageWindows()
+    {
+        // (the Timeline's old window switch becomes this one)
+        if (Cfg.Ik.TimelineOwnWindow)
+        {
+            Cfg.PoppedPages.Add("timeline");
+            Cfg.Ik.TimelineOwnWindow = false;
+        }
+        foreach (var page in Pages)
+            if (page.Id != "start")
+                yield return new PageWindow(this, page);
+    }
+
+    private sealed class PageWindow : Window
+    {
+        private readonly MainWindow _main;
+        private readonly Page _page;
+
+        public PageWindow(MainWindow main, Page page) : base($"Limber - {page.Title}###LimberPage_{page.Id}")
+        {
+            _main = main;
+            _page = page;
+            Size = new Vector2(720, 520);
+            SizeCondition = ImGuiCond.FirstUseEver;
+        }
+
+        public override void PreOpenCheck()
+            => IsOpen = _main.Cfg.PoppedPages.Contains(_page.Id) && (_page.Shown?.Invoke() ?? true);
+
+        // (closing it with its X puts the page back in the main window)
+        public override void OnClose()
+        {
+            if (_main.Cfg.PoppedPages.Remove(_page.Id))
+                _main.SaveLocked();
+        }
+
+        public override void Draw()
+        {
+            using var id = Dalamud.Interface.Utility.Raii.ImRaii.PushId("popped_" + _page.Id);
+            _main.DrawPageContents(_page, inWindow: true);
+        }
+    }
 
     private string CurrentPage
     {
@@ -201,9 +311,18 @@ public sealed class MainWindow : Window
                 ImGui.TextColored(Good, current.Title);
                 using (Dalamud.Interface.Utility.Raii.ImRaii.PushColor(ImGuiCol.Text, Dim))
                     ImGui.TextWrapped(current.Blurb);
-                ImGui.Separator();
-                ImGui.Spacing();
-                current.Draw();
+                if (Cfg.PoppedPages.Contains(current.Id))
+                {
+                    ImGui.Separator();
+                    ImGui.TextDisabled("This page is in a window of its own.");
+                    if (ImGui.Button("Put it back here###limber_page_back"))
+                    {
+                        Cfg.PoppedPages.Remove(current.Id);
+                        SaveLocked();
+                    }
+                }
+                else
+                    DrawPageContents(current, inWindow: false);
             }
         }
 

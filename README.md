@@ -63,6 +63,7 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 | Page | What it does |
 | --- | --- |
 | **Appearance & gear** | Change a character's race, face, hair, colours, body, outfit and weapons. It has colour pickers, hairstyle previews, saved looks and look-file import. |
+| **Voice Switcher** | Give any character, each actor on its own, any player voice: from the game's list, another character's voice, or by number. |
 | **Camera** | Set the zoom, angles, tilt and position. You can unlock its limits, let it pass through walls and save camera shots. |
 | **Timeline** | Make your own animations by setting keyframes for poses, movement and almost any setting, then playing them back. It can open in its own window. |
 | **Devices** | Colliders (like hands or toys) that press the soft body, and motion devices that move bones on their own. |
@@ -98,7 +99,7 @@ Quality of life and bug fixes always come first.
 - [ ] Stomach / abdominal bulge (with shape)
 - [ ] Stomach / belly expansion and impregnation
 - [ ] Mouth / throat bulge (with shape)
-- [ ] Vanilla voice switcher
+- [x] Vanilla voice switcher
 - [ ] Test the sync player with partnered animations: custom animations, custom + IK adjusted, and Limber Animations
 - [ ] Export Koikatsu animations directly from Limber, choosing which animations to export
 - [ ] Export characters as they appear, fully rigged and ready to use in VRChat
@@ -108,4 +109,4 @@ Quality of life and bug fixes always come first.
 - [ ] Bring Honey Select 2 into Limber the same way as Koikatsu
 - [ ] Import minions, mounts, enemies and non-human NPCs with their animations intact and playable, and pose them
 - [ ] Attach housing props and world props to bones
-- [ ] Preset saving for every feature
+- [x] Preset saving for every feature
