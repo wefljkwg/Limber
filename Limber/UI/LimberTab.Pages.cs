@@ -77,6 +77,17 @@ public sealed partial class LimberTab
         }
         Tooltip("Holds the chosen character exactly as they are now: animation, face, hair and clothes stop moving.\n" +
                 "Posing, body shape and the soft bodies still work on top. Untick to let the animation play again.");
+        ImGui.SameLine();
+        if(ImGui.Button("Freeze all actors###limber_freeze_every"))
+        {
+            // In GPose: every GPose actor (you and the ones added); outside it: everyone Limber can pose that's drawn.
+            bool gpose = Plugin.ClientState.IsGPosing;
+            foreach(var c in _selection.ListCharacters())
+                if(!gpose || c.ObjectIndex >= 200)
+                    if(!Freeze.IsFrozen(c.Address))
+                        Freeze.Freeze(c.Address, c.ObjectIndex);
+        }
+        Tooltip("Freezes every actor at once (in GPose: you and every actor added). \"Resume all\" lets them all move again.");
         int others = Freeze.Count - (actor.IsSet && Freeze.IsFrozen(actor.Address) ? 1 : 0);
         if(others > 0)
         {
@@ -93,15 +104,6 @@ public sealed partial class LimberTab
     public void DrawPosePage()
     {
         DrawGeneral();
-        bool faceBones = _config.ShowFaceBones;
-        if(ImGui.Checkbox("Face bones###limber_face_dots", ref faceBones))
-        {
-            _config.ShowFaceBones = faceBones;
-            _config.Save();
-        }
-        Tooltip("Small dots on the face: brows, eyelids, eyes, cheeks, lips, jaw and tongue.\n" +
-                "Drag one to move it, or select it and use the gizmo to turn it (eyes, eyelids, jaw).\n" +
-                "Tip: Freeze motion first, so the animation's own expression doesn't fight you.");
         ImGui.Spacing();
         DrawPoseFiles();
         DrawPoseTab();
@@ -148,7 +150,7 @@ public sealed partial class LimberTab
                 });
                 }
             }
-            Tooltip("Saves the chosen character's pose as you see it (body, face and hair) as a .pose file.\nBrio and Ktisis can load it too.");
+            Tooltip("Saves the chosen character's pose as you see it (body, face and hair) as a .pose file.\nOther posing tools can load it too.");
             ImGui.SameLine();
             if(ImGui.Button("Import pose...###limber_pose_import"))
             {
@@ -181,7 +183,7 @@ public sealed partial class LimberTab
                     }
                 }, 1, PoseFolder());
             }
-            Tooltip("Puts a .pose file (Limber, Brio or Ktisis) on the chosen character and holds it (Freeze motion goes on).");
+            Tooltip("Puts a .pose file (Limber's or another posing tool's) on the chosen character and holds it (Freeze motion goes on).");
         }
         // Solo or duo: a duo saves (and loads) the partner too, where they stand against each other, both animations and
         // every bone attached between the two.
@@ -665,7 +667,6 @@ public sealed partial class LimberTab
 
         // A new actor wearing a look: an NPC's, a saved one, or one copied as text (Appearance & gear > Looks > Copy as text).
         SeparatorText("Add an actor with a look");
-        ImGui.TextDisabled("It appears next to the chosen character (or you) already wearing the look.");
         var at = chosen.IsSet ? Plugin.ObjectTable.CreateObjectReference(chosen.Address) as Dalamud.Game.ClientState.Objects.Types.ICharacter : null;
         at ??= me;
         void SpawnLook(Limber.Rig.AppearanceData look)
@@ -768,7 +769,6 @@ public sealed partial class LimberTab
             Tooltip("Removes every actor Limber added (actors from other plugins are left alone).");
         }
         ImGui.Spacing();
-        ImGui.TextDisabled("Actors from other plugins (like Brio) aren't listed or removed here. All of them only exist on your screen.");
     }
 
     private void Spawned(int index)

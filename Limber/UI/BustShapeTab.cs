@@ -25,11 +25,6 @@ public sealed class BustShapeTab
 
     public void Draw()
     {
-        ImGui.TextWrapped("For tops made with breast size shapes (like Limber's Koikatsu-style top): the breasts go from a flat chest at 0, "
-            + "through small mounds, small and medium, to huge at 100, smoothly, each size its own shape, like Koikatsu's Breast Size. "
-            + "By default the character's own Bust slider sets it (character creation, Glamourer, Anamnesis); the game's own bust scaling "
-            + "is taken off so the two don't stack.");
-        ImGui.Spacing();
         ImGui.TextDisabled(Limber.Gpu.BustShapes.Status.Length > 0 ? Limber.Gpu.BustShapes.Status : "Breast shapes: no shaped top drawn yet.");
 
         var actor = _selection.Actor;
@@ -65,7 +60,7 @@ public sealed class BustShapeTab
             if(top.Length > 0)
                 ImGui.TextDisabled($"Its top is drawn from: {top}");
             ImGui.TextWrapped("If you turned the shaped top's mod on: another mod that changes the top (a Limber rigged model, a body mod) "
-                + "may have a higher priority in Penumbra. Give the shaped top the highest priority, or turn the other off.");
+                + "may have a higher priority in your mod manager. Give the shaped top the highest priority, or turn the other off.");
         }
         else
             ImGui.TextDisabled($"Wearing a shaped top: sizes {string.Join(", ", Array.ConvertAll(sizes, v => v.ToString("0")))}.");

@@ -8,8 +8,9 @@ using Limber.Rig;
 namespace Limber.UI;
 
 /// <summary>
-/// The Camera page (Scene), like Brio's camera tab: the game camera's distance, field of view, angles and tilt, set
-/// directly; its limits unlocked; and shots saved to come back to (the Timeline can key the camera too).
+/// The Camera page (Scene): the game camera's distance, field of view, angles and tilt, set directly; its limits
+/// unlocked; moved off its place; through floors and walls; and shots saved to come back to (the Timeline can key the
+/// camera too). In GPose and out of it.
 /// </summary>
 public sealed class CameraTab
 {
@@ -25,10 +26,6 @@ public sealed class CameraTab
 
     public void Draw()
     {
-        ImGui.TextWrapped("The game camera, set directly: how far it is, its field of view, the angle round and up / down, and its tilt. "
-            + "Unlock lets it go closer, further and steeper than the game allows. Save shots to come back to, or key the camera on the Timeline.");
-        ImGui.Spacing();
-
         var shot = CameraControl.Read();
         if(shot == null)
         {
@@ -53,6 +50,30 @@ public sealed class CameraTab
                 _config.CameraMaxDistance = far;
                 _config.Save();
             }
+        }
+
+        bool through = _config.CameraNoCollide;
+        if(ImGui.Checkbox("Through floors and walls###cam_nocollide", ref through))
+        {
+            _config.CameraNoCollide = through;
+            _config.Save();
+        }
+        Tooltip("The camera passes through floors, walls and ceilings instead of bumping into them and pulling in.");
+
+        // Where the camera is: moved off the game's place, along the way it looks.
+        var offset = _config.CameraOffset;
+        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        if(ImGui.DragFloat3("Position###cam_offset", ref offset, 0.01f, -20f, 20f, "%.2f"))
+        {
+            _config.CameraOffset = offset;
+            _config.Save();
+        }
+        Tooltip("Moves the camera (and what it looks at) sideways (+ right), up and forward, in metres, the way the camera looks.");
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Reset###cam_offset_reset"))
+        {
+            _config.CameraOffset = System.Numerics.Vector3.Zero;
+            _config.Save();
         }
 
         var limits = CameraControl.Limits();

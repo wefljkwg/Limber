@@ -84,13 +84,34 @@ public sealed class TimelineTab
         _config.Save();
     }
 
+    /// <summary>The page in the main window: the timeline, or (while it's in its own window) a way to bring it back.</summary>
+    public void DrawPage()
+    {
+        if(_config.TimelineOwnWindow)
+        {
+            ImGui.TextDisabled("The Timeline is in its own window.");
+            if(ImGui.Button("Put it back here###tl_back"))
+            {
+                _config.TimelineOwnWindow = false;
+                _config.Save();
+            }
+            return;
+        }
+        Draw();
+    }
+
     public void Draw()
     {
         var all = _config.Timelines ??= new();
-        ImGui.TextWrapped("Make animations from anything Limber does: FK and IK posing, moving the character, bone scale, body shape, "
-            + "and every setting of throbbing, twerking, ahegao, look at, dynamic bones, Oral and the soft bodies. "
-            + "Add tracks, set the playhead, change things on their own pages and key them (or turn on Auto key), then play.");
-        ImGui.Spacing();
+        bool own = _config.TimelineOwnWindow;
+        if(ImGui.Checkbox("Move to a new window###tl_own_window", ref own))
+        {
+            _config.TimelineOwnWindow = own;
+            _config.Save();
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("The Timeline in a window of its own (move and size it anywhere). Untick to put it back on its page.");
+        ImGui.Separator();
 
         DrawClips(all);
         var clip = _timeline.Clip;

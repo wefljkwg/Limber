@@ -149,7 +149,7 @@ public static class RigBuilder
 
         if (rebuiltFromRig)
             lines.Add("Note: some skeletons came from an earlier build of this mod (it is still active). If you changed " +
-                      "skeleton mods, disable this mod in Penumbra first, then rebuild.");
+                      "skeleton mods, disable this mod in your mod manager first, then rebuild.");
 
         return (files, lines, placed);
     }

@@ -125,17 +125,36 @@ public sealed class LimberAnimationsTab
             ImGui.TextDisabled("This character has no name to keep the settings under.");
             return;
         }
-        ImGui.TextWrapped("Animations Limber plays by itself on the chosen character, on top of their pose and animation.");
-        ImGui.Spacing();
-        if(ImGui.CollapsingHeader("Throbbing###lanim_throb", ImGuiTreeNodeFlags.DefaultOpen))
+        // Both throbbings at once, in time with each other.
+        if(BallThrob != null)
+        {
+            var penis = (_config.Throb ??= new()).TryGetValue(name, out var p) ? p : null;
+            var balls = (_config.BallThrob ??= new()).TryGetValue(name, out var b) ? b : null;
+            bool bothOn = penis is { Enabled: true } && balls is { Enabled: true };
+            if(ImGui.Button(bothOn ? "Stop both throbbings###lanim_both" : "Start both throbbings (in sync)###lanim_both"))
+            {
+                penis ??= _config.Throb[name] = new ThrobSettings();
+                balls ??= _config.BallThrob[name] = new BallThrobSettings();
+                penis.Enabled = balls.Enabled = !bothOn;
+                if(!bothOn)
+                {
+                    _throb.Sync(actor.Address);
+                    BallThrob.Sync(actor.Address);
+                }
+                _config.Save();
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Starts (or stops) penis and testicle throbbing together, their beats starting at the same moment.");
+        }
+        if(ImGui.CollapsingHeader("Throbbing###lanim_throb"))
             DrawThrob(name, actor);
-        if(BallThrob != null && ImGui.CollapsingHeader("Testicle throbbing###lanim_balls", ImGuiTreeNodeFlags.DefaultOpen))
+        if(BallThrob != null && ImGui.CollapsingHeader("Testicle throbbing###lanim_balls"))
             DrawBallThrob(name, actor);
-        if(ImGui.CollapsingHeader("Twerking###lanim_twerk", ImGuiTreeNodeFlags.DefaultOpen))
+        if(ImGui.CollapsingHeader("Twerking###lanim_twerk"))
             DrawTwerk(name, actor);
-        if(ImGui.CollapsingHeader("Ahegao###lanim_ahegao", ImGuiTreeNodeFlags.DefaultOpen))
+        if(ImGui.CollapsingHeader("Ahegao###lanim_ahegao"))
             DrawAhegao(name, actor);
-        if(ImGui.CollapsingHeader("Expansion###lanim_expansion", ImGuiTreeNodeFlags.DefaultOpen))
+        if(ImGui.CollapsingHeader("Expansion###lanim_expansion"))
             DrawExpansion(name, actor);
     }
 
@@ -187,12 +206,6 @@ public sealed class LimberAnimationsTab
             all[name] = s = new ExpansionSettings();
         bool changed = false;
 
-        ImGui.TextWrapped("The breasts, butt and penis growing over time, each on its own with its own pattern: steady, eased, in surges, "
-            + "pulses, heartbeats, steps, spurts, pumps, overinflating, wobbling, breathing, throbbing, bursting, back and forth, or "
-            + "shrinking; held at the end, looped, or played back down. Breasts and butt grow with their bones (soft bodies follow); the "
-            + "penis gets longer and thicker, and the testicles can grow with it. Works with the pose, Throbbing and Dynamic Bones. "
-            + "Start all three for full-body expansion.");
-        ImGui.Spacing();
         if(ImGui.SmallButton("Start all###lanim_ex_all_on"))
         {
             s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = true;
@@ -218,7 +231,7 @@ public sealed class LimberAnimationsTab
         {
             ImGui.Spacing();
             using var id = ImRaii.PushId($"lanim_ex_{index}");
-            if(!ImGui.TreeNodeEx($"{partName}###lanim_ex_node_{index}", ImGuiTreeNodeFlags.DefaultOpen))
+            if(!ImGui.TreeNodeEx($"{partName}###lanim_ex_node_{index}"))
                 continue;
             changed |= DrawExpansionPart(part, index, partName, shapeTip, actor);
             ImGui.TreePop();
@@ -330,10 +343,6 @@ public sealed class LimberAnimationsTab
             all[name] = s = new AhegaoSettings();
         bool changed = false;
 
-        ImGui.TextWrapped("An ahegao face made from the face's own bones: eyes rolled up, brows raised, the mouth open with the "
-            + "tongue out, the head tipped back. It goes over the character's expression and eases in and out. "
-            + "Needs a face with eye and mouth bones (the game's faces have them).");
-        ImGui.Spacing();
 
         float level = _ahegao.LevelOf(actor.Address);
         using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f), !s.Enabled))
@@ -465,10 +474,6 @@ public sealed class LimberAnimationsTab
             all[name] = s = new TwerkSettings();
         bool changed = false;
 
-        ImGui.TextWrapped("The character twerks: a squat with the upper body leaning forward and the hands on the knees, the hips "
-            + "popping to the beat while the upper body keeps steady and the feet stay where the animation has them. "
-            + "Works best over a standing idle; Dynamic Bones jiggle reacts to it.");
-        ImGui.Spacing();
 
         float level = _twerk.LevelOf(actor.Address);
         using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f), !s.Enabled))
@@ -593,11 +598,6 @@ public sealed class LimberAnimationsTab
             all[name] = s = new ThrobSettings();
         bool changed = false;
 
-        ImGui.TextWrapped("The penis pulses by itself: it swells, lengthens a little and lifts on each beat, the beat rolling from the "
-            + "base to the tip; the testicles can draw up with it. Pick a pattern (or let it change patterns on its own) and press Start. "
-            + "It eases in and out, works with Dynamic Bones and the pose, and gets stronger while this character is in Oral mode. "
-            + "Needs a body with penis bones (IVCS / YAS).");
-        ImGui.Spacing();
 
         // Start / stop and the beat right now.
         float level = _throb.LevelOf(actor.Address);
@@ -711,9 +711,6 @@ public sealed class LimberAnimationsTab
             all[name] = s = new BallThrobSettings();
         bool changed = false;
 
-        ImGui.TextWrapped("The testicles pulse by themselves: swelling, drawing up and tightening, bouncing and swaying, each a little after the other. "
-            + "Separate from the penis throbbing above: either, or both at once (\"With the penis\" follows its beat). Needs a body with testicle bones.");
-        ImGui.Spacing();
         float level = BallThrob!.LevelOf(actor.Address);
         string label = s.Enabled ? "Stop###lanim_balls_go" : "Start###lanim_balls_go";
         using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f), !s.Enabled))

@@ -59,35 +59,76 @@ public sealed unsafe class PropsTab
     {
         _overlay.TabOpen();
 
-        ImGui.TextDisabled("Colliders that push soft breasts / testicles and the live mesh.");
-        bool body = _config.ShowBodyColliders;
-        if (ImGui.Checkbox("Show body colliders###prop_show_body", ref body))
-        {
-            _config.ShowBodyColliders = body;
-            _config.Save();
-        }
-        Tooltip("Pink dots: the breast (and testicle) surface that bone collision pushes. Blue: the body's own capsules.");
-
-        if (ImGui.CollapsingHeader("Add###prop_section_add", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawAdd();
-        if (ImGui.CollapsingHeader("Collision strength###prop_section_strength", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawStrength();
-        var motions = _config.Motions ??= new();
-        if (ImGui.CollapsingHeader($"Motion ({motions.Count})###prop_section_motion"))
-            DrawMotions();
-        if (ImGui.CollapsingHeader($"Colliders ({Props.Count})###prop_section_list", ImGuiTreeNodeFlags.DefaultOpen))
-            DrawList();
-
         var selected = _overlay.Selected;
         if (selected != null && !Props.Contains(selected))
             _overlay.Selected = selected = null;
-        if (selected != null && ImGui.CollapsingHeader($"Edit: {selected.Name}###prop_section_edit", ImGuiTreeNodeFlags.DefaultOpen))
+        var motions = _config.Motions ??= new();
+
+        // Tabs, like the posing pages: what you add and edit first, the settings after.
+        using var tabs = ImRaii.TabBar("###prop_tabs");
+        if (!tabs.Success)
+            return;
+
+        using (var tab = ImRaii.TabItem($"Colliders ({Props.Count})###prop_tab_colliders"))
         {
-            using var id = ImRaii.PushId(selected.Id.ToString());
-            DrawEditor(selected);
+            if (tab.Success)
+            {
+                if (ImGui.CollapsingHeader("Add###prop_section_add", ImGuiTreeNodeFlags.DefaultOpen))
+                    DrawAdd();
+                ImGui.Separator();
+                // The colliders on the left, the chosen one's settings on the right.
+                float listWidth = MathF.Min(300f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X * 0.42f);
+                using (var list = ImRaii.Child("###prop_list_pane", new Vector2(listWidth, -1), true))
+                {
+                    if (list.Success)
+                        DrawList();
+                }
+                ImGui.SameLine();
+                using (var editor = ImRaii.Child("###prop_editor_pane", new Vector2(-1, -1), false))
+                {
+                    if (editor.Success)
+                    {
+                        if (selected == null)
+                            ImGui.TextDisabled("Pick a collider in the list (or click one in the scene) to edit it.");
+                        else
+                        {
+                            ImGui.TextColored(new Vector4(0.95f, 0.85f, 0.55f, 1f), selected.Name);
+                            ImGui.Separator();
+                            using var id = ImRaii.PushId(selected.Id.ToString());
+                            DrawEditor(selected);
+                        }
+                    }
+                }
+            }
         }
-        if (ImGui.CollapsingHeader("Display###prop_section_display"))
-            DrawOptions();
+
+        using (var tab = ImRaii.TabItem($"Motion devices ({motions.Count})###prop_tab_motion"))
+        {
+            if (tab.Success)
+                DrawMotions();
+        }
+
+        using (var tab = ImRaii.TabItem("Collision strength###prop_tab_strength"))
+        {
+            if (tab.Success)
+                DrawStrength();
+        }
+
+        using (var tab = ImRaii.TabItem("Display###prop_tab_display"))
+        {
+            if (tab.Success)
+            {
+                bool body = _config.ShowBodyColliders;
+                if (ImGui.Checkbox("Show body colliders###prop_show_body", ref body))
+                {
+                    _config.ShowBodyColliders = body;
+                    _config.Save();
+                }
+                Tooltip("Pink dots: the breast (and testicle) surface that bone collision pushes. Blue: the body's own capsules.");
+                ImGui.Spacing();
+                DrawOptions();
+            }
+        }
     }
 
     // ---- Display and gizmo options

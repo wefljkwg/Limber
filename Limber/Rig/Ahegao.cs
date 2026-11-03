@@ -62,7 +62,7 @@ public sealed class AhegaoSettings
     public bool HoldFace { get; set; } = true;
     /// <summary>Use the live face rig (smooth shapes on the face's own mesh) for the lips, corners, brows, lids and
     /// cheeks, instead of only moving the face bones.</summary>
-    public bool FaceRig { get; set; } = true;
+    public bool FaceRig { get; set; }
     /// <summary>How loose the tongue is with physics on (0 = firm, 1 = floppy).</summary>
     public float TongueJiggle { get; set; } = 0.6f;
     /// <summary>The tongue pointing up (+, the tip curling up toward the upper lip) or down (-), degrees.</summary>

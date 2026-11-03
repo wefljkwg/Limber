@@ -58,6 +58,9 @@ public sealed class HandleOverlay
 
     public bool IsDragging => _drag != null;
 
+    /// <summary>Whether the Face Posing page is showing (set by the plugin).</summary>
+    public static Func<bool> FacePageOpen = () => false;
+
     /// <summary>The FK Posing page: while it's showing, dots only pick bones and the gizmo turns them with FK.</summary>
     public FkPosingTab? FkEditor { get; set; }
 
@@ -280,7 +283,8 @@ public sealed class HandleOverlay
             Add(_selection.Bone, false);
 
         // The face's bones (they're small and close together: smaller dots).
-        if(_config.ShowFaceBones)
+        // (not while the Face Posing page is open: it has its own face dots)
+        if(_config.ShowFaceBones && !FacePageOpen())
         {
             foreach(var name in snapshot.Names)
                 if(HandleCatalog.IsFaceBone(name))

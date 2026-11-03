@@ -117,6 +117,8 @@ public sealed unsafe class RigService : IDisposable
     {
         public required Func<string> Capture;
         public required Action<string> Restore;
+        /// <summary>Called before undo / redo, for a part that doesn't read its state fresh every time.</summary>
+        public Action? Fresh;
         internal string? Settled;
     }
 
@@ -202,7 +204,12 @@ public sealed unsafe class RigService : IDisposable
     }
 
     // A change still being made when undo is pressed counts as its own step first.
-    private void SettleParts() => WatchParts(false);
+    private void SettleParts()
+    {
+        foreach(var part in _parts)
+            part.Fresh?.Invoke();
+        WatchParts(false);
+    }
 
     private Step CaptureState()
         => new(_rigs.Values.Select(r => new RigState(r.Address, r.ObjectIndex, r.Name, r.Goals.Select(g => g.Clone()).ToArray())).ToArray(),

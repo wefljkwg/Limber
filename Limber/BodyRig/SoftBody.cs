@@ -111,6 +111,8 @@ public sealed unsafe class SoftBody
     public volatile (nint Address, ushort Index)[] Candidates = Array.Empty<(nint, ushort)>();
 
     public Func<SoftBodySettings> Settings = () => new SoftBodySettings();
+    /// <summary>The Body physics switch (off: no soft body at all).</summary>
+    public static Func<bool> On = () => true;
 
     /// <summary>Props (pill-shaped colliders) placed this frame; always collided with, whatever the Collisions setting.</summary>
     public Func<PropWorld[]> Props = () => [];
@@ -412,7 +414,7 @@ public sealed unsafe class SoftBody
     public void UpdateFrame()
     {
         var settings = Settings();
-        if (!settings.Enabled && settings.ShapeIsDefault)
+        if ((!settings.Enabled && settings.ShapeIsDefault) || !On())
         {
             _states.Clear();
             DebugSurface = [];

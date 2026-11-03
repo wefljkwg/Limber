@@ -36,18 +36,17 @@ public sealed class AppearanceTab
             _search[i] = "";
     }
 
+    private readonly Dalamud.Interface.ImGuiFileDialog.FileDialogManager _files = new();
+
     public void Draw()
     {
+        _files.Draw();
         var actor = _selection.Actor;
         if(!actor.IsSet)
         {
             ImGui.TextDisabled("Choose a character at the top of the window.");
             return;
         }
-        ImGui.TextWrapped("Change the chosen character's appearance and gear, like Brio and Anamnesis: race, clan, face and every "
-            + "customize value, each gear slot and weapon with its dyes. Only on your screen; the character goes back to its real "
-            + "look whenever the game draws it from scratch. Best on GPose actors.");
-        ImGui.Spacing();
 
         var now = Appearance.Read(actor.Address, actor.ObjectIndex);
         if(now == null)
@@ -188,22 +187,188 @@ public sealed class AppearanceTab
             Changed(actor, look);
         }
 
+        // Switches: hair highlights, and eyes of two colours.
+        bool highlights = (cz[7] & 0x80) != 0;
+        if(ImGui.Checkbox("Highlights###app_highlights", ref highlights))
+        {
+            cz[7] = (byte)(highlights ? cz[7] | 0x80 : cz[7] & 0x7F);
+            Changed(actor, look);
+        }
+        ImGui.SameLine();
+        if(_heteroFor != actor.Address)
+        {
+            _heteroFor = actor.Address;
+            _hetero = cz[15] != cz[9];
+        }
+        bool hetero = _hetero;
+        if(ImGui.Checkbox("Heterochromia###app_hetero", ref hetero))
+        {
+            _hetero = hetero;
+            if(!hetero && cz[15] != cz[9])
+            {
+                cz[15] = cz[9];
+                Changed(actor, look);
+            }
+        }
+        Tooltip("Each eye its own colour. Off: both eyes take the right eye's colour.");
+
         using var table = ImRaii.Table("###app_cust", 2, ImGuiTableFlags.SizingStretchSame);
         if(!table.Success)
             return;
         foreach(var (index, name, max) in Appearance.CustomizeFields)
         {
+            if(index == 7 || (index == 15 && !_hetero))
+                continue; // (the switches above)
             ImGui.TableNextColumn();
+            string label = index == 9 && !_hetero ? "Eye colour" : name;
             int v = cz[index];
-            ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
-            if(ImGui.InputInt($"{name}###app_c{index}", ref v, 1, 10))
+            bool edited = false, done = false;
+            if(index == 6)
+                (edited, done) = HairPicker(cz, ref v, label);
+            else if(Limber.Rig.CustomizePalette.IsColour(index))
+                (edited, done) = ColourPicker(cz, index, ref v, label);
+            else if(max == 100)
+            {
+                // (values on a scale: a slider)
+                ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+                edited = ImGui.SliderInt($"{label}###app_c{index}", ref v, 0, 100);
+                done = ImGui.IsItemDeactivatedAfterEdit();
+            }
+            else
+            {
+                ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+                edited = ImGui.InputInt($"{label}###app_c{index}", ref v, 1, 10);
+                done = ImGui.IsItemDeactivatedAfterEdit();
+            }
+            if(edited)
             {
                 cz[index] = (byte)Math.Clamp(v, 0, max);
+                if(index == 9 && !_hetero)
+                    cz[15] = cz[9];
                 _dirty = true;
             }
-            if(ImGui.IsItemDeactivatedAfterEdit())
+            if(done)
                 Changed(actor, look);
         }
+    }
+
+    private bool _hetero;
+    private nint _heteroFor;
+
+    // A colour: a swatch of the current one, a palette of the game's own choices on click, and the number.
+    private (bool Edited, bool Done) ColourPicker(byte[] cz, int index, ref int v, string label)
+    {
+        var palette = Limber.Rig.CustomizePalette.Colours(index, cz[4], cz[1]);
+        bool edited = false, done = false;
+        float size = ImGui.GetFrameHeight();
+        uint now = 0xFF808080;
+        foreach(var (value, colour) in palette)
+            if(value == v)
+                now = colour;
+        if(ImGui.ColorButton($"###app_sw{index}", ImGui.ColorConvertU32ToFloat4(now), ImGuiColorEditFlags.NoTooltip, new System.Numerics.Vector2(size * 1.6f, size)) && palette.Length > 0)
+            ImGui.OpenPopup($"###app_pal{index}");
+        Tooltip(palette.Length > 0 ? "Click for the colours." : "The game's colours couldn't be read: use the number.");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        if(ImGui.InputInt($"{label}###app_c{index}", ref v, 1, 10))
+            edited = true;
+        done |= ImGui.IsItemDeactivatedAfterEdit();
+        if(ImGui.BeginPopup($"###app_pal{index}"))
+        {
+            // The creator's grid: 8 across, like the game's own palette
+            int columns = 8, i = 0;
+            float cell = 22f * ImGuiHelpers.GlobalScale;
+            foreach(var (value, colour) in palette)
+            {
+                if(i++ % columns != 0)
+                    ImGui.SameLine(0, 2f);
+                bool selected = value == v;
+                if(selected)
+                    ImGui.PushStyleColor(ImGuiCol.Border, 0xFFFFFFFF);
+                if(ImGui.ColorButton($"###app_pc{index}_{value}", ImGui.ColorConvertU32ToFloat4(colour), ImGuiColorEditFlags.NoTooltip | (selected ? ImGuiColorEditFlags.None : ImGuiColorEditFlags.NoBorder), new System.Numerics.Vector2(cell, cell)))
+                {
+                    v = value;
+                    edited = done = true;
+                    ImGui.CloseCurrentPopup();
+                }
+                if(selected)
+                    ImGui.PopStyleColor();
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"#{value}");
+            }
+            ImGui.EndPopup();
+        }
+        return (edited, done);
+    }
+
+    // The hairstyle: its preview icon, and on click every hairstyle this clan and sex has, as pictures.
+    private (bool Edited, bool Done) HairPicker(byte[] cz, ref int v, string label)
+    {
+        var styles = Limber.Rig.CustomizePalette.Hairstyles(cz[4], cz[1]);
+        bool edited = false, done = false;
+        float size = ImGui.GetFrameHeight();
+        uint icon = 0;
+        foreach(var (value, i) in styles)
+            if(value == v)
+                icon = i;
+        var wrap = icon != 0 ? GameIcons.Get(icon) : null;
+        bool open;
+        if(wrap != null)
+        {
+            ImGui.Image(wrap.Handle, new System.Numerics.Vector2(size, size));
+            open = ImGui.IsItemClicked();
+        }
+        else
+            open = ImGui.Button($"...###app_hair_btn", new System.Numerics.Vector2(size * 1.6f, size));
+        if(open && styles.Length > 0)
+            ImGui.OpenPopup("###app_hair_pick");
+        Tooltip(styles.Length > 0 ? "Click for the hairstyles." : "The hairstyles couldn't be read: use the number.");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        if(ImGui.InputInt($"{label}###app_c6", ref v, 1, 10))
+            edited = true;
+        done |= ImGui.IsItemDeactivatedAfterEdit();
+        if(ImGui.BeginPopup("###app_hair_pick"))
+        {
+            int columns = 6, n = 0;
+            float cell = 56f * ImGuiHelpers.GlobalScale;
+            foreach(var (value, i) in styles)
+            {
+                if(n++ % columns != 0)
+                    ImGui.SameLine();
+                var w = GameIcons.Get(i);
+                using var id = ImRaii.PushId(value);
+                bool selected = value == v;
+                bool picked;
+                var at = ImGui.GetCursorScreenPos();
+                if(w != null)
+                {
+                    ImGui.Image(w.Handle, new System.Numerics.Vector2(cell, cell));
+                    picked = ImGui.IsItemClicked();
+                }
+                else
+                    picked = ImGui.Button($"{value}", new System.Numerics.Vector2(cell, cell));
+                if(selected)
+                {
+                    var dl = ImGui.GetWindowDrawList();
+                    var b = at + new System.Numerics.Vector2(cell, cell);
+                    dl.AddLine(at, new System.Numerics.Vector2(b.X, at.Y), 0xFF40D0FF, 2f);
+                    dl.AddLine(new System.Numerics.Vector2(b.X, at.Y), b, 0xFF40D0FF, 2f);
+                    dl.AddLine(b, new System.Numerics.Vector2(at.X, b.Y), 0xFF40D0FF, 2f);
+                    dl.AddLine(new System.Numerics.Vector2(at.X, b.Y), at, 0xFF40D0FF, 2f);
+                }
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Hairstyle {value}");
+                if(picked)
+                {
+                    v = value;
+                    edited = done = true;
+                    ImGui.CloseCurrentPopup();
+                }
+            }
+            ImGui.EndPopup();
+        }
+        return (edited, done);
     }
 
     // ---- Gear and weapons
@@ -434,6 +599,35 @@ public sealed class AppearanceTab
             }
         }
 
+        ImGui.SameLine();
+        if(ImGui.Button("Import a .chara file...###app_chara"))
+        {
+            var who = actor;
+            _files.OpenFileDialog("Import a look", "Look files{.chara},.*", (ok, paths) =>
+            {
+                if(!ok || paths.Count == 0)
+                    return;
+                try
+                {
+                    var name = System.IO.Path.GetFileNameWithoutExtension(paths[0]);
+                    var read = Limber.Rig.CharaFile.Read(System.IO.File.ReadAllText(paths[0]), name, out var error);
+                    if(read == null)
+                    {
+                        _status = error;
+                        return;
+                    }
+                    Apply(who, read);
+                    _status = $"Imported {name}.";
+                }
+                catch(Exception e)
+                {
+                    _status = "Couldn't read that file: " + e.Message;
+                }
+            }, 1, null, true);
+        }
+        Tooltip("Puts a look saved as a .chara file (the look files other posing tools save) on this character:\n"
+            + "body, face, hair, colours, gear and weapons. Save it here afterwards to keep it with your looks.");
+
         // Another character's look.
         var others = _selection.ListCharacters().Where(c => c.Address != actor.Address).ToList();
         if(others.Count > 0)
@@ -498,23 +692,23 @@ public sealed class AppearanceTab
                 .InvokeFunc(actor.ObjectIndex);
             var (valid, own, (currentId, currentName)) = current;
             ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
-            using(var combo = ImRaii.Combo("Penumbra collection###app_collection", valid ? currentName + (own ? "" : " (by Penumbra's rules)") : "(none)"))
+            using(var combo = ImRaii.Combo("Mod collection###app_collection", valid ? currentName + (own ? "" : " (the default)") : "(none)"))
             {
                 if(combo.Success)
                 {
-                    if(ImGui.Selectable("(Penumbra's own rules)###app_coll_none", !own))
+                    if(ImGui.Selectable("(the default)###app_coll_none", !own))
                         SetCollection(actor, null);
                     foreach(var (id, name) in _collections.OrderBy(c => c.Value, StringComparer.OrdinalIgnoreCase))
                         if(ImGui.Selectable($"{name}###app_coll_{id}", own && id == currentId))
                             SetCollection(actor, id);
                 }
             }
-            Tooltip("Which Penumbra collection (mods) this character is drawn with, like Brio's. Picking one gives this character its own;\n"
-                + "\"Penumbra's own rules\" takes that away again. It's redrawn either way.");
+            Tooltip("Which mod collection this character is drawn with. Picking one gives this character its own;\n"
+                + "\"(the default)\" takes that away again. It's redrawn either way.");
         }
         catch
         {
-            ImGui.TextDisabled("Penumbra collection: Penumbra isn't available.");
+            ImGui.TextDisabled("Mod collection: the mod manager isn't available.");
         }
     }
 
@@ -525,18 +719,16 @@ public sealed class AppearanceTab
             var (ec, _) = Plugin.PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5")
                 .InvokeFunc(actor.ObjectIndex, id, true, true);
             Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(actor.ObjectIndex, 0);
-            _status = ec is 0 or 1 ? (id == null ? "Back to Penumbra's own rules (redrawn)." : "Collection set (redrawn).") : $"Penumbra couldn't set it (error {ec}).";
+            _status = ec is 0 or 1 ? (id == null ? "Back to the default (redrawn)." : "Collection set (redrawn).") : $"The mod manager couldn't set it (error {ec}).";
         }
         catch(Exception e)
         {
-            _status = "Penumbra couldn't set it: " + e.Message;
+            _status = "The mod manager couldn't set it: " + e.Message;
         }
     }
 
     private void DrawNpcs(ActorRef actor)
     {
-        ImGui.TextWrapped("Any named NPC's look from the game (body, face, hair, outfit and weapons) put on the chosen character, or kept as a look. "
-            + "Only on your screen.");
         DrawNpcPicker(ref _npcSearch, "app_npc", npc =>
         {
             ImGui.SameLine();

@@ -17,7 +17,7 @@ namespace Limber.BodyRig;
 /// One placeable prop: a housing item (indoor furnishing or outdoor yard item), or a world prop (one of the game's
 /// shared groups, by its .sgb path in <paramref name="Sgb"/>), with the section it's listed under.
 /// </summary>
-public sealed record HousingItem(string Name, ushort ModelKey, bool Indoors, uint Icon, string Category = "", string? Sgb = null)
+public sealed record HousingItem(string Name, ushort ModelKey, bool Indoors, uint Icon, string Category = "", string? Sgb = null, string Kind = "")
 {
     private string Folder => Indoors ? $"bgcommon/hou/indoor/general/{ModelKey:D4}" : $"bgcommon/hou/outdoor/general/{ModelKey:D4}";
     private string Stem => Indoors ? $"fun_b0_m{ModelKey:D4}" : $"gar_b0_m{ModelKey:D4}";
@@ -197,9 +197,128 @@ public sealed unsafe class HousingProps : IDisposable
                 continue;
             string file = path[(path.LastIndexOf('/') + 1)..^4];
             string name = names.TryGetValue(row.RowId, out var nice) ? Capitalise(nice) + $"  ({file})" : Readable(file);
-            list.Add(new HousingItem(name, 0, false, 0, WorldSection(path), path));
+            list.Add(new HousingItem(name, 0, false, 0, WorldSection(path), path, KindOf(path, name)));
+        }
+
+        // Everything the zones themselves place: each zone's layout files list its models and prop groups.
+        try
+        {
+            AddZoneProps(list, seen);
+        }
+        catch(Exception e)
+        {
+            _log.Debug(e, "Limber: couldn't read the zones' layouts");
         }
         return list.OrderBy(i => i.Category, StringComparer.Ordinal).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static readonly string[] LayoutFiles = ["bg.lgb", "planevent.lgb", "planlive.lgb", "planmap.lgb", "planner.lgb"];
+
+    private void AddZoneProps(List<HousingItem> list, HashSet<string> seen)
+    {
+        var zones = _data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>();
+        if(zones == null)
+            return;
+        var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach(var zone in zones)
+        {
+            string bg = zone.Bg.ExtractText();
+            int slash = bg.LastIndexOf('/');
+            if(bg.Length == 0 || slash <= 0)
+                continue;
+            string folder = "bg/" + bg[..slash] + "/";
+            if(!done.Add(folder))
+                continue;
+            string place = "";
+            try
+            {
+                place = zone.PlaceName.ValueNullable?.Name.ExtractText() ?? "";
+            }
+            catch
+            {
+            }
+            foreach(var name in LayoutFiles)
+            {
+                LgbFile? file;
+                try
+                {
+                    file = _data.GetFile<LgbFile>(folder + name);
+                }
+                catch
+                {
+                    continue;
+                }
+                if(file == null)
+                    continue;
+                foreach(var layer in file.Layers)
+                    foreach(var entry in layer.InstanceObjects)
+                    {
+                        string? path = entry.AssetType == LayerEntryType.BG && entry.Object is LayerCommon.BGInstanceObject b ? b.AssetPath
+                            : entry.AssetType == LayerEntryType.SharedGroup && entry.Object is LayerCommon.SharedGroupInstanceObject g ? g.AssetPath
+                            : null;
+                        if(string.IsNullOrEmpty(path) || path.Contains("/for_vfx/", StringComparison.OrdinalIgnoreCase)
+                           || path.Contains("/collision/", StringComparison.OrdinalIgnoreCase) || !seen.Add(path))
+                            continue;
+                        string file2 = path[(path.LastIndexOf('/') + 1)..];
+                        file2 = file2[..(file2.LastIndexOf('.') is int dot and > 0 ? dot : file2.Length)];
+                        string area = path.StartsWith("bgcommon/", StringComparison.OrdinalIgnoreCase) || place.Length == 0
+                            ? WorldSection(path)
+                            : $"{WorldSection(path).Split(':')[0]}: {place}";
+                        string shown = Readable(file2);
+                        list.Add(new HousingItem(shown, 0, false, 0, area, path, KindOf(path, shown)));
+                    }
+            }
+        }
+    }
+
+    // What a prop is, from its file's name and folder: plain words a person would look for.
+    private static readonly (string Kind, string[] Words)[] Kinds =
+    [
+        ("Trees and plants", ["tree", "tre", "bush", "grs", "grass", "flw", "flower", "plant", "leaf", "vine", "ivy", "moss", "palm", "bamboo", "fern", "kusa", "hana"]),
+        ("Rocks and cliffs", ["rock", "rok", "stone", "ston", "cliff", "clf", "boulder", "iwa"]),
+        ("Ground and terrain", ["trr", "terrain", "ground", "gnd", "soil", "sand", "snow", "dirt", "road", "path"]),
+        ("Water features", ["fountain", "well", "water", "wtr", "pond", "fall", "spring"]),
+        ("Bridges", ["bridge", "brid", "brg"]),
+        ("Walls", ["wall", "wal", "rampart"]),
+        ("Floors and stairs", ["floor", "flr", "stair", "step", "kaidan", "deck", "plat"]),
+        ("Roofs and pillars", ["roof", "pillar", "pil", "column", "beam", "arch"]),
+        ("Doors and gates", ["door", "dor", "gate", "gte", "portal"]),
+        ("Windows", ["window", "win", "glass"]),
+        ("Buildings", ["house", "hou", "build", "bld", "tower", "twr", "castle", "temple", "shrine", "hut", "inn", "shop", "fort"]),
+        ("Fences and railings", ["fence", "fnc", "rail", "barrier", "palisade"]),
+        ("Lights", ["lamp", "lmp", "lantern", "torch", "candle", "light", "lgt", "brazier", "chandelier"]),
+        ("Furniture", ["table", "tbl", "chair", "chr", "bench", "bed", "shelf", "desk", "stool", "sofa", "cabinet", "counter", "throne"]),
+        ("Barrels, crates and boxes", ["barrel", "bar", "taru", "crate", "crt", "box", "chest", "sack", "bag", "pot", "jar", "basket", "bucket"]),
+        ("Banners, flags and signs", ["banner", "flag", "flg", "sign", "board", "poster", "curtain", "cloth"]),
+        ("Statues and monuments", ["statue", "sta", "monument", "pillar", "obelisk", "idol", "bust", "grave", "tomb"]),
+        ("Tents and stalls", ["tent", "tnt", "stall", "booth", "awning", "parasol"]),
+        ("Ships, carts and airships", ["ship", "boat", "airship", "cart", "wagon", "carriage", "sail", "anchor", "dock"]),
+        ("Machines and tools", ["machine", "gear", "pipe", "magitek", "mtk", "tool", "anvil", "forge", "crane", "wheel"]),
+        ("Crystals and aetherytes", ["crystal", "cry", "aether", "aet", "shard"]),
+        ("Weapons and armour props", ["sword", "spear", "shield", "weapon", "cannon", "armor", "armour"]),
+        ("Food and dishes", ["food", "dish", "plate", "cup", "bottle", "bread", "fruit", "meat", "wine"]),
+        ("Bones and remains", ["bone", "skull", "corpse", "remains", "fossil"]),
+    ];
+
+    private static string KindOf(string path, string name)
+    {
+        string file = path[(path.LastIndexOf('/') + 1)..].ToLowerInvariant();
+        string lower = name.ToLowerInvariant() + " " + file;
+        // whole-word-ish matches on the name's pieces first (so "bar" isn't found inside "barrier")
+        var pieces = lower.Split([' ', '_', '-', '.', '(', ')'], StringSplitOptions.RemoveEmptyEntries);
+        foreach(var (kind, words) in Kinds)
+            foreach(var w in words)
+                foreach(var piece in pieces)
+                    if(piece == w || (w.Length >= 4 && piece.Contains(w)) || (piece.Length > w.Length && piece.StartsWith(w) && char.IsDigit(piece[w.Length])))
+                        return kind;
+        // then by the folder it's kept in
+        if(path.Contains("/evt/", StringComparison.OrdinalIgnoreCase))
+            return "Event objects";
+        if(path.Contains("/hou/", StringComparison.OrdinalIgnoreCase))
+            return "Housing pieces";
+        if(path.Contains("/bgparts/", StringComparison.OrdinalIgnoreCase))
+            return "Other models";
+        return "Other prop groups";
     }
 
     private static string Capitalise(string s) => s.Length > 0 ? char.ToUpperInvariant(s[0]) + s[1..] : s;
@@ -293,6 +412,12 @@ public sealed unsafe class HousingProps : IDisposable
         => _partsCache.GetOrAdd(item.GroupPath, _ =>
         {
             var parts = new List<HousingPart>();
+            // (a world prop that's one model on its own, from a zone's layout)
+            if(item.GroupPath.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add(new HousingPart(item.GroupPath, Vector3.Zero, Quaternion.Identity, Vector3.One));
+                return parts.ToArray();
+            }
             try
             {
                 CollectParts(item.GroupPath, Vector3.Zero, Quaternion.Identity, Vector3.One, parts, 0);

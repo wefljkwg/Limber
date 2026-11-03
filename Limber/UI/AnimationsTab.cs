@@ -66,7 +66,7 @@ public sealed class AnimationsTab
             ImGui.EndCombo();
         }
         if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("Play another race's version of the animation (experimental: Penumbra swaps the file for this character's "
+            ImGui.SetTooltip("Play another race's version of the animation (experimental: the mod manager swaps the file for this character's "
                 + "collection). If the game already has the animation loaded, play another one first, then this one again.");
 
         // Filter.
@@ -96,10 +96,23 @@ public sealed class AnimationsTab
         {
             if(!child.Success)
                 return;
+            // A grid: each animation's icon (the emote's own, where it has one) with its name next to it.
+            float scale = ImGuiHelpers.GlobalScale;
+            float iconSize = 36f * scale, cellWidth = 230f * scale, cellHeight = iconSize + 8f * scale;
+            int columns = Math.Max(1, (int)(ImGui.GetContentRegionAvail().X / cellWidth));
+            using var table = Dalamud.Interface.Utility.Raii.ImRaii.Table("###anim_grid", columns, ImGuiTableFlags.SizingStretchSame);
+            if(!table.Success)
+                return;
+            var draw = ImGui.GetWindowDrawList();
             foreach(var e in list)
             {
-                string label = e.Name.Length > 0 ? $"{e.Name}   ({e.Key})" : e.Key;
-                if(ImGui.Selectable($"{label}###anim_{e.Id}", false, ImGuiSelectableFlags.AllowDoubleClick) && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                ImGui.TableNextColumn();
+                var start = ImGui.GetCursorScreenPos();
+                float width = ImGui.GetContentRegionAvail().X;
+                bool picked = ImGui.Selectable($"###anim_{e.Id}", false, ImGuiSelectableFlags.AllowDoubleClick, new System.Numerics.Vector2(width, cellHeight));
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip((e.Name.Length > 0 ? e.Name + "\n" : "") + e.Key + "\nDouble-click to play.");
+                if(picked && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 {
                     _status = _race < 0
                         ? Animations.Play(actor.Address, actor.ObjectIndex, e.Id)
@@ -107,6 +120,26 @@ public sealed class AnimationsTab
                     if(_speed != 1f)
                         Animations.SetSpeed(actor.Address, actor.ObjectIndex, _speed);
                 }
+                // The icon, or a plain tile for animations that aren't an emote.
+                var iconMin = start + new System.Numerics.Vector2(4f * scale, 4f * scale);
+                var iconMax = iconMin + new System.Numerics.Vector2(iconSize, iconSize);
+                var wrap = e.Icon != 0 ? GameIcons.Get(e.Icon) : null;
+                if(wrap != null)
+                    draw.AddImage(wrap.Handle, iconMin, iconMax);
+                else
+                {
+                    draw.AddRectFilled(iconMin, iconMax, ImGui.GetColorU32(new System.Numerics.Vector4(0.25f, 0.25f, 0.3f, 1f)), 4f * scale);
+                    string letter = e.Group.Length > 0 ? e.Group[..1].ToUpperInvariant() : "?";
+                    var ts = ImGui.CalcTextSize(letter);
+                    draw.AddText(iconMin + (new System.Numerics.Vector2(iconSize, iconSize) - ts) * 0.5f, ImGui.GetColorU32(new System.Numerics.Vector4(0.7f, 0.7f, 0.75f, 1f)), letter);
+                }
+                // Its name and key beside it (cut off at the cell's edge).
+                var textAt = new System.Numerics.Vector2(iconMax.X + 6f * scale, start.Y + 4f * scale);
+                draw.PushClipRect(start, start + new System.Numerics.Vector2(width, cellHeight), true);
+                draw.AddText(textAt, ImGui.GetColorU32(ImGuiCol.Text), e.Name.Length > 0 ? e.Name : e.Key);
+                if(e.Name.Length > 0)
+                    draw.AddText(textAt + new System.Numerics.Vector2(0, ImGui.GetTextLineHeight()), ImGui.GetColorU32(ImGuiCol.TextDisabled), e.Key);
+                draw.PopClipRect();
             }
         }
     }

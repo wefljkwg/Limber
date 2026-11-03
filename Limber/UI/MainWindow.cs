@@ -34,6 +34,7 @@ public sealed class MainWindow : Window
     public DynamicBonesTab? DynamicBonesTab { get; set; }
 
     public FkPosingTab? FkPosingTab { get; set; }
+    public FacePosingTab? FacePosingTab { get; set; }
 
     public LimberAnimationsTab? LimberAnimationsTab { get; set; }
     public BustShapeTab? BustShapeTab { get; set; }
@@ -86,7 +87,8 @@ public sealed class MainWindow : Window
         new("start", "", "Getting started", "What Limber does and where to begin.", DrawStartPage),
 
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
-        new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers, like Koikatsu's FK, Brio and Anamnesis. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
+        new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
+        new("face", "Posing", "Face Posing", "Move, turn and scale each face bone (brows, eyelids, eyes, cheeks, lips, jaw, tongue) on a face map or right on the face.", () => FacePosingTab?.Draw(), () => FacePosingTab != null),
         new("lookat", "Posing", "Look at", "The head and eyes follow another character (their face or any bone), one of their own bones, or the camera.", () => LookAtTab?.Draw(), () => LookAtTab != null),
         new("hands", "Posing", "Hands", "Preset finger poses (fist, open, point...) for one hand or both.", () => _limberTab.DrawHandsPage()),
         new("scale", "Posing", "Bone scale", "Make any bone bigger or smaller, with control over the bones around it.", () => _limberTab.DrawBoneScalePage()),
@@ -96,13 +98,13 @@ public sealed class MainWindow : Window
         new("actors", "Posing", "Actors", "Add GPose actors (copies of a character) and remove them again.", () => _limberTab.DrawActorsPage()),
 
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
-        new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between (Koikatsu style).", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
-        new("bust", "Body", "Breast size", "Koikatsu-style breast size for tops made with size shapes: flat at 0 to huge at 100, from the Bust slider or set here.", () => BustShapeTab?.Draw(), () => BustShapeTab != null),
+        new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between.", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
+        new("bust", "Body", "Breast size", "Breast size for tops made with size shapes: flat at 0 to huge at 100, from the Bust slider or set here.", () => BustShapeTab?.Draw(), () => BustShapeTab != null && Cfg.ShowBustTab),
         new("shape", "Body", "Body shape", "Sliders for the body's shape (like BodySlide), live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
-        new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes (like Brio / Anamnesis).", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
+        new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes.", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
         new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
-        new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
+        new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.DrawPage(), () => TimelineTab != null),
         new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
@@ -117,7 +119,7 @@ public sealed class MainWindow : Window
         new("advanced", "Settings", "Advanced", "Running outside GPose, unfinished pages.", DrawMainAdvanced),
 
         new("video", "Experimental", "Video (not working)", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
-        new("vlc", "Experimental", "VLC live (experimental)", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
+        new("vlc", "Experimental", "VLC Live", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
     ];
 
     private string CurrentPage
@@ -153,6 +155,8 @@ public sealed class MainWindow : Window
         _limberTab.DrawShowHandles();
         ImGui.SameLine();
         _limberTab.DrawFreezeToggle();
+        ImGui.SameLine();
+        _limberTab.DrawUndoRedo();
         if (!Cfg.PluginEnabled)
             ImGui.TextColored(Warn, "Limber is off: nothing is posed, simulated or linked.");
         else if (!Plugin.ClientState.IsGPosing && !(Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose))
@@ -170,14 +174,17 @@ public sealed class MainWindow : Window
             if (nav.Success)
             {
                 string group = "";
+                bool open = true;
                 foreach (var page in pages)
                 {
                     if (page.Group != group)
                     {
                         group = page.Group;
-                        ImGui.Spacing();
-                        ImGui.TextColored(Dim, group.ToUpperInvariant());
+                        // Each section folds away (open to start with; ImGui remembers how you left it).
+                        open = group.Length == 0 || ImGui.CollapsingHeader($"{group}###limber_nav_group_{group}", ImGuiTreeNodeFlags.DefaultOpen);
                     }
+                    if (!open)
+                        continue;
                     if (ImGui.Selectable($"{page.Title}###limber_nav_{page.Id}", page == current))
                         CurrentPage = page.Id;
                     if (ImGui.IsItemHovered())
@@ -223,7 +230,7 @@ public sealed class MainWindow : Window
         ImGui.Text("What do you want to do?");
         ImGui.Spacing();
         Jump("Pose a character (IK)", "pose", "Drag the dots. Right-click a dot to pin it; middle-click to let go. Ctrl+Z undoes.");
-        Jump("Turn bones one by one (FK)", "fk", "Rings or numbers on any bone, Koikatsu / Brio style. Works with IK.");
+        Jump("Turn bones one by one (FK)", "fk", "Rings or numbers on any bone. Works with IK.");
         Jump("Pose the hands", "hands", "Fists, open hands, pointing...");
         Jump("Make a bone bigger or smaller", "scale", "Any bone, with or without the bones below it.");
         Jump("Hold on to another character", "attach", "A hand on a shoulder, holding hands...");
@@ -575,7 +582,7 @@ public sealed class MainWindow : Window
         var changed = false;
 
         changed |= Toggle("Track face from Koikatsu", () => Cfg.DriveFace, v => Cfg.DriveFace = v);
-        ImGui.TextColored(Dim, "Turn off to use in-game facial expressions or pose the face with Brio / Ktisis. " +
+        ImGui.TextColored(Dim, "Turn off to use in-game facial expressions or pose the face yourself (Face Posing). " +
                                "The head still follows Koikatsu.");
         if (!Cfg.DriveFace)
         {
@@ -742,7 +749,7 @@ public sealed class MainWindow : Window
         if (!ImGui.CollapsingHeader($"Expression presets for {view.ActorName}'s face ({raceKey})", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        ImGui.TextWrapped("Set the actor's face in game (an expression emote, or Brio/Ktisis face posing), pause the link, " +
+        ImGui.TextWrapped("Set the actor's face in game (an expression emote, or Face Posing), pause the link, " +
                           "then capture. 'blink' is driven by eye openness, 'mouth_open' by mouth openness; any other " +
                           "preset can be assigned to a Koikatsu pattern number below.");
 
@@ -876,13 +883,32 @@ public sealed class MainWindow : Window
             _limberTab.WorkOutsideGPose = outside;
             SaveLocked();
         }
-        ImGui.TextColored(Dim, "Posing, the soft bodies and the Koikatsu link (\"My character\" links) also work in the open world. " +
+        ImGui.TextColored(Dim, "Posing, the soft bodies and the link (\"My character\" links) also work in the open world. " +
                                "Only you see it: it changes your screen's render skeleton and is never sent to the game server. " +
                                "Paused during cutscenes.");
 
         ImGui.Spacing();
+        var hideWindow = Cfg.HideWindowWithGameUi;
+        if (ImGui.Checkbox("Hide Limber window when UI is hidden###limber_hide_window_ui", ref hideWindow))
+        {
+            Cfg.HideWindowWithGameUi = hideWindow;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Limber's window disappears while the game UI is hidden (in GPose too) and comes back with it.\n"
+                + "The handles on the character have their own setting (Posing settings > Hide with the game UI).");
+
+        ImGui.Spacing();
         ImGui.Separator();
         ImGui.Text("Unfinished pages");
+        var bust = Cfg.ShowBustTab;
+        if (ImGui.Checkbox("Show the Breast size page (Experimental, not working)###limber_show_bust", ref bust))
+        {
+            Cfg.ShowBustTab = bust;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The Body > Breast size page, for tops made with breast size shapes. Off: the page is hidden and the size shapes don't run.");
         var video = Cfg.ShowVideoTab;
         if (ImGui.Checkbox("Show the Video page (not working yet)###limber_show_video", ref video))
         {

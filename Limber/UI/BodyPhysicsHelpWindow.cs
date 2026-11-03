@@ -22,7 +22,7 @@ public sealed class BodyPhysicsHelpWindow : Window
         ]),
         ("Before you start", "What you need",
         [
-            "1. Penumbra, with a body mod on your character (for example Bibo+, RUEXB+, YAB, TBSE...).",
+            "1. A mod manager, with a body mod on your character (for example Bibo+, RUEXB+, YAB, TBSE...).",
             "2. A skeleton mod with IVCS or YAS bones, which almost every body mod asks for anyway. Without one there are no " +
             "butt or genital bones to move (the chest still works).",
             "3. GPose (or \"Also run outside GPose\" turned on in Settings > Advanced).",
@@ -32,7 +32,7 @@ public sealed class BodyPhysicsHelpWindow : Window
             "1. Wear the outfit or body you want physics on (naked works too).",
             "2. Pick your character at the top of the Limber window (or tick \"Follow my target\").",
             "3. On this page, click \"Rig everything (one click)\". Leave \"Fit the boxes to the models automatically\" on.",
-            "4. Wait for the log to say it's done. Limber builds two Penumbra mods for your character's collection, " +
+            "4. Wait for the log to say it's done. Limber builds two mods for your character's collection, " +
             "\"Limber Breast Rig\" (the extra bones) and \"Limber Rigged Models\" (copies of your models that follow them), " +
             "turns them on above your other mods, and redraws your character.",
             "5. Open the Breasts / Butt / Testicles headers and make sure \"... on\" is ticked. The status line should say " +
@@ -67,10 +67,10 @@ public sealed class BodyPhysicsHelpWindow : Window
             "\"Physics: not running on anyone\": the character has no rig bones yet (rig it), the part is turned off, " +
             "or Limber isn't running here (GPose).",
             "You changed outfit, body mod or skeleton mod: click \"Rig everything\" again. Limber rigs what's worn at the time.",
-            "Seams or gaps on the body: make sure Limber's two mods are above your body and skeleton mods in Penumbra " +
+            "Seams or gaps on the body: make sure Limber's two mods are above your body and skeleton mods in your mod manager " +
             "(Limber sets this itself; another mod with a higher priority can push in front).",
-            "It looks wrong after a Penumbra change: redraw your character (or rig again).",
-            "To take it all off: turn off \"Limber Breast Rig\" and \"Limber Rigged Models\" in Penumbra.",
+            "It looks wrong after a mod change: redraw your character (or rig again).",
+            "To take it all off: turn off \"Limber Breast Rig\" and \"Limber Rigged Models\" in your mod manager.",
         ]),
         ("Advanced", "The other headers",
         [

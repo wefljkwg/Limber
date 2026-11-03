@@ -66,6 +66,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>Also drive your own character outside GPose (links set to "My character" only).</summary>
     public bool AllowOutsideGPose { get; set; } = false;
 
+    /// <summary>Limber's windows hide while the game UI is hidden (the handles have their own setting).</summary>
+    public bool HideWindowWithGameUi { get; set; } = false;
+
     // Sync (two players)
     /// <summary>Your relay on your own Cloudflare account, e.g. https://limber-relay.lmb-1a2b3c.workers.dev</summary>
     public string? RelayUrl { get; set; }
@@ -93,6 +96,8 @@ public class Configuration : IPluginConfiguration
     /// <summary>Show the unfinished Video and VLC Live tabs (main Advanced tab).</summary>
     public bool ShowVideoTab { get; set; } = false;
     public bool ShowVlcTab { get; set; } = false;
+    /// <summary>The Breast size page (Body), and the breast size shapes it drives: experimental, off by default.</summary>
+    public bool ShowBustTab { get; set; } = false;
 
     // Links
     /// <summary>Master switch for all links.</summary>

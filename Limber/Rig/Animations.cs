@@ -51,7 +51,7 @@ public static unsafe class Animations
 
     // ---- The list (every action timeline with a key)
 
-    public sealed record Entry(ushort Id, string Key, string Name, string Group);
+    public sealed record Entry(ushort Id, string Key, string Name, string Group, uint Icon = 0);
 
     private static List<Entry>? _all;
 
@@ -66,6 +66,7 @@ public static unsafe class Animations
             {
                 // Emote names for the timelines emotes use (a friendlier name than the key).
                 var names = new Dictionary<uint, string>();
+                var icons = new Dictionary<uint, uint>();
                 var emotes = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
                 if(emotes != null)
                     foreach(var emote in emotes)
@@ -75,7 +76,10 @@ public static unsafe class Animations
                             continue;
                         foreach(var t in emote.ActionTimeline)
                             if(t.RowId != 0 && !names.ContainsKey(t.RowId))
+                            {
                                 names[t.RowId] = name;
+                                icons[t.RowId] = emote.Icon;
+                            }
                     }
                 var sheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ActionTimeline>();
                 if(sheet != null)
@@ -86,7 +90,7 @@ public static unsafe class Animations
                             continue;
                         int slash = key.IndexOf('/');
                         string group = slash > 0 ? key[..slash] : "other";
-                        list.Add(new Entry((ushort)row.RowId, key, names.GetValueOrDefault(row.RowId, ""), group));
+                        list.Add(new Entry((ushort)row.RowId, key, names.GetValueOrDefault(row.RowId, ""), group, icons.GetValueOrDefault(row.RowId)));
                     }
             }
             catch(Exception e)
@@ -219,17 +223,17 @@ public static unsafe class Animations
         {
             var collection = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index);
             if(!collection.Item1)
-                return "Penumbra doesn't know this character right now.";
+                return "The mod manager doesn't know this character right now.";
             ClearRace();
             _swapCollection = collection.Item3.Item1;
             int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
                 .InvokeFunc(SwapTag, _swapCollection, new Dictionary<string, string> { [from] = to }, "", SwapPriority);
             if(result != 0)
-                return $"Penumbra didn't take the swap (it said {result}).";
+                return $"The mod manager didn't take the swap (it said {result}).";
         }
         catch(Exception e)
         {
-            return "Penumbra isn't reachable: " + e.Message;
+            return "The mod manager isn't reachable: " + e.Message;
         }
         Play(address, index, id);
         return $"Playing {key} as {Races.FirstOrDefault(r => r.Body == raceBody).Name}.";

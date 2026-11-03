@@ -65,6 +65,15 @@ public sealed class BodyShapeTab
         var values = ValuesFor(actor.Name);
         bool changed = false;
 
+        bool on = _config.BodyShapeOn;
+        if (ImGui.Checkbox("Body shape on###lmb_bs_on", ref on))
+        {
+            _config.BodyShapeOn = on;
+            changed = true;
+        }
+        Tooltip("Turns the live body shape on or off (off whenever Limber starts). Shapes already built into your models stay.");
+        ImGui.Separator();
+
         DrawPresets(values, ref changed);
         ImGui.Separator();
 
@@ -281,7 +290,7 @@ public sealed class BodyShapeTab
         {
             if (ImGui.Button(busy && _jobIsBuild ? "Building...###lmb_bs_build" : "Build###lmb_bs_build", new Vector2(160 * ImGuiHelpers.GlobalScale, 0)))
                 StartJob(actor, bakeable, build: true);
-            Tooltip("Bakes the shape into every model this character wears (body and outfit) as a Penumbra mod above your\n" +
+            Tooltip("Bakes the shape into every model this character wears (body and outfit) as a mod above your\n" +
                     "others in its collection, and redraws it. Your own mods are only read. Live-only sliders aren't built.");
             ImGui.SameLine();
             using (ImRaii.Disabled(!hasBuilt))

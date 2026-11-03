@@ -71,6 +71,8 @@ public sealed class OralSettings
     /// <summary>Moving a lip bone in the editor moves its other-side partner the mirror way.</summary>
     public bool LipShapeMirror { get; set; } = true;
 
+    /// <summary>Oral shapes the mouth at all (lips, jaw, teeth, cheeks). Off: the mouth is left as it is.</summary>
+    public bool MouthRig { get; set; } = true;
     /// <summary>The lips as a live mesh: the face model's own lip vertices fitted onto the shaft (exact seal).</summary>
     public bool LipMesh { get; set; } = true;
     /// <summary>How far lip points reach to close onto the shaft (0..1).</summary>
@@ -874,7 +876,7 @@ public sealed unsafe class OralService
         // With the lips' live mesh, the way a real mouth takes it: the upper lip (with the upper teeth) stays nearly
         // where it is and the shaft sits under it, the jaw dropping to make room. So the mouth's middle goes above
         // the shaft's line by nearly its radius (the lips only lift the upper lip a few mm).
-        if(s.LipMesh && Limber.Gpu.LipMesh.HasShapes && Limber.Gpu.LipMesh.Owner == _giver)
+        if(s.MouthRig && s.LipMesh && Limber.Gpu.LipMesh.HasShapes && Limber.Gpu.LipMesh.Owner == _giver)
         {
             float measuredHere = shaft.RadiusAt(fromTip);
             float r = measuredHere > 0f ? measuredHere / MathF.Max(0.01f, giver.RootScale.Y) : MathF.Max(0.004f, s.Thickness);
@@ -1122,6 +1124,12 @@ public sealed unsafe class OralService
         for(int i = 0; i < guideRadii.Length; i++)
             guideRadii[i] = shaft.Radii?[i] ?? MathF.Max(0.004f, s.Thickness) * giver.RootScale.Y;
         Guide = new GuideShape(shaft.Points, guideRadii, pointWorld, giver.ModelToWorldPoint(mouth));
+        // Mouth rig off: the mouth is left as it is (no lips, jaw, teeth or cheeks moved).
+        if(!s.MouthRig)
+        {
+            LipDots = [];
+            return;
+        }
         if(away > 0.06f * scale)
             return;
         // The ring goes round the mouth where it actually is (across the shaft), not pulled over to the shaft's
@@ -1575,7 +1583,7 @@ public sealed unsafe class OralService
     public void UpdateLipMesh()
     {
         var s = _settings();
-        bool want = s.LipMesh && _running && _blend > 0f;
+        bool want = s.MouthRig && s.LipMesh && _running && _blend > 0f;
         if(!want)
         {
             if(Limber.Gpu.LipMesh.Running)

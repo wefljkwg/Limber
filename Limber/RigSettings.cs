@@ -81,6 +81,9 @@ public sealed class RigSettings
     public System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, float>> BodyShapeBuilt { get; set; } = new();
     public System.Collections.Generic.List<Limber.BodyShape.BodyPreset> BodyPresets { get; set; } = new();
     public bool BodyShapePreview { get; set; } = true;
+    /// <summary>Body shape and body physics switched on (each its own switch on its page; off whenever Limber starts).</summary>
+    public bool BodyShapeOn { get; set; }
+    public bool BodyPhysicsOn { get; set; }
 
     // Oral page.
     public Limber.Rig.OralSettings Oral { get; set; } = new();
@@ -109,6 +112,12 @@ public sealed class RigSettings
     /// <summary>Testicle throbbing (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.BallThrobSettings> BallThrob { get; set; } = new();
 
+    /// <summary>Face Posing: each face bone's offset, per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.FacePoseSettings> FacePoses { get; set; } = new();
+
+    /// <summary>Live symmetry (IK and FK posing pages), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.SymmetrySettings> Symmetry { get; set; } = new();
+
     /// <summary>Appearance &amp; gear page: saved looks, and whether changes go on as they're made.</summary>
     public System.Collections.Generic.List<Limber.Rig.AppearanceData> AppearancePresets { get; set; } = new();
     public bool AppearanceLive { get; set; } = true;
@@ -117,6 +126,12 @@ public sealed class RigSettings
     public System.Collections.Generic.List<Limber.Rig.CameraShot> CameraShots { get; set; } = new();
     public bool CameraUnlock { get; set; }
     public float CameraMaxDistance { get; set; } = 60f;
+    /// <summary>The camera goes through floors and walls instead of bumping into them.</summary>
+    public bool CameraNoCollide { get; set; }
+    /// <summary>The Timeline shown in a window of its own instead of on its page.</summary>
+    public bool TimelineOwnWindow { get; set; }
+    /// <summary>The camera moved off its place: sideways (+ right), up, forward (metres, the way it looks).</summary>
+    public System.Numerics.Vector3 CameraOffset { get; set; }
 
     /// <summary>The Timeline page's animations, which one is open, and its options.</summary>
     public System.Collections.Generic.List<Limber.Rig.TimelineClip> Timelines { get; set; } = new();

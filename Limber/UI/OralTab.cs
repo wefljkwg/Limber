@@ -127,7 +127,18 @@ public sealed class OralTab
         }
 
         // ---- Mouth (the lips' live mesh)
-        if(Section("Mouth", true))
+        bool mouthOpen = Section("Mouth", true);
+        if(mouthOpen)
+        {
+            bool mouthRig = s.MouthRig;
+            if(ImGui.Checkbox("Mouth rig###oral_mouth_rig", ref mouthRig))
+            {
+                s.MouthRig = mouthRig;
+                changed = true;
+            }
+            Tooltip("Off: Oral leaves the mouth alone (no lips, jaw, teeth or cheeks moved); only the head moves.");
+        }
+        if(mouthOpen && s.MouthRig)
         {
             bool liveLips = s.LipMesh;
             if(ImGui.Checkbox("Lips wrap the shaft (live mesh)###oral_lipmesh", ref liveLips))
@@ -207,7 +218,7 @@ public sealed class OralTab
         }
 
         // ---- The older lip-bone way (only when the live mesh is off)
-        if(!s.LipMesh && Section("Lip bones", false))
+        if(s.MouthRig && !s.LipMesh && Section("Lip bones", false))
         {
             if(ImGui.BeginTable("###oral_mouth_table", 2, ImGuiTableFlags.SizingStretchProp))
             {

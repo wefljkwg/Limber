@@ -365,7 +365,17 @@ public static unsafe class Appearance
         if(look == null)
             return "The character isn't there.";
         look.Gear = OutfitGear(outfit);
-        return Apply(address, index, look, customize: false, gear: true, weapons: false);
+        // The Emperor's New Fists in the hands (the item from the game's list), with no off hand of their own.
+        bool fists = false;
+        foreach(var item in Items)
+            if(item.Slot == 10 && item.Name.Equals("The Emperor's New Fists", StringComparison.OrdinalIgnoreCase))
+            {
+                look.Weapons[0] = WeaponValue(item.Model, 0);
+                look.Weapons[1] = item.SubModel != 0 ? WeaponValue(item.SubModel, 0) : 0;
+                fists = true;
+                break;
+            }
+        return Apply(address, index, look, customize: false, gear: true, weapons: fists);
     }
     public sealed record Dye(byte Id, string Name, uint Color);
 

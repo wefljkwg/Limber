@@ -38,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IKeyState KeyState { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
 
     private readonly Configuration _config;
     private readonly BoneUpdateHook _hook;
@@ -65,6 +66,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ExpansionService _expansion;
     private readonly BustShapeService _bust;
     private readonly BallThrobService _ballThrob;
+    private readonly SymmetryService _symmetry;
+    private readonly FacePosingService _facePosing;
+    private FacePosingTab? _faceTab;
     private readonly AhegaoService _ahegao;
     private TimelineService? _timeline;
     private FkPosingTab? _fkTab;
@@ -117,8 +121,11 @@ public sealed class Plugin : IDalamudPlugin
             _twerk = new TwerkService(ObjectTable, () => _config.Ik.Twerk ??= new());
             _expansion = new ExpansionService(ObjectTable, () => _config.Ik.Expansion ??= new());
             _bust = new BustShapeService(ObjectTable, () => _config.Ik.BustShapes ??= new());
+            _symmetry = new SymmetryService(ObjectTable, () => _config.Ik.Symmetry ??= new());
+            _facePosing = new FacePosingService(ObjectTable, () => _config.Ik.FacePoses ??= new());
             _ballThrob = new BallThrobService(ObjectTable, () => _config.Ik.BallThrob ??= new()) { PenisBeat = a => _throb.LevelOf(a) };
-            _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 };
+            // (Oral's mouth rig has the face while it's on; with it off, Ahegao shapes the face during Oral too)
+            _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 && (_config.Ik.Oral?.MouthRig ?? true) };
             _lookAt = new LookAtService(ObjectTable, () => _config.Ik.LookAt ??= new()) { Skip = a => _oral.Follows(a) != 0 };
             _dynamicBones = new DynamicBoneService(ObjectTable, () => _config.Ik.DynamicBones ??= new()) { Skip = a => _oral.IsPartner(a) };
             _oral.Allowed = () => _config.PluginEnabled && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);
@@ -127,6 +134,17 @@ public sealed class Plugin : IDalamudPlugin
             _oral.ReadFile = LimberTab.ReadModelFile;
             // Oral is never on by itself: off at start (not saved), and off whenever an actor is added.
             (_config.Ik.Oral ??= new()).Enabled = false;
+            // Nothing else starts by itself either: Limber Animations, body shape and body physics are off whenever
+            // Limber starts (turned on on their pages).
+            foreach(var s in (_config.Ik.Throb ??= new()).Values) s.Enabled = false;
+            foreach(var s in (_config.Ik.BallThrob ??= new()).Values) s.Enabled = false;
+            foreach(var s in (_config.Ik.Twerk ??= new()).Values) s.Enabled = false;
+            foreach(var s in (_config.Ik.Ahegao ??= new()).Values) s.Enabled = false;
+            foreach(var s in (_config.Ik.Expansion ??= new()).Values)
+                s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = false;
+            _config.Ik.BodyShapeOn = false;
+            _config.Ik.BodyPhysicsOn = false;
+            Limber.BodyRig.SoftBody.On = () => _config.Ik.BodyPhysicsOn;
             _spawner.Added = () => { if(_config.Ik.Oral != null) _config.Ik.Oral.Enabled = false; };
             _motions.AlsoStop = _oral.StopFor;
             _rigs.AddUndoPart(new RigService.UndoPart
@@ -138,6 +156,9 @@ public sealed class Plugin : IDalamudPlugin
                     SaveConfig();
                 },
             });
+            // Undo / redo also covers every other setting: sliders, switches, each feature on or off (noticed like
+            // the parts below; the props and motions have their own parts, the page shown isn't undone).
+            _rigs.AddUndoPart(new RigService.UndoPart { Capture = CaptureSettings, Restore = RestoreSettings, Fresh = () => _settingsShot = "" });
             // Undo / redo also covers the Actor tab and the props (changes there are noticed, no checkpoints needed).
             _rigs.AddUndoPart(new RigService.UndoPart { Capture = _actors.CaptureState, Restore = _actors.RestoreState });
             _rigs.AddUndoPart(new RigService.UndoPart
@@ -258,7 +279,7 @@ public sealed class Plugin : IDalamudPlugin
             _freeze.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             Limber.BodyShape.BodyShapeBuild.SetWorkDir(PluginInterface.ConfigDirectory.FullName);
             _bodyShape.KeepFeet = () => _config.Ik.BodyShapeKeepFeet;
-            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame),
@@ -281,6 +302,10 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.AnimationsTab = new AnimationsTab(_selection);
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
             _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik);
+            limberTab.Fk = _fkTab;
+            _faceTab = new FacePosingTab(_selection, _facePosing, _config.Ik);
+            _mainWindow.FacePosingTab = _faceTab;
+            HandleOverlay.FacePageOpen = () => _faceTab?.Showing == true;
             _mainWindow.FkPosingTab = _fkTab;
             _overlay.FkEditor = _fkTab;
             _fkTab.Overlay = _overlay;
@@ -291,6 +316,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
             _timeline = new TimelineService(ObjectTable, _config.Ik, _rigs, _actors);
             _mainWindow.TimelineTab = new TimelineTab(_selection, _config.Ik, _timeline);
+            _windows.AddWindow(new TimelineWindow(_mainWindow.TimelineTab, _config.Ik));
             _mainWindow.AppearanceTab = new AppearanceTab(_selection, _config.Ik);
             _mainWindow.CameraTab = new CameraTab(_config.Ik);
             limberTab.SyncLink = _koi;
@@ -368,7 +394,8 @@ public sealed class Plugin : IDalamudPlugin
                 _bodyShape.Targets = [];
             return;
         }
-        bool preview = _config.Ik.BodyShapePreview;
+        // (Body shape off: only what's built into the models, nothing live on top)
+        bool preview = _config.Ik.BodyShapePreview && _config.Ik.BodyShapeOn;
         var list = new List<Limber.BodyShape.BodyShapeLive.Target>();
         foreach(var obj in ObjectTable)
         {
@@ -609,36 +636,49 @@ public sealed class Plugin : IDalamudPlugin
 
             lock(_rigs.Sync)
                 _rigs.SetWatched(_selection.Watched());
-            _rigs.WatchParts(ImGui.IsAnyItemActive() || ImGui.IsMouseDown(ImGuiMouseButton.Left));
+            // (a playing timeline changes settings by itself: not undo steps)
+            _rigs.WatchParts(ImGui.IsAnyItemActive() || ImGui.IsMouseDown(ImGuiMouseButton.Left) || (_timeline?.Playing ?? false));
 
             bool here = ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
+            // The camera works in GPose and out of it (whenever Limber is on).
+            UpdateCamera(_config.PluginEnabled);
             if(_config.PluginEnabled && here)
             {
                 _overlay.Draw();
+                _faceTab?.DrawScene();
                 _propOverlay.Draw();
                 _motions.Draw();
                 _oral.DrawGuide(GameGui);
                 Limber.Gpu.LiveMesh.Update(); // render thread, before the frame is presented
                 Limber.Gpu.LiveSoftBody.Update();
                 _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
-                CameraControl.Update(_config.Ik.CameraUnlock, _config.Ik.CameraMaxDistance);
                 _dynamicBones.Refresh();
                 _throb.Refresh();
                 _lookAt.Refresh();
                 _twerk.Refresh();
                 _ahegao.Refresh();
                 _expansion.Refresh();
-                _bust.Refresh();
+                if(_config.ShowBustTab)
+                    _bust.Refresh();
+                else
+                    _bust.Clear();
                 _ballThrob.Refresh();
+                _symmetry.Refresh();
+                _facePosing.Refresh();
                 bool mirrored = _fk.Refresh();
                 _fkTab?.AfterMirror(mirrored);
                 if(mirrored)
                     _config.Ik.Save();
-                if(_selection.Actor.IsSet)
+                if(!_config.Ik.BodyPhysicsOn && (Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveSoftBody.Preparing || Limber.Gpu.LiveSoftBody.Resuming))
+                    Limber.Gpu.LiveSoftBody.Stop();
+                if(_selection.Actor.IsSet && _config.Ik.BodyPhysicsOn)
                     Limber.Gpu.LiveSoftBody.AutoTick(_selection.Actor.Address, _selection.Actor.ObjectIndex, LimberTab.ReadModelFile, LimberTab.LivePartOf);
                 _oral.UpdateLipMesh();
                 _ahegao.UpdateFaceRig(LimberTab.ReadModelFile);
-                _bust.UpdateMeshes(LimberTab.ReadModelFile);
+                if(_config.ShowBustTab)
+                    _bust.UpdateMeshes(LimberTab.ReadModelFile);
+                else if(Limber.Gpu.BustShapes.Count > 0)
+                    Limber.Gpu.BustShapes.Stop();
             }
             else
             {
@@ -650,6 +690,8 @@ public sealed class Plugin : IDalamudPlugin
                 _expansion.Clear();
                 _bust.Clear();
                 _ballThrob.Clear();
+                _symmetry.Clear();
+                _facePosing.Clear();
             }
             if(!(_config.PluginEnabled && here) && (Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveMesh.Wobbling || Limber.Gpu.LipMesh.Running || Limber.Gpu.FaceRig.Running || Limber.Gpu.BustShapes.Count > 0))
             {
@@ -671,12 +713,84 @@ public sealed class Plugin : IDalamudPlugin
             }
         }
 
-        _windows.Draw();
+        // ("Hide Limber window when UI is hidden": the windows wait; the handles follow their own setting)
+        if(!(_config.HideWindowWithGameUi && GameGui.GameUiHidden))
+            _windows.Draw();
     }
 
     // Undo / redo with the player's hotkeys (Hotkeys tab): from the game's key state on the framework thread, so
     // they work whether or not a Limber window has focus (not while typing in one of its text boxes).
     private volatile bool _typing;
+
+    // ---- Camera (in GPose and out)
+
+    private bool _noCollideOn;
+
+    private void UpdateCamera(bool on)
+    {
+        try
+        {
+            CameraControl.Update(on && _config.Ik.CameraUnlock, _config.Ik.CameraMaxDistance);
+            CameraControl.SetOffset(on ? _config.Ik.CameraOffset : System.Numerics.Vector3.Zero);
+            bool noCollide = on && _config.Ik.CameraNoCollide;
+            if(noCollide != _noCollideOn && CameraControl.SetNoCollision(noCollide))
+                _noCollideOn = noCollide;
+            else if(noCollide != _noCollideOn)
+                _noCollideOn = noCollide; // (not found: don't keep trying every frame)
+        }
+        catch(Exception e)
+        {
+            Log.Debug(e, "Limber: camera update failed");
+        }
+    }
+
+    // ---- Undo / redo of the settings
+
+    // Left out: the page shown (not a change to undo), and the props and motions (their own undo parts).
+    private sealed class UndoSettingsResolver : Newtonsoft.Json.Serialization.DefaultContractResolver
+    {
+        private static readonly HashSet<string> Skip = ["UiPage", "Motions", "Props"];
+
+        protected override IList<Newtonsoft.Json.Serialization.JsonProperty> CreateProperties(Type type, Newtonsoft.Json.MemberSerialization memberSerialization)
+        {
+            var list = base.CreateProperties(type, memberSerialization);
+            return type == typeof(RigSettings) ? list.Where(p => p.PropertyName == null || !Skip.Contains(p.PropertyName)).ToList() : list;
+        }
+    }
+
+    private static readonly Newtonsoft.Json.JsonSerializerSettings UndoJson = new()
+    {
+        ContractResolver = new UndoSettingsResolver(),
+        ObjectCreationHandling = Newtonsoft.Json.ObjectCreationHandling.Replace,
+        ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore,
+    };
+
+    private string _settingsShot = "";
+    private long _settingsShotAt;
+    private bool _mouseWasDown;
+
+    // The settings as text, read again a few times a second and whenever the mouse is let go (all of them each frame
+    // would cost frames).
+    private string CaptureSettings()
+    {
+        long now = Environment.TickCount64;
+        bool down = ImGui.IsMouseDown(ImGuiMouseButton.Left);
+        bool released = _mouseWasDown && !down;
+        _mouseWasDown = down;
+        if(_settingsShot.Length == 0 || released || now - _settingsShotAt > 300)
+        {
+            _settingsShot = Newtonsoft.Json.JsonConvert.SerializeObject(_config.Ik, UndoJson);
+            _settingsShotAt = now;
+        }
+        return _settingsShot;
+    }
+
+    private void RestoreSettings(string state)
+    {
+        Newtonsoft.Json.JsonConvert.PopulateObject(state, _config.Ik, UndoJson);
+        _settingsShot = ""; // (read fresh next time)
+        SaveConfig();
+    }
 
     private void HandleUndoKeys()
     {
@@ -735,6 +849,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        CameraControl.Dispose();
         PluginInterface.UiBuilder.Draw -= OnDraw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleWindow;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleWindow;

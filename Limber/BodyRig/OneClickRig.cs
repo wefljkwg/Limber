@@ -143,11 +143,11 @@ public static class OneClickRig
 
         var root = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<string>("Penumbra.GetModDirectory").InvokeFunc());
         if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
-            throw new InvalidOperationException("couldn't find Penumbra's mod folder (is Penumbra running?)");
+            throw new InvalidOperationException("couldn't find the mod folder (is your mod manager running?)");
         var collection = await Game(() =>
             Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index));
         if (!collection.Item1)
-            throw new InvalidOperationException("Penumbra doesn't know this character right now (an actor added in GPose by another tool, or by an older Limber: add it again on the Actors page)");
+            throw new InvalidOperationException("The mod manager doesn't know this character right now (an actor added in GPose by another tool, or by an older Limber: add it again on the Actors page)");
         var (collectionId, collectionName) = collection.Item3;
         progress.Add($"Collection: {collectionName}.");
 
@@ -252,7 +252,7 @@ public static class OneClickRig
         progress.Add("Reading the models your character is wearing...");
         var paths = worn;
         if (paths == null)
-            throw new InvalidOperationException("Penumbra couldn't list this character's files");
+            throw new InvalidOperationException("The mod manager couldn't list this character's files");
 
         var modelsName = RigModName(parts, collectionName);
         if (onlySet != null && RigModFolder(root, collectionName) is { } existing)
@@ -387,7 +387,7 @@ public static class OneClickRig
         int raised = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, int, int>("Penumbra.TrySetModPriority.V5")
             .InvokeFunc(collectionId, rigDir, "", ModelsPriority));
         if (turnedOn is not (0 or 1) || raised is not (0 or 1)) // Success / NothingChanged
-            progress.Add($"  Couldn't turn on \"{rigDir}\" in {collectionName} (Penumbra said {turnedOn}/{raised}); turn it on there yourself, at the top.");
+            progress.Add($"  Couldn't turn on \"{rigDir}\" in {collectionName} (the mod manager said {turnedOn}/{raised}); turn it on there yourself, at the top.");
 
         // Limber's other rig mods (other parts, or earlier versions' names): off in this collection, so they don't fight.
         var modList = await Game(() => Plugin.PluginInterface.GetIpcSubscriber<Dictionary<string, string>>("Penumbra.GetModList").InvokeFunc());
@@ -715,7 +715,7 @@ public static class OneClickRig
         int result = known.ContainsKey(name)
             ? await Game(() => Plugin.PluginInterface.GetIpcSubscriber<string, string, int>("Penumbra.ReloadMod.V5").InvokeFunc(name, ""))
             : await Game(() => Plugin.PluginInterface.GetIpcSubscriber<string, int>("Penumbra.AddMod.V5").InvokeFunc(name));
-        progress.Add(result is 0 or 1 ? $"Saved the \"{name}\" mod ({files.Count} file(s))." : $"Saved \"{name}\", but Penumbra said {result} when loading it; reload it in Penumbra.");
+        progress.Add(result is 0 or 1 ? $"Saved the \"{name}\" mod ({files.Count} file(s))." : $"Saved \"{name}\", but the mod manager said {result} when loading it; reload it in your mod manager.");
         return name;
     }
 }

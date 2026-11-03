@@ -129,8 +129,16 @@ public sealed unsafe class ThrobService
     public void Clear() => _targets = [];
 
     /// <summary>Bone update stage.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentQueue<nint> _sync = new();
+
+    /// <summary>Starts this character's beat from the top on the next frame (to line it up with another one).</summary>
+    public void Sync(nint address) => _sync.Enqueue(address);
+
     public void UpdateFrame()
     {
+        while(_sync.TryDequeue(out var again))
+            if(_states.TryGetValue(again, out var restart))
+                restart.Time = 0;
         var targets = _targets;
         long now = Stopwatch.GetTimestamp();
         var levels = new Dictionary<nint, float>();

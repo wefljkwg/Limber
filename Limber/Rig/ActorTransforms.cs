@@ -17,8 +17,11 @@ public sealed unsafe class ActorTransforms : IDisposable
     {
         public required nint Address;
         public required ushort Index;
-        public Vector3 Move;          // metres, world axes
-        public Vector3 Turn;          // degrees: yaw, pitch, roll (the character's own axes)
+        public Vector3 Move;          // metres (world axes, or the way the character faces: see Facing)
+        public Vector3 Turn;          // degrees: yaw, pitch, roll (world axes, or the character's own)
+        // Move and turn along the way the character faces (forward / sideways / up, and its own axes) instead of
+        // the world's.
+        public bool Facing;
         public float Scale = 1f;
         // Kept while the character walks or turns: the game rewrites the model's place every frame it moves
         // (wiping an offset on it), so this one goes on the skeleton's root instead, which the game rebuilds from
@@ -29,7 +32,7 @@ public sealed unsafe class ActorTransforms : IDisposable
         public bool Priority = true;
 
         public bool IsIdentity => Move == Vector3.Zero && Turn == Vector3.Zero && Scale == 1f;
-        internal bool HasState => !IsIdentity || !KeepWhileMoving || !Priority; // anything but the defaults
+        internal bool HasState => !IsIdentity || !KeepWhileMoving || !Priority || Facing; // anything but the defaults
 
         // Where the game had the model (before the offset), and what was written last frame.
         internal bool HaveBase;
@@ -97,12 +100,16 @@ public sealed unsafe class ActorTransforms : IDisposable
             return;
         var t = o.Turn * (MathF.PI / 180f);
         var turn = Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z);
+        // World axes: the turn about the world's axes, seen from the model (its own turn taken out).
+        if(!o.Facing)
+            turn = Quaternion.Normalize(Quaternion.Inverse(skeleton.RootRotation) * turn * skeleton.RootRotation);
         float s = Math.Clamp(o.Scale, MinScale, MaxScale);
         var rootScale = skeleton.RootScale;
         if(MathF.Abs(rootScale.X) < 1e-6f || MathF.Abs(rootScale.Y) < 1e-6f || MathF.Abs(rootScale.Z) < 1e-6f)
             return;
         // World move -> model space (the model's own turn and size taken out).
-        var move = Vector3.Transform(o.Move, Quaternion.Inverse(skeleton.RootRotation)) / rootScale;
+        // (facing: the move is already along the character's own axes)
+        var move = (o.Facing ? o.Move : Vector3.Transform(o.Move, Quaternion.Inverse(skeleton.RootRotation))) / rootScale;
         if(!MathUtil.IsFinite(move) || !MathUtil.IsFinite(turn))
             return;
         if(skeleton.Info.Count == 0)
@@ -152,7 +159,7 @@ public sealed unsafe class ActorTransforms : IDisposable
             var parts = new List<string>();
             foreach(var o in _offsets.Values)
                 if(o.HasState)
-                    parts.Add(FormattableString.Invariant($"{(long)o.Address}|{o.Index}|{o.Move.X}|{o.Move.Y}|{o.Move.Z}|{o.Turn.X}|{o.Turn.Y}|{o.Turn.Z}|{o.Scale}|{(o.KeepWhileMoving ? 1 : 0)}|{(o.Priority ? 1 : 0)}"));
+                    parts.Add(FormattableString.Invariant($"{(long)o.Address}|{o.Index}|{o.Move.X}|{o.Move.Y}|{o.Move.Z}|{o.Turn.X}|{o.Turn.Y}|{o.Turn.Z}|{o.Scale}|{(o.KeepWhileMoving ? 1 : 0)}|{(o.Priority ? 1 : 0)}|{(o.Facing ? 1 : 0)}"));
             parts.Sort(StringComparer.Ordinal);
             return string.Join(";", parts);
         }
@@ -169,6 +176,7 @@ public sealed unsafe class ActorTransforms : IDisposable
                 o.Scale = 1f;
                 o.KeepWhileMoving = true;
                 o.Priority = true;
+                o.Facing = false;
             }
             foreach(var entry in state.Split(';', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -182,6 +190,7 @@ public sealed unsafe class ActorTransforms : IDisposable
                 o.Scale = F(f[8]);
                 o.KeepWhileMoving = f.Length <= 9 || f[9] == "1";
                 o.Priority = f.Length <= 10 || f[10] == "1";
+                o.Facing = f.Length > 11 && f[11] == "1";
             }
         }
     }
@@ -205,8 +214,9 @@ public sealed unsafe class ActorTransforms : IDisposable
         o.HaveBase = true;
         bool apply = allowed && !o.IsIdentity && !o.KeepWhileMoving;
         var t = o.Turn * (MathF.PI / 180f);
-        var newPosition = apply ? o.BasePosition + o.Move : o.BasePosition;
-        var newRotation = apply ? Quaternion.Normalize(o.BaseRotation * Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z)) : o.BaseRotation;
+        var turn = Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z);
+        var newPosition = apply ? o.BasePosition + (o.Facing ? Vector3.Transform(o.Move, o.BaseRotation) : o.Move) : o.BasePosition;
+        var newRotation = apply ? Quaternion.Normalize(o.Facing ? o.BaseRotation * turn : turn * o.BaseRotation) : o.BaseRotation;
         var newScale = apply ? o.BaseScale * Math.Clamp(o.Scale, MinScale, MaxScale) : o.BaseScale;
         if(!MathUtil.IsFinite(newPosition) || !MathUtil.IsFinite(newRotation) || !MathUtil.IsFinite(newScale))
             return false;

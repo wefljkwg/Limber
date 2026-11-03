@@ -20,6 +20,15 @@ public sealed unsafe class HousingPropsTab
 
     private string _search = string.Empty;
     private int _where; // 0 all, 1 indoor, 2 outdoor
+    private bool _byType;  // world props: in sections by what they are, not where they're from
+    private bool _filteredByType;
+    private readonly List<(string Section, int Start, int End)> _sections = new();
+
+    private string SectionOf(HousingItem i)
+    {
+        string s = _world && _byType ? i.Kind : i.Category;
+        return s.Length > 0 ? s : "Other";
+    }
     private HousingItem? _chosen;
     private HousingItem[] _filtered = [];
     private string _filteredFor = "\0";
@@ -50,10 +59,6 @@ public sealed unsafe class HousingPropsTab
             ImGui.TextDisabled(failed ? $"Couldn't read the {(_world ? "world props" : "housing items")} from the game data." : $"Reading the {(_world ? "world props" : "housing items")}...");
             return;
         }
-        if(_world)
-            ImGui.TextWrapped("Every prop the game's world is built from (event objects, field objects, each region's props), "
-                + "in sections. Place them like housing items; only on your screen. Some are invisible markers or effects only.");
-
         ImGui.SetNextItemWidth(_world ? -1 : ImGui.GetContentRegionAvail().X * 0.6f);
         ImGui.InputTextWithHint($"###{Id}_search", _world ? $"Search {catalog.Length} world props" : "Search housing items", ref _search, 64);
         if(!_world)
@@ -62,16 +67,34 @@ public sealed unsafe class HousingPropsTab
             ImGui.SetNextItemWidth(-1);
             ImGui.Combo("###housing_where", ref _where, WhereNames, WhereNames.Length);
         }
+        else
+        {
+            if(ImGui.RadioButton("Sort by area###world_by_area", !_byType))
+                _byType = false;
+            ImGui.SameLine();
+            if(ImGui.RadioButton("Sort by type###world_by_type", _byType))
+                _byType = true;
+        }
 
-        if(_filteredFor != _search || _filteredWhere != _where || _filteredCount != catalog.Length)
+        if(_filteredFor != _search || _filteredWhere != _where || _filteredCount != catalog.Length || _filteredByType != _byType)
         {
             _filteredFor = _search;
             _filteredWhere = _where;
             _filteredCount = catalog.Length;
+            _filteredByType = _byType;
             _filtered = catalog.Where(i => (_world || _where == 0 || (_where == 1) == i.Indoors)
                 && (_search.Length == 0 || i.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
-                    || i.Category.Contains(_search, StringComparison.OrdinalIgnoreCase)))
-                .OrderBy(i => i.Category, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+                    || i.Category.Contains(_search, StringComparison.OrdinalIgnoreCase) || i.Kind.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(SectionOf, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+            // where each section starts and ends (worked out once, not every frame)
+            _sections.Clear();
+            int start = 0;
+            for(int k = 1; k <= _filtered.Length; k++)
+                if(k == _filtered.Length || SectionOf(_filtered[k]) != SectionOf(_filtered[start]))
+                {
+                    _sections.Add((SectionOf(_filtered[start]), start, k));
+                    start = k;
+                }
         }
 
         float height = Math.Max(220f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().Y * 0.55f);
@@ -101,13 +124,8 @@ public sealed unsafe class HousingPropsTab
         }
         bool searching = _search.Length > 0;
         const int Limit = 500;
-        int i = 0;
-        while(i < _filtered.Length)
+        foreach(var (section, i, end) in _sections)
         {
-            string section = _filtered[i].Category.Length > 0 ? _filtered[i].Category : "Other";
-            int end = i;
-            while(end < _filtered.Length && (_filtered[end].Category.Length > 0 ? _filtered[end].Category : "Other") == section)
-                end++;
             if(searching)
                 ImGui.SetNextItemOpen(true, ImGuiCond.Always);
             bool open = ImGui.TreeNodeEx($"{section} ({end - i})###{Id}_sec_{section}", ImGuiTreeNodeFlags.SpanAvailWidth);
@@ -128,7 +146,6 @@ public sealed unsafe class HousingPropsTab
                 }
                 ImGui.TreePop();
             }
-            i = end;
         }
     }
 

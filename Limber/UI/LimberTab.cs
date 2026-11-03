@@ -284,7 +284,7 @@ public sealed partial class LimberTab
             if(ImGui.Button("Redraw###limber_redraw") && _selection.Actor.IsSet)
                 Limber.Rig.Appearance.Redraw(_selection.Actor.ObjectIndex);
         }
-        Tooltip("Draws the chosen character again (through Penumbra, so its mods stay on): picks up mod and gear changes.");
+        Tooltip("Draws the chosen character again (through the mod manager, so its mods stay on): picks up mod and gear changes.");
     }
 
     /// <summary>"Show Limber handles on the character" (shown under the character picker, above the main tabs).</summary>
@@ -386,8 +386,25 @@ public sealed partial class LimberTab
         float scale = current?.Scale ?? 1f;
         bool keep = current?.KeepWhileMoving ?? true;
         bool changed = false;
+        bool facing = current?.Facing ?? false;
+        ImGui.TextUnformatted("Axes:");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("World###limber_actor_world", !facing))
+            facing = false;
+        Tooltip("Move and turn along the world's axes, whichever way the character faces.");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Character facing###limber_actor_facing", facing))
+            facing = true;
+        Tooltip("Move and turn along the way the character faces: forward / back, left / right, up; turns about its own axes.");
+        if(facing != (current?.Facing ?? false))
+        {
+            var o = Actors.GetOrAdd(actor.Address, actor.ObjectIndex);
+            lock(Actors.Sync)
+                o.Facing = facing;
+        }
         ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
         changed |= ImGui.DragFloat3("Move (m)###limber_actor_move", ref move, 0.005f, -50f, 50f, "%.3f");
+        Tooltip(facing ? "Sideways, up, forward (the way the character faces)." : "World X, up, world Z.");
         ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
         changed |= ImGui.DragFloat3("Turn (°)###limber_actor_turn", ref turn, 0.5f, -180f, 180f, "%.1f");
         Tooltip("Yaw (around), pitch (forward / back), roll (sideways).");
@@ -409,17 +426,17 @@ public sealed partial class LimberTab
             lock(Actors.Sync)
                 o.KeepWhileMoving = keep;
         }
-        Tooltip("On (default): applied to the skeleton, so it stays on while the character walks or turns, and when another\nplugin (e.g. Brio) keeps setting the character's place. Outside GPose: needs \"Also run outside GPose\" (Advanced).");
+        Tooltip("On (default): applied to the skeleton, so it stays on while the character walks or turns, and when another\nplugin keeps setting the character's place. Outside GPose: needs \"Also run outside GPose\" (Advanced).");
         bool priority = current?.Priority ?? true;
-        if(ImGui.Checkbox("Take priority over other plugins (Brio)###limber_actor_priority", ref priority))
+        if(ImGui.Checkbox("Take priority over other plugins###limber_actor_priority", ref priority))
         {
             var o = Actors.GetOrAdd(actor.Address, actor.ObjectIndex);
             lock(Actors.Sync)
                 o.Priority = priority;
         }
         Tooltip("On (default): Limber's move / turn / scale goes on top of whatever another plugin sets.\n" +
-                "Brio's own actor position, rotation and scale still count: Limber's are added to them, never wiped by them.\n" +
-                "With \"Keep while moving\" on, Limber already works on the skeleton after Brio's posing; this also covers it off.");
+                "Their position, rotation and scale still count: Limber's are added to them, never wiped by them.\n" +
+                "With \"Keep while moving\" on, Limber already works on the skeleton after their posing; this also covers it off.");
 
         if(ImGui.Button("Reset###limber_actor_reset"))
             Actors.Reset(actor.Address);
@@ -437,65 +454,179 @@ public sealed partial class LimberTab
             return;
         }
 
+        // Laid out like the FK Posing page: the whole-pose buttons on top, the skeleton on the left, the chosen
+        // bone (and the held bones) on the right.
         DrawHistoryRow(actor);
-        ImGui.TextDisabled("Drag a dot to pose.  Right-click: pin.  Middle-click: let go.  Finger presets: the Hands page.");
-
-        ImGui.Spacing();
-        if(ImGui.CollapsingHeader("Selected bone###limber_pose_selected", ImGuiTreeNodeFlags.DefaultOpen))
-        {
-            DrawSelectedBone(actor);
-        }
 
         int count;
         lock(_rigs.Sync)
             count = _rigs.GetRig(actor.Address)?.Goals.Count ?? 0;
-        if(ImGui.CollapsingHeader($"Held bones ({count})###limber_pose_held", ImGuiTreeNodeFlags.DefaultOpen))
+        if(ImGui.Button("Pin feet###limber_pin_feet"))
         {
+            _rigs.Checkpoint();
+            PinIfFree(actor, "j_asi_d_l");
+            PinIfFree(actor, "j_asi_d_r");
+        }
+        ImGui.SameLine();
+        if(ImGui.Button("Pin hands###limber_pin_hands"))
+        {
+            _rigs.Checkpoint();
+            PinIfFree(actor, "j_te_l");
+            PinIfFree(actor, "j_te_r");
+        }
+        ImGui.SameLine();
+        using(ImRaii.Disabled(count == 0))
+        {
+            if(ImGui.Button("Let go of all###limber_let_go_all"))
             {
+                Motions?.StopFor(actor.Address, null);
                 lock(_rigs.Sync)
                 {
-                    var rig = _rigs.GetRig(actor.Address);
-                    if(rig == null || rig.Goals.Count == 0)
-                        ImGui.TextDisabled("None yet.");
-                    else
-                        DrawGoalTable(actor, rig);
+                    _rigs.Checkpoint();
+                    _rigs.RemoveRig(actor.Address);
                 }
+                _selection.Bone = null;
+            }
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled($"({count} bone{(count == 1 ? "" : "s")} held)");
+        ImGui.TextDisabled("Drag a dot to pose.  Right-click: pin.  Middle-click: let go.  Finger presets: the Hands page.");
 
-                float third = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X * 2) / 3f;
-                if(ImGui.Button("Pin feet###limber_pin_feet", new Vector2(third, 0)))
+        ImGui.Separator();
+        BoneSnapshot? snapshot;
+        lock(_rigs.Sync)
+            snapshot = _rigs.GetSnapshot(actor.Address);
+        if(snapshot == null)
+        {
+            ImGui.TextDisabled("This character's bones aren't available right now (GPose, and Limber on?).");
+            return;
+        }
+
+        float listWidth = MathF.Min(300f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X * 0.45f);
+        using(var list = ImRaii.Child("###ik_bones", new Vector2(listWidth, -1), true))
+        {
+            if(list.Success)
+                DrawIkBoneList(actor, snapshot);
+        }
+        ImGui.SameLine();
+        using(var editor = ImRaii.Child("###ik_editor", new Vector2(-1, -1), false))
+        {
+            if(editor.Success)
+            {
+                if(ImGui.CollapsingHeader("Selected bone###limber_pose_selected", ImGuiTreeNodeFlags.DefaultOpen))
+                    DrawSelectedBone(actor);
+                if(ImGui.CollapsingHeader($"Held bones ({count})###limber_pose_held", ImGuiTreeNodeFlags.DefaultOpen))
                 {
-                    _rigs.Checkpoint();
-                    PinIfFree(actor, "j_asi_d_l");
-                    PinIfFree(actor, "j_asi_d_r");
-                }
-                ImGui.SameLine();
-                if(ImGui.Button("Pin hands###limber_pin_hands", new Vector2(third, 0)))
-                {
-                    _rigs.Checkpoint();
-                    PinIfFree(actor, "j_te_l");
-                    PinIfFree(actor, "j_te_r");
-                }
-                ImGui.SameLine();
-                using(ImRaii.Disabled(count == 0))
-                {
-                    if(ImGui.Button("Let go of all###limber_let_go_all", new Vector2(third, 0)))
+                    lock(_rigs.Sync)
                     {
-                        Motions?.StopFor(actor.Address, null);
-                        lock(_rigs.Sync)
-                        {
-                            _rigs.Checkpoint();
-                            _rigs.RemoveRig(actor.Address);
-                        }
-                        _selection.Bone = null;
+                        var rig = _rigs.GetRig(actor.Address);
+                        if(rig == null || rig.Goals.Count == 0)
+                            ImGui.TextDisabled("None yet.");
+                        else
+                            DrawGoalTable(actor, rig);
                     }
                 }
             }
         }
+    }
 
-        if(ImGui.CollapsingHeader("All bones###limber_pose_all"))
+    private readonly HashSet<string> _ikOpen = new(StringComparer.Ordinal);
+
+    // The skeleton as a tree (or the matches, when searching), like the FK page's: held bones marked.
+    private void DrawIkBoneList(ActorRef actor, BoneSnapshot snapshot)
+    {
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint("###limber_bone_search", "Search bones (arm, finger, tail...)", ref _boneSearch, 64);
+        bool adult = Limber.Koi.Safety.AdultAllowed(actor.Address);
+        bool Shown(string bone) => HandleCatalog.IsPickable(bone, adult);
+        Dictionary<string, (bool Enabled, GoalSpace Space)> held = new(StringComparer.Ordinal);
+        lock(_rigs.Sync)
+            if(_rigs.GetRig(actor.Address) is { } rig)
+                foreach(var g in rig.Goals)
+                    held[g.Bone] = (g.Enabled, g.Space);
+
+        if(_boneSearch.Length > 0)
         {
-            DrawBonePicker(actor);
+            for(int i = 0; i < snapshot.Count; i++)
+            {
+                string bone = snapshot.Names[i];
+                if(!Shown(bone))
+                    continue;
+                string label = HandleCatalog.Label(bone);
+                if(!bone.Contains(_boneSearch, StringComparison.OrdinalIgnoreCase) && !label.Contains(_boneSearch, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                DrawIkBoneRow(bone, label, held, leaf: true);
+            }
+            return;
         }
+
+        var children = new Dictionary<int, List<int>>();
+        var roots = new List<int>();
+        for(int i = 0; i < snapshot.Count; i++)
+        {
+            if(!Shown(snapshot.Names[i]))
+                continue;
+            int parent = i < snapshot.Parents.Length ? snapshot.Parents[i] : -1;
+            while(parent >= 0 && !Shown(snapshot.Names[parent]))
+                parent = snapshot.Parents[parent];
+            if(parent < 0)
+                roots.Add(i);
+            else
+            {
+                if(!children.TryGetValue(parent, out var kids))
+                    children[parent] = kids = new();
+                kids.Add(i);
+            }
+        }
+        // The selected bone's branch is open.
+        if(_selection.Bone is { } selected && snapshot.IndexOf(selected) is int s and >= 0)
+            for(int p = s < snapshot.Parents.Length ? snapshot.Parents[s] : -1; p >= 0; p = snapshot.Parents[p])
+                _ikOpen.Add(snapshot.Names[p]);
+
+        void Node(int i, int depth)
+        {
+            string bone = snapshot.Names[i];
+            bool has = children.TryGetValue(i, out var kids);
+            bool open = DrawIkBoneRow(bone, HandleCatalog.Label(bone), held, leaf: !has);
+            if(has && open && depth < 64)
+            {
+                ImGui.Indent(10f * ImGuiHelpers.GlobalScale);
+                foreach(var k in kids!)
+                    Node(k, depth + 1);
+                ImGui.Unindent(10f * ImGuiHelpers.GlobalScale);
+            }
+        }
+        foreach(var root in roots)
+            Node(root, 0);
+    }
+
+    /// <summary>One row: an open / close arrow, the name (click to pick), marked if it's held (pinned in its own colour).</summary>
+    private bool DrawIkBoneRow(string bone, string label, Dictionary<string, (bool Enabled, GoalSpace Space)> held, bool leaf)
+    {
+        bool open = _ikOpen.Contains(bone);
+        using var id = ImRaii.PushId(bone);
+        if(!leaf)
+        {
+            if(ImGui.ArrowButton("###arrow", open ? ImGuiDir.Down : ImGuiDir.Right))
+            {
+                if(open)
+                    _ikOpen.Remove(bone);
+                else
+                    _ikOpen.Add(bone);
+                open = !open;
+            }
+        }
+        else
+            ImGui.Dummy(new Vector2(ImGui.GetFrameHeight(), ImGui.GetFrameHeight()));
+        ImGui.SameLine();
+        bool isHeld = held.TryGetValue(bone, out var h) && h.Enabled;
+        bool pinned = isHeld && h.Space == GoalSpace.Pinned;
+        string text = (pinned ? "◆ " : isHeld ? "● " : "") + (label == bone ? bone : $"{label}  ({bone})");
+        var colour = pinned ? new Vector4(1f, 0.55f, 0.35f, 1f) : new Vector4(1f, 0.85f, 0.35f, 1f);
+        using(ImRaii.PushColor(ImGuiCol.Text, colour, isHeld))
+            if(ImGui.Selectable($"{text}###sel", _selection.Bone == bone))
+                _selection.Bone = bone;
+        return open;
     }
 
     private int _handSide = 2; // 0 left, 1 right, 2 both
@@ -1110,6 +1241,14 @@ public sealed partial class LimberTab
 
     public void DrawRiggingTab()
     {
+        bool physicsOn = _config.BodyPhysicsOn;
+        if(ImGui.Checkbox("Body physics on###lmb_physics_on", ref physicsOn))
+        {
+            _config.BodyPhysicsOn = physicsOn;
+            _config.Save();
+        }
+        Tooltip("Turns all body physics on or off: the soft breasts, butt and testicles, and the live mesh (off whenever Limber starts).");
+        ImGui.Separator();
         if(ShowPhysicsHelp != null)
         {
             if(ImGui.Button("How to use this (step by step)###lmb_physics_help"))
@@ -1124,7 +1263,6 @@ public sealed partial class LimberTab
 
         // 2. Each part: on or off by itself, its physics settings tucked under it.
         SeparatorText("Parts");
-        ImGui.TextDisabled("Turn each part's physics on or off by itself. Its settings are under it.");
         foreach(var part in Limber.BodyRig.RigParts.All)
         {
             using(ImRaii.PushId(part.Key))
@@ -1139,7 +1277,6 @@ public sealed partial class LimberTab
     // Step 1 of a per-vertex soft body: finding and rewriting the worn models' vertices on the GPU.
     private unsafe void DrawLiveMesh()
     {
-        ImGui.TextDisabled("Per-vertex soft body on the breasts and butt. Experimental: may crash the game. Starts again by itself after a redraw (a Body Shape build, a gear change).");
         var actor = _selection.Actor;
         {
             var liveSettings = Limber.Gpu.LiveSoftBody.Settings();
@@ -1549,8 +1686,8 @@ public sealed partial class LimberTab
                 if(result.PackagePath != null)
                 {
                     _rigReport.Add(result.Installed
-                        ? "Sent to Penumbra to install. In Penumbra: enable \"" + Limber.BodyRig.RigBuilder.ModName + "\" in your character's collection, give it a higher priority than your skeleton mod, and redraw your character."
-                        : "Import the .pmp into Penumbra yourself (Import Mod), enable it above your skeleton mod and redraw.");
+                        ? "Sent to your mod manager to install. In your mod manager: enable \"" + Limber.BodyRig.RigBuilder.ModName + "\" in your character's collection, give it a higher priority than your skeleton mod, and redraw your character."
+                        : "Import the .pmp into your mod manager yourself (Import Mod), enable it above your skeleton mod and redraw.");
                 }
             }
             else
@@ -1633,7 +1770,7 @@ public sealed partial class LimberTab
                     return all.Length > 0 ? all[0] : null;
                 });
                 if(paths == null)
-                    lines.Add(("Penumbra couldn't list this character's files.", null));
+                    lines.Add(("The mod manager couldn't list this character's files.", null));
                 else
                 {
                     foreach(var (actual, games) in paths)
@@ -1856,14 +1993,6 @@ public sealed partial class LimberTab
             Tooltip("The extra bones Limber's physics rig adds (the breast, butt and testicle lattices): shown as dots and in the bone lists. "
                 + "Off (default): hidden, since they aren't for posing.");
 
-            bool faceBones = _config.ShowFaceBones;
-            if(ImGui.Checkbox("Dots for the face###limber_face_dots_settings", ref faceBones))
-            {
-                _config.ShowFaceBones = faceBones;
-                changed = true;
-            }
-            Tooltip("Small dots on the face bones (brows, eyelids, eyes, cheeks, lips, jaw, tongue): drag to move, use the gizmo to turn.");
-
             bool hideWithUi = _config.HideHandlesWithGameUi;
             if(ImGui.Checkbox("Hide with the game UI", ref hideWithUi))
             {
@@ -1928,21 +2057,65 @@ public sealed partial class LimberTab
         }
         Tooltip($"Let go of every bone on {actor.Name}.");
 
+        // Back to the skeleton's rest pose (the pose the model is built in): the whole body, or the chosen bone.
         ImGui.SameLine();
+        using(ImRaii.Disabled(Fk == null))
+        {
+            if(ImGui.Button("Rest pose###limber_rest_all", new Vector2(third, 0)) && Fk != null)
+            {
+                Motions?.StopFor(actor.Address, null);
+                lock(_rigs.Sync)
+                {
+                    _rigs.Checkpoint();
+                    _rigs.RemoveRig(actor.Address);
+                }
+                _selection.Bone = null;
+                _restNote = Fk.RestPose(actor, null);
+            }
+        }
+        Tooltip("The whole body to the skeleton's rest pose: lets go of every bone, and holds the rest pose with FK (Clear FK on the FK posing page undoes it).");
+        ImGui.SameLine();
+        var chosen = _selection.Bone;
+        using(ImRaii.Disabled(Fk == null || chosen == null))
+        {
+            if(ImGui.Button("Rest pose (this bone)###limber_rest_bone", new Vector2(third, 0)) && Fk != null && chosen != null)
+            {
+                lock(_rigs.Sync)
+                {
+                    _rigs.Checkpoint();
+                    _rigs.GetRig(actor.Address)?.Remove(chosen);
+                }
+                _restNote = Fk.RestPose(actor, chosen);
+            }
+        }
+        Tooltip("The chosen bone to its rest pose (let go, and held there by FK).");
+        if(_restNote.Length > 0)
+            ImGui.TextDisabled(_restNote);
+
+        SymmetryControls.Draw(_config, actor.Name ?? "", "ik");
+    }
+
+    private string _restNote = "";
+
+    /// <summary>The FK posing page (its rest pose), set by the plugin.</summary>
+    public FkPosingTab? Fk { get; set; }
+
+    /// <summary>Undo / redo at the top of the window: posing, sliders, switches, every setting.</summary>
+    public void DrawUndoRedo()
+    {
         using(ImRaii.Disabled(!_rigs.CanUndo))
         {
-            if(ImGui.Button("Undo###limber_undo", new Vector2(third, 0)))
+            if(ImGui.Button("Undo###limber_undo"))
                 _rigs.Undo();
         }
-        Tooltip((_config.UndoKey ??= new()).Label);
-
+        Tooltip("Undo the last change: a bone moved, a slider, a switch, anything in Limber. " + (_config.UndoKey ??= new()).Label);
         ImGui.SameLine();
         using(ImRaii.Disabled(!_rigs.CanRedo))
         {
-            if(ImGui.Button("Redo###limber_redo", new Vector2(third, 0)))
+            if(ImGui.Button("Redo###limber_redo"))
                 _rigs.Redo();
         }
-        Tooltip((_config.RedoKey ??= new()).Label);
+        Tooltip("Redo what was undone. " + (_config.RedoKey ??= new()).Label);
     }
 
     private void DrawGizmoMode()

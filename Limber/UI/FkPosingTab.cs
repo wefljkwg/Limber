@@ -235,10 +235,6 @@ public sealed class FkPosingTab
         lock(_rigs.Sync)
             snapshot = _rigs.GetSnapshot(actor.Address);
 
-        ImGui.TextWrapped("Turn bones directly: pick a bone (in the list or by clicking its dot), then use the rings in the scene "
-            + "or the fields below. Everything below it follows. Pick below whether your turns go on top of the animation (like Brio: the "
-            + "character keeps moving, freeze motion to stop it) or hold the pose. IK posing (the IK Posing page) works on top of this.");
-        ImGui.Spacing();
 
         All.TryGetValue(name, out var pose);
         bool on = pose?.Enabled ?? true;
@@ -252,16 +248,17 @@ public sealed class FkPosingTab
         }
         ImGui.SameLine();
         ImGui.TextDisabled($"({pose?.Bones.Count ?? 0} bone{(pose?.Bones.Count == 1 ? "" : "s")} posed)");
+        SymmetryControls.Draw(_config, name, "fk");
 
         // How FK goes on: on top of the animation (Brio) or holding the pose (Koikatsu).
         bool layeredNow = pose?.Layered ?? true;
         int mode = layeredNow ? 0 : 1;
         bool switched = false;
-        if(ImGui.RadioButton("On top of the animation (Brio style)###fk_mode_layer", mode == 0)) { mode = 0; switched = true; }
+        if(ImGui.RadioButton("On top of the animation###fk_mode_layer", mode == 0)) { mode = 0; switched = true; }
         Tooltip("Each bone's FK is a turn added to what the animation does, so the character keeps animating (breathing, "
-            + "emotes, idles) with your pose on it. Freeze motion (top of the window) to hold everything still, as in Brio.");
+            + "emotes, idles) with your pose on it. Freeze motion (top of the window) to hold everything still.");
         ImGui.SameLine();
-        if(ImGui.RadioButton("Hold the pose (Koikatsu style)###fk_mode_hold", mode == 1)) { mode = 1; switched = true; }
+        if(ImGui.RadioButton("Hold the pose###fk_mode_hold", mode == 1)) { mode = 1; switched = true; }
         Tooltip("Each bone you pose holds its own turn and stops animating; the bones you haven't touched keep animating.");
         if(switched && (mode == 0) != layeredNow)
         {
@@ -394,6 +391,41 @@ public sealed class FkPosingTab
     private static bool Bakeable(string bone, bool adult)
         => HandleCatalog.IsPickable(bone, adult) && bone.StartsWith("j_", StringComparison.Ordinal) && !HandleCatalog.IsFaceBone(bone)
            && !bone.StartsWith("j_mune", StringComparison.Ordinal);
+
+    /// <summary>
+    /// For the IK posing page: the character (or just one bone) in the skeleton's rest pose, held by FK. Returns what
+    /// happened.
+    /// </summary>
+    public string RestPose(ActorRef actor, string? bone)
+    {
+        string name = actor.Name ?? "";
+        if(name.Length == 0)
+            return "This character has no name to keep the pose under.";
+        _fk.Watch(actor.Address, actor.ObjectIndex);
+        BoneSnapshot? snapshot;
+        lock(_rigs.Sync)
+            snapshot = _rigs.GetSnapshot(actor.Address);
+        if(snapshot == null)
+            return "This character's bones aren't available right now.";
+        if(bone == null)
+        {
+            Checkpoint(name);
+            int n = RestAll(name, actor, snapshot);
+            return n > 0 ? $"{n} bones put in the rest pose." : "The rest pose isn't read yet: press it again in a moment.";
+        }
+        int i = snapshot.IndexOf(bone);
+        if(i < 0 || !_fk.TryGetRest(bone, out var rest))
+            return "The rest pose isn't read yet: press it again in a moment.";
+        Checkpoint(name);
+        bool layered = IsLayered(name);
+        var entry = Entry(name, bone, snapshot, create: true)!;
+        entry.Rotation = layered ? Quaternion.Normalize(Quaternion.Inverse(BaseOf(name, bone, snapshot, i).Local) * rest) : rest;
+        entry.Move = false;
+        entry.Enabled = true;
+        _eulerBone = null;
+        _config.Save();
+        return $"{HandleCatalog.Label(bone)} put in the rest pose.";
+    }
 
     private int RestAll(string name, ActorRef actor, BoneSnapshot snapshot)
     {
@@ -709,7 +741,7 @@ public sealed class FkPosingTab
         ImGui.SameLine();
         using(ImRaii.Disabled(!posed))
         {
-            if(ImGui.Button("Back to animation###fk_bone_clear"))
+            if(ImGui.Button("Clear FK for this bone###fk_bone_clear"))
             {
                 Checkpoint(name);
                 if(All.TryGetValue(name, out var pose))

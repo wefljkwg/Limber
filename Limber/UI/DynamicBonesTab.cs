@@ -36,7 +36,7 @@ public sealed class DynamicBonesTab
             ImGui.TextDisabled("This character has no name to keep the settings under.");
             return;
         }
-        ImGui.TextWrapped("The penis as a chain of springs, like Koikatsu's: Hardness decides how much the pose wins. 100%: exactly as "
+        ImGui.TextWrapped("The penis as a chain of springs: Hardness decides how much the pose wins. 100%: exactly as "
             + "posed / animated. Lower: it gives, hangs and swings with the body's moves. 0%: flaccid. "
             + "Needs an IVCS / YAS skeleton with a penis (iv_ochinko bones). Kept for this character by name; only on your screen.");
         ImGui.Spacing();

@@ -84,7 +84,7 @@ public static class BodyShapeBuild
                 var collection = await OneClickRig.Game(() =>
                     Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index));
                 if (!collection.Item1)
-                    throw new InvalidOperationException("Penumbra doesn't know this character right now");
+                    throw new InvalidOperationException("The mod manager doesn't know this character right now");
                 var (id, name) = collection.Item3;
                 var mod = $"{ModName} ({OneClickRig.Safe(name)})";
                 await OneClickRig.Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5")
@@ -121,11 +121,11 @@ public static class BodyShapeBuild
         }
         var root = await OneClickRig.Game(() => Plugin.PluginInterface.GetIpcSubscriber<string>("Penumbra.GetModDirectory").InvokeFunc());
         if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
-            throw new InvalidOperationException("couldn't find Penumbra's mod folder (is Penumbra running?)");
+            throw new InvalidOperationException("couldn't find the mod folder (is your mod manager running?)");
         var collection = await OneClickRig.Game(() =>
             Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index));
         if (!collection.Item1)
-            throw new InvalidOperationException("Penumbra doesn't know this character right now");
+            throw new InvalidOperationException("The mod manager doesn't know this character right now");
         var (collectionId, collectionName) = collection.Item3;
         progress.Add($"Collection: {collectionName}.");
 
@@ -137,7 +137,7 @@ public static class BodyShapeBuild
             return all.Length > 0 ? all[0] : null;
         });
         if (paths == null)
-            throw new InvalidOperationException("Penumbra couldn't list this character's files");
+            throw new InvalidOperationException("The mod manager couldn't list this character's files");
 
         var modName = $"{ModName} ({OneClickRig.Safe(collectionName)})";
         var modDir = Path.Combine(root, modName);
@@ -198,7 +198,7 @@ public static class BodyShapeBuild
         int at = await OneClickRig.Game(() => Plugin.PluginInterface.GetIpcSubscriber<Guid, string, string, int, int>("Penumbra.TrySetModPriority.V5")
             .InvokeFunc(collectionId, modName, "", Priority));
         if (on is not (0 or 1) || at is not (0 or 1))
-            progress.Add($"  Couldn't turn on \"{modName}\" in {collectionName} (Penumbra said {on}/{at}); turn it on there yourself, at the top.");
+            progress.Add($"  Couldn't turn on \"{modName}\" in {collectionName} (the mod manager said {on}/{at}); turn it on there yourself, at the top.");
         await OneClickRig.Game(() =>
         {
             Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
