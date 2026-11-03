@@ -69,6 +69,20 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 | **Housing props / World props** | Browse the game's furniture and objects, preview them, and place them in your scene. World props can be sorted by area or by type. |
 | **Renderer** | See every bone of a character, and mark which bones are soft body parts on bodies Limber doesn't know. |
 
+### Koikatsu link
+
+Needs the Limber Koikatsu plugin (see **Install** above).
+
+| Feature | What it does |
+| --- | --- |
+| **Live posing** | Characters in Koikatsu pose and animate characters in FFXIV live: body, hands and fingers follow as you play. |
+| **Channels and links** | Each Koikatsu character sends on its own channel. Link a channel to any actor, your current target, or your own character. One channel can drive several actors. |
+| **Face** | Eyes, mouth, brows, blinking and gaze follow the Koikatsu face. Save in-game faces as presets for each Koikatsu expression. |
+| **Smoothing** | Fills in frames between Koikatsu updates, so motion stays smooth at high frame rates. |
+| **Pause / resume** | Freezes or restarts every Koikatsu animation from Limber (or `/limber pause`). |
+| **Sync** | Two players see the same thing: the host's Koikatsu moves both characters on both screens. The other player doesn't need Koikatsu. |
+| **Outside group pose** | "My character" links can also move your own character in the open world. |
+
 ### Handy extras
 
 - **Undo / Redo**: takes back any change: a bone moved, a slider, a switch.
@@ -85,6 +99,13 @@ Quality of life and bug fixes always come first.
 - [ ] Stomach / belly expansion and impregnation
 - [ ] Mouth / throat bulge (with shape)
 - [ ] Vanilla voice switcher
-- [ ] Testing the sync player
+- [ ] Test the sync player with partnered animations: custom animations, custom + IK adjusted, and Limber Animations
 - [ ] Export Koikatsu animations directly from Limber, choosing which animations to export
 - [ ] Export characters as they appear, fully rigged and ready to use in VRChat
+- [ ] Client-side full body tracking that can record movements and export them to the Timeline
+- [ ] Client-side full body tracking that the sync partner can see
+- [ ] Improve the experimental VLC video to animation feature
+- [ ] Bring Honey Select 2 into Limber the same way as Koikatsu
+- [ ] Import minions, mounts, enemies and non-human NPCs with their animations intact and playable, and pose them
+- [ ] Attach housing props and world props to bones
+- [ ] Preset saving for every feature
