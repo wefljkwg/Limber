@@ -76,3 +76,15 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 - **Redraw**: draws a character again so changes to their look show up.
 - **Pose files**: save a pose and load it back later.
 - **Hide Limber window when UI is hidden**: an option in Advanced settings.
+
+## Planned features
+
+Quality of life and bug fixes always come first.
+
+- [ ] Stomach / abdominal bulge (with shape)
+- [ ] Stomach / belly expansion and impregnation
+- [ ] Mouth / throat bulge (with shape)
+- [ ] Vanilla voice switcher
+- [ ] Testing the sync player
+- [ ] Export Koikatsu animations directly from Limber, choosing which animations to export
+- [ ] Export characters as they appear, fully rigged and ready to use in VRChat
