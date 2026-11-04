@@ -22,6 +22,9 @@ public sealed unsafe class HousingPropsTab
     private int _where; // 0 all, 1 indoor, 2 outdoor
     private bool _byType;  // world props: in sections by what they are, not where they're from
     private bool _filteredByType;
+    private bool _favOnly, _filteredFav;
+    private int _filteredFavCount;
+    private string FavList => _world ? "world" : "housing";
     private readonly List<(string Section, int Start, int End)> _sections = new();
 
     private string SectionOf(HousingItem i)
@@ -74,15 +77,24 @@ public sealed unsafe class HousingPropsTab
             ImGui.SameLine();
             if(ImGui.RadioButton("Sort by type###world_by_type", _byType))
                 _byType = true;
+            ImGui.SameLine();
         }
+        ImGui.Checkbox($"Favorites only ({Favorites.Count(FavList)})###{Id}_favs", ref _favOnly);
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Click the star next to an item to add it to your favourites.");
 
-        if(_filteredFor != _search || _filteredWhere != _where || _filteredCount != catalog.Length || _filteredByType != _byType)
+        int favCount = Favorites.Count(FavList);
+        if(_filteredFor != _search || _filteredWhere != _where || _filteredCount != catalog.Length || _filteredByType != _byType
+           || _filteredFav != _favOnly || (_favOnly && _filteredFavCount != favCount))
         {
             _filteredFor = _search;
             _filteredWhere = _where;
             _filteredCount = catalog.Length;
             _filteredByType = _byType;
+            _filteredFav = _favOnly;
+            _filteredFavCount = favCount;
             _filtered = catalog.Where(i => (_world || _where == 0 || (_where == 1) == i.Indoors)
+                && (!_favOnly || Favorites.Has(FavList, i.GroupPath))
                 && (_search.Length == 0 || i.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
                     || i.Category.Contains(_search, StringComparison.OrdinalIgnoreCase) || i.Kind.Contains(_search, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(SectionOf, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -140,6 +152,8 @@ public sealed unsafe class HousingPropsTab
                         break;
                     }
                     var item = _filtered[k];
+                    Favorites.Star(FavList, item.GroupPath, $"{Id}_{item.GroupPath}");
+                    ImGui.SameLine();
                     string label = $"{item.Name}{(item.World || item.Indoors ? "" : "  (outdoor)")}###{Id}_{item.GroupPath}";
                     if(ImGui.Selectable(label, _chosen == item))
                         _chosen = item;

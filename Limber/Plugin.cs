@@ -68,6 +68,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BallThrobService _ballThrob;
     private readonly SymmetryService _symmetry;
     private readonly FacePosingService _facePosing;
+    private GlobalPresetService? _globalPresets;
     private FacePosingTab? _faceTab;
     private readonly AhegaoService _ahegao;
     private TimelineService? _timeline;
@@ -146,6 +147,22 @@ public sealed class Plugin : IDalamudPlugin
             _config.Ik.BodyPhysicsOn = false;
             Limber.BodyRig.SoftBody.On = () => _config.Ik.BodyPhysicsOn;
             _spawner.Added = () => { if(_config.Ik.Oral != null) _config.Ik.Oral.Enabled = false; };
+            // Global presets: put on by their rules as characters come into the scene, and on actors added with a look
+            // that has one attached.
+            _globalPresets = new GlobalPresetService(_config.Ik, ObjectTable)
+            {
+                PutOnLook = (address, index, lookName) =>
+                {
+                    var look = (_config.Ik.AppearancePresets ?? new()).Find(l => l.Name == lookName);
+                    if(look != null)
+                        Appearance.Apply(address, index, look.Copy());
+                },
+            };
+            _spawner.Spawned = (index, name, look) =>
+            {
+                if(look != null && !string.IsNullOrEmpty(look.GlobalPreset))
+                    _globalPresets.Apply(look.GlobalPreset, name);
+            };
             _motions.AlsoStop = _oral.StopFor;
             _rigs.AddUndoPart(new RigService.UndoPart
             {
@@ -300,6 +317,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.BodyShapeTab = new BodyShapeTab(_selection, _config.Ik) { RigEverything = limberTab.RigEverything };
             _mainWindow.OralTab = new OralTab(_oral, _selection, _config.Ik);
             _mainWindow.AnimationsTab = new AnimationsTab(_selection);
+            Favorites.Settings = _config.Ik;
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
             _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik);
             limberTab.Fk = _fkTab;
@@ -319,6 +337,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.AppearanceTab = new AppearanceTab(_selection, _config.Ik);
             _mainWindow.CameraTab = new CameraTab(_config.Ik);
             _mainWindow.VoiceTab = new VoiceTab(_selection);
+            _mainWindow.GlobalPresetsTab = new GlobalPresetsTab(_selection, _config.Ik, _globalPresets!);
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             foreach(var pageWindow in _mainWindow.PageWindows())
@@ -645,7 +664,10 @@ public sealed class Plugin : IDalamudPlugin
             // The camera works in GPose and out of it (whenever Limber is on).
             UpdateCamera(_config.PluginEnabled);
             if(_config.PluginEnabled)
+            {
                 VoiceSwitcher.Update();
+                _globalPresets?.Update();
+            }
             else
                 VoiceSwitcher.ResetAll();
             if(_config.PluginEnabled && here)

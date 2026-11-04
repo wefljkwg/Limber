@@ -12,6 +12,7 @@ public sealed class AnimationsTab
 {
     private readonly Selection _selection;
     private string _search = "";
+    private bool _favOnly;
     private string _group = "emote";
     private int _race = -1; // index into Animations.Races; -1 = the character's own
     private float _speed = 1f;
@@ -84,8 +85,13 @@ public sealed class AnimationsTab
         ImGui.SameLine();
         ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
         ImGui.InputTextWithHint("###anim_search", "Search (name or key)", ref _search, 100);
+        ImGui.SameLine();
+        ImGui.Checkbox($"Favorites only ({Favorites.Count("animations")})###anim_favs", ref _favOnly);
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Right-click an animation to add it to (or take it out of) your favourites.");
 
-        var list = all.Where(e => (_group.Length == 0 || e.Group == _group)
+        var list = all.Where(e => (!_favOnly || Favorites.Has("animations", e.Key))
+                                  && (_group.Length == 0 || e.Group == _group)
                                   && (_search.Length == 0 || e.Key.Contains(_search, StringComparison.OrdinalIgnoreCase)
                                       || e.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)))
             .Take(400).ToList();
@@ -111,7 +117,9 @@ public sealed class AnimationsTab
                 float width = ImGui.GetContentRegionAvail().X;
                 bool picked = ImGui.Selectable($"###anim_{e.Id}", false, ImGuiSelectableFlags.AllowDoubleClick, new System.Numerics.Vector2(width, cellHeight));
                 if(ImGui.IsItemHovered())
-                    ImGui.SetTooltip((e.Name.Length > 0 ? e.Name + "\n" : "") + e.Key + "\nDouble-click to play.");
+                    ImGui.SetTooltip((e.Name.Length > 0 ? e.Name + "\n" : "") + e.Key + "\nDouble-click to play.  Right-click: favourite.");
+                if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                    Favorites.Toggle("animations", e.Key);
                 if(picked && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 {
                     _status = _race < 0
@@ -140,6 +148,8 @@ public sealed class AnimationsTab
                 if(e.Name.Length > 0)
                     draw.AddText(textAt + new System.Numerics.Vector2(0, ImGui.GetTextLineHeight()), ImGui.GetColorU32(ImGuiCol.TextDisabled), e.Key);
                 draw.PopClipRect();
+                if(Favorites.Has("animations", e.Key))
+                    Favorites.DrawStar(draw, new System.Numerics.Vector2(start.X + width - 16f * scale, start.Y + 3f * scale), 12f * scale);
             }
         }
     }

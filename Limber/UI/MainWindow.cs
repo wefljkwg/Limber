@@ -44,6 +44,7 @@ public sealed class MainWindow : Window
     public AppearanceTab? AppearanceTab { get; set; }
     public CameraTab? CameraTab { get; set; }
     public VoiceTab? VoiceTab { get; set; }
+    public GlobalPresetsTab? GlobalPresetsTab { get; set; }
     private int _portEdit;
     private string _newPresetName = "";
     /// <summary>Which link the Face tab captures from / shows presets for.</summary>
@@ -86,6 +87,7 @@ public sealed class MainWindow : Window
     private Page[] Pages => _pages ??=
     [
         new("start", "", "Getting started", "What Limber does and where to begin.", DrawStartPage),
+        new("globalpresets", "", "Global presets", "Everything a character has, saved as one preset: put it on anyone, edit it, and have it go on by itself when a player or actor comes into the scene.", () => GlobalPresetsTab?.Draw(), () => GlobalPresetsTab != null),
 
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
         new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),

@@ -132,6 +132,11 @@ public sealed class RigSettings
     public bool TimelineOwnWindow { get; set; }
     /// <summary>Your own presets: page -> preset name -> the page's settings (saved with the preset bar).</summary>
     public Dictionary<string, Dictionary<string, string>> Presets { get; set; } = new();
+    /// <summary>Global presets (everything for one character) and the rules that put them on characters by themselves.</summary>
+    public List<Limber.Rig.GlobalPreset> GlobalPresets { get; set; } = new();
+    public List<Limber.Rig.GlobalPresetRule> GlobalPresetRules { get; set; } = new();
+    /// <summary>Favourites: list (housing, world, animations) -> the items' keys.</summary>
+    public Dictionary<string, HashSet<string>> Favorites { get; set; } = new();
     /// <summary>The camera moved off its place: sideways (+ right), up, forward (metres, the way it looks).</summary>
     public System.Numerics.Vector3 CameraOffset { get; set; }
 

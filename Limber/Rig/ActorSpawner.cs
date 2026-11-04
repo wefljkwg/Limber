@@ -100,7 +100,17 @@ public sealed unsafe class ActorSpawner : IDisposable
         while(_number.ContainsValue(number))
             number++;
         _number[index] = number;
-        SetName(obj, $"Limber {number}");
+        // (a look with its own actor name: that name, made unique if it's in use already)
+        string actorName = $"Limber {number}";
+        string wanted = (look?.ActorName ?? "").Trim();
+        if(wanted.Length > 0)
+        {
+            actorName = wanted;
+            int copy = 2;
+            while(NameInUse(actorName, index))
+                actorName = $"{wanted} {copy++}";
+        }
+        SetName(obj, actorName);
         // Penumbra told it's a copy of the source (as Brio does): it then knows the actor, draws it with the source's
         // collection, and the rig / soft body work on it (without this Penumbra didn't recognise it).
         TellPenumbra(index);
@@ -118,6 +128,7 @@ public sealed unsafe class ActorSpawner : IDisposable
 
         _waitingToDraw[index] = 300;
         Added?.Invoke();
+        Spawned?.Invoke(index, actorName, look);
         return index;
     }
 
@@ -137,6 +148,17 @@ public sealed unsafe class ActorSpawner : IDisposable
                 com->DeleteObjectByIndex(clientSlot, 0);
         }
         return true;
+    }
+
+    /// <summary>After an actor is added: its slot, its name and the look it was added with (or null).</summary>
+    public Action<ushort, string, AppearanceData?>? Spawned;
+
+    private bool NameInUse(string name, ushort except)
+    {
+        foreach(var index in _made)
+            if(index != except && Plugin.ObjectTable[index] is { } o && o.Name.TextValue == name)
+                return true;
+        return false;
     }
 
     /// <summary>The number in an added actor's name (0 if Limber didn't add it).</summary>

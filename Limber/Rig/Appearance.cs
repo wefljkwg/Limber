@@ -17,10 +17,15 @@ public sealed class AppearanceData
     /// <summary>Main hand, off hand (WeaponModelId values).</summary>
     public ulong[] Weapons { get; set; } = new ulong[2];
     public string Name { get; set; } = "";
+    /// <summary>The name an actor added with this look gets ("" = Limber 1, Limber 2...).</summary>
+    public string ActorName { get; set; } = "";
+    /// <summary>A global preset put on an actor added with this look ("" = none).</summary>
+    public string GlobalPreset { get; set; } = "";
 
     public AppearanceData Copy() => new()
     {
         Customize = (byte[])Customize.Clone(), Gear = (ulong[])Gear.Clone(), Weapons = (ulong[])Weapons.Clone(), Name = Name,
+        ActorName = ActorName, GlobalPreset = GlobalPreset,
     };
 }
 

@@ -664,6 +664,39 @@ public sealed class AppearanceTab
             if(ImGui.SmallButton("x") && ImGui.GetIO().KeyCtrl)
                 remove = i;
             Tooltip("Hold Ctrl and click to delete this look.");
+
+            // As an actor: the name it gets, and a global preset put on it.
+            ImGui.Indent();
+            string actorName = presets[i].ActorName ?? "";
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            if(ImGui.InputTextWithHint("###app_actor_name", "Actor name", ref actorName, 48))
+                presets[i].ActorName = actorName;
+            if(ImGui.IsItemDeactivatedAfterEdit())
+                _config.Save();
+            Tooltip("An actor added with this look (Actors page) gets this name, and keeps this look. Empty: Limber 1, Limber 2...");
+            ImGui.SameLine();
+            var globals = _config.GlobalPresets ?? new();
+            string attached = presets[i].GlobalPreset ?? "";
+            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            using(var gp = ImRaii.Combo("###app_actor_preset", attached.Length > 0 ? attached : "No global preset"))
+            {
+                if(gp.Success)
+                {
+                    if(ImGui.Selectable("No global preset", attached.Length == 0))
+                    {
+                        presets[i].GlobalPreset = "";
+                        _config.Save();
+                    }
+                    foreach(var g in globals)
+                        if(ImGui.Selectable(g.Name, g.Name == attached))
+                        {
+                            presets[i].GlobalPreset = g.Name;
+                            _config.Save();
+                        }
+                }
+            }
+            Tooltip("A global preset (Global presets page) put on an actor added with this look.");
+            ImGui.Unindent();
         }
         if(remove >= 0)
         {
