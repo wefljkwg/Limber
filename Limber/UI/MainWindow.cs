@@ -45,6 +45,7 @@ public sealed class MainWindow : Window
     public CameraTab? CameraTab { get; set; }
     public VoiceTab? VoiceTab { get; set; }
     public GlobalPresetsTab? GlobalPresetsTab { get; set; }
+    public ExtrasTab? ExtrasTab { get; set; }
     private int _portEdit;
     private string _newPresetName = "";
     /// <summary>Which link the Face tab captures from / shows presets for.</summary>
@@ -88,6 +89,7 @@ public sealed class MainWindow : Window
     [
         new("start", "", "Getting started", "What Limber does and where to begin.", DrawStartPage),
         new("globalpresets", "", "Global presets", "Everything a character has, saved as one preset: put it on anyone, edit it, and have it go on by itself when a player or actor comes into the scene.", () => GlobalPresetsTab?.Draw(), () => GlobalPresetsTab != null),
+        new("extras", "", "Extras", "One-press fun: Ragdoll mode (the chosen character goes limp and falls where they stand).", () => ExtrasTab?.Draw(), () => ExtrasTab != null),
 
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
         new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
