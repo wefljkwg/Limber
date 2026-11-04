@@ -28,7 +28,28 @@ public sealed class ExtrasTab
         }
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip(on ? "They get back up (back to their pose)." : "The chosen character goes limp and falls where they stand.");
+        ImGui.SameLine();
+        using(ImRaii.Disabled(!on))
+        {
+            if(ImGui.Button("Push###extras_ragdoll_push") && on)
+                _ragdoll.Push(actor.Address);
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Shoves them again while they're down (a random way, up and over).");
         if(!actor.IsSet)
             ImGui.TextDisabled("Choose a character at the top first.");
+
+        // How lively it is.
+        float bounce = RagdollService.Bounce, slide = RagdollService.Slide;
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Bounce###extras_ragdoll_bounce", ref bounce, 0f, 0.95f, "%.2f"))
+            RagdollService.Bounce = bounce;
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("How much a part bounces back off the floor.");
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Slide###extras_ragdoll_slide", ref slide, 0f, 0.995f, "%.3f"))
+            RagdollService.Slide = slide;
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("How far they slide along the floor (high: like ice).");
     }
 }

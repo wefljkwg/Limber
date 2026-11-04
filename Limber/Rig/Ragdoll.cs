@@ -97,7 +97,7 @@ public sealed unsafe class RagdollService
                     (gone ??= new()).Add(address);
                     continue;
                 }
-                Step(body);
+                Step(body, address);
                 Pose(sk, body);
             }
             catch
@@ -210,7 +210,7 @@ public sealed unsafe class RagdollService
             ground = MathF.Min(ground, p.Y);
         body.Ground = ground - 0.01f;
         // a small push so it doesn't balance upright: back and a touch to one side
-        var push = new Vector3(0.004f, 0f, -0.012f);
+        var push = new Vector3(0.01f, 0.004f, -0.03f); // (a firm shove back, and a touch up and to the side)
         for(int i = 0; i < body.P.Length; i++)
             if(body.P[i].Y > body.Ground + 0.5f)
                 body.Prev[i] -= push * ((body.P[i].Y - body.Ground) / 1.5f);
@@ -257,18 +257,48 @@ public sealed unsafe class RagdollService
 
     // ---- The physics: points falling, links holding them together, the floor
 
-    private static void Step(Body body)
+    /// <summary>How much a part bounces back off the floor (0 none, 1 all of its speed).</summary>
+    public static float Bounce = 0.5f;
+    /// <summary>How far parts slide on the floor (0 they stop dead, 1 like ice).</summary>
+    public static float Slide = 0.9f;
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(nint, Vector3)> _pushes = new();
+
+    /// <summary>Shoves a ragdolling character (a random way, mostly back and up) (UI thread).</summary>
+    public void Push(nint address)
+    {
+        var r = Random.Shared;
+        float a = (float)(r.NextDouble() * Math.PI * 2);
+        _pushes.Enqueue((address, new Vector3(MathF.Sin(a) * 2.5f, 2.5f + (float)r.NextDouble() * 1.5f, MathF.Cos(a) * 2.5f)));
+    }
+
+    private void Step(Body body, nint address)
     {
         long now = Stopwatch.GetTimestamp();
         float dt = Math.Clamp((float)(now - body.Last) / Stopwatch.Frequency, 1f / 240f, 1f / 30f);
         body.Last = now;
         var gravity = new Vector3(0f, -9.8f, 0f);
-        const float Damping = 0.995f;
+        const float Damping = 0.999f; // (hardly any air drag)
         var p = body.P;
         var prev = body.Prev;
+        // shoves (a speed in metres a second, given to every point)
+        int n = _pushes.Count;
+        for(int k = 0; k < n && _pushes.TryDequeue(out var push); k++)
+        {
+            if(push.Item1 != address)
+            {
+                if(IsOn(push.Item1))
+                    _pushes.Enqueue(push); // (someone else's: theirs next)
+                continue;
+            }
+            for(int i = 0; i < p.Length; i++)
+                prev[i] -= push.Item2 * dt * (0.7f + 0.6f * (i % 3) / 2f); // (a little uneven, so it tumbles)
+        }
+        var before = new Vector3[p.Length];
         for(int i = 0; i < p.Length; i++)
         {
             var velocity = (p[i] - prev[i]) * Damping;
+            before[i] = velocity;
             prev[i] = p[i];
             p[i] += velocity + gravity * (dt * dt);
         }
@@ -287,20 +317,27 @@ public sealed unsafe class RagdollService
                 p[a] += fix;
                 p[b] -= fix;
             }
-            // the floor: nothing goes through it, and what touches it slides to a stop
+            // nothing goes through the floor
             for(int i = 0; i < p.Length; i++)
             {
                 float floor = body.Ground + body.Radius[i];
                 if(p[i].Y < floor)
-                {
                     p[i].Y = floor;
-                    var slide = p[i] - prev[i];
-                    prev[i].X = p[i].X - slide.X * 0.6f;
-                    prev[i].Z = p[i].Z - slide.Z * 0.6f;
-                    if(prev[i].Y < floor)
-                        prev[i].Y = floor + (floor - prev[i].Y) * 0.2f; // (a small bounce)
-                }
             }
+        }
+        // What touches the floor bounces back up and slides on along it.
+        float bounce = Math.Clamp(Bounce, 0f, 0.95f), slide = Math.Clamp(Slide, 0f, 0.995f);
+        for(int i = 0; i < p.Length; i++)
+        {
+            float floor = body.Ground + body.Radius[i];
+            if(p[i].Y > floor + 0.002f)
+                continue;
+            var v = p[i] - prev[i];
+            // coming down: back up by the bounce (a slow landing just settles)
+            v.Y = before[i].Y < -0.004f ? -before[i].Y * bounce : MathF.Max(v.Y, 0f);
+            v.X *= slide;
+            v.Z *= slide;
+            prev[i] = p[i] - v;
         }
     }
 
