@@ -114,6 +114,68 @@ public unsafe struct ActorSkeleton
         return null;
     }
 
+    /// <summary>
+    /// A model's every bone shrunk to almost nothing where it is (bone update): its mesh collapses onto its bones and
+    /// can't be seen, while the bones keep their places (whatever rides on them still sits where it did). The game
+    /// builds the pose again next frame, so this is done every frame it's wanted.
+    /// </summary>
+    public static void ShrinkModel(GameObject* obj) => SetModelScales(obj, true);
+
+    // Which bones are shrunk: the ones that bend the mesh (j_...), not the attachment points (n_...) riders and
+    // weapons sit on, which keep their size so whatever's on them is drawn as it is.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, bool[]> ShrinkMasks = new();
+
+    private static bool[] ShrinkMask(hkaSkeleton* skeleton)
+    {
+        int count = skeleton->Bones.Length;
+        if(ShrinkMasks.TryGetValue((nint)skeleton, out var known) && known.Length == count)
+            return known;
+        if(ShrinkMasks.Count > 256)
+            ShrinkMasks.Clear();
+        var mask = new bool[count];
+        for(int i = 0; i < count; i++)
+        {
+            string name = skeleton->Bones.Data[i].Name.String ?? "";
+            mask[i] = name.StartsWith("j_", StringComparison.Ordinal);
+        }
+        ShrinkMasks[(nint)skeleton] = mask;
+        return mask;
+    }
+
+    /// <summary>Back to its own size (if the pose wasn't built again since it was shrunk: animation paused).</summary>
+    public static void UnshrinkModel(GameObject* obj) => SetModelScales(obj, false);
+
+    private static void SetModelScales(GameObject* obj, bool shrink)
+    {
+        if(obj == null || obj->DrawObject == null)
+            return;
+        var sceneObject = (SceneObject*)obj->DrawObject;
+        if(sceneObject->GetObjectType() != SceneObjectType.CharacterBase)
+            return;
+        var skeleton = ((CharacterBase*)obj->DrawObject)->Skeleton;
+        if(skeleton == null || skeleton->PartialSkeletons == null)
+            return;
+        var tiny = new Vector3(1e-4f);
+        for(int p = 0; p < skeleton->PartialSkeletonCount; p++)
+        {
+            var pose = GetPose(&skeleton->PartialSkeletons[p]);
+            if(pose == null || pose->Skeleton == null)
+                continue;
+            int count = pose->Skeleton->Bones.Length;
+            var mask = ShrinkMask(pose->Skeleton);
+            for(int bone = 0; bone < count && bone < mask.Length; bone++)
+            {
+                if(!mask[bone])
+                    continue;
+                var scale = (Vector3*)&pose->AccessBoneModelSpace(bone, PropagateOrNot.DontPropagate)->Scale;
+                if(shrink)
+                    *scale = tiny;
+                else if(*scale == tiny)
+                    *scale = Vector3.One;
+            }
+        }
+    }
+
     // The two scale factors the game multiplies a character's size by (race height and the height slider).
     private static float ReadHeightScale(CharacterBase* characterBase)
     {

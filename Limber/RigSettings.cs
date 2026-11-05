@@ -89,6 +89,11 @@ public sealed class RigSettings
 
     /// <summary>Characters affected: only the ones ticked (by name), for Body physics and for Body shape.</summary>
     public bool PhysicsOnlyTicked { get; set; }
+
+    /// <summary>Hide mounts (Extras): riders look like they're floating; everyone, or only the characters ticked.</summary>
+    public bool HideMounts { get; set; }
+    public bool HideMountsOnlyTicked { get; set; }
+    public System.Collections.Generic.HashSet<string> HideMountsCharacters { get; set; } = new();
     public System.Collections.Generic.HashSet<string> PhysicsCharacters { get; set; } = new();
     public bool BodyShapeOnlyTicked { get; set; }
     public System.Collections.Generic.HashSet<string> BodyShapeCharacters { get; set; } = new();

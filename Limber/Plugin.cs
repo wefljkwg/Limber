@@ -66,6 +66,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TwerkService _twerk;
     private readonly ExpansionService _expansion;
     private readonly SizeChangeService _sizeChange;
+    private readonly Limber.Rig.HideMounts _hideMounts = new();
     private readonly BustShapeService _bust;
     private readonly BallThrobService _ballThrob;
     private readonly SymmetryService _symmetry;
@@ -335,7 +336,7 @@ public sealed class Plugin : IDalamudPlugin
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame),
-                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber attached props", _housing.CaptureBones), ("Limber attached effects", _effects.CaptureBones), ("Limber effect helpers", _effects.CopyPoses), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
+                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber attached props", _housing.CaptureBones), ("Limber attached effects", _effects.CaptureBones), ("Limber effect helpers", _effects.CopyPoses), ("Limber hide mounts", _hideMounts.UpdateFrame), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
                 ("Limber freeze motion (end of frame)", _freeze.CaptureFrame));
 
             var pluginDir = PluginInterface.AssemblyLocation.DirectoryName ?? ".";
@@ -374,7 +375,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.CameraTab = new CameraTab(_config.Ik);
             _mainWindow.VoiceTab = new VoiceTab(_selection);
             _mainWindow.GlobalPresetsTab = new GlobalPresetsTab(_selection, _config.Ik, _globalPresets!);
-            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll);
+            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik);
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             foreach(var pageWindow in _mainWindow.PageWindows())
@@ -564,6 +565,9 @@ public sealed class Plugin : IDalamudPlugin
             perf.Mark("housing props");
             _effects.Update(here);
             perf.Mark("effects");
+            _hideMounts.Update(here, _config.Ik.HideMounts,
+                name => Limber.UI.CharacterFilter.Allows(_config.Ik.HideMountsOnlyTicked, _config.Ik.HideMountsCharacters, name));
+            perf.Mark("hide mounts");
             _props.UpdateWorld();
             perf.Mark("devices");
             HandleUndoKeys();

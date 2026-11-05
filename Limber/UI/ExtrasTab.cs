@@ -10,11 +10,13 @@ public sealed class ExtrasTab
 {
     private readonly Selection _selection;
     private readonly RagdollService _ragdoll;
+    private readonly RigSettings? _config;
 
-    public ExtrasTab(Selection selection, RagdollService ragdoll)
+    public ExtrasTab(Selection selection, RagdollService ragdoll, RigSettings? config = null)
     {
         _selection = selection;
         _ragdoll = ragdoll;
+        _config = config;
     }
 
     public void Draw()
@@ -51,5 +53,33 @@ public sealed class ExtrasTab
             RagdollService.Slide = slide;
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("How far they slide along the floor (high: like ice).");
+
+        DrawHideMounts();
+    }
+
+    // Riders with their mounts not drawn: floating.
+    private void DrawHideMounts()
+    {
+        if(_config == null)
+            return;
+        ImGui.Spacing();
+        ImGui.Separator();
+        bool hide = _config.HideMounts;
+        if(ImGui.Checkbox("Hide mounts###extras_hide_mounts", ref hide))
+        {
+            _config.HideMounts = hide;
+            _config.Save();
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("A riding character's mount isn't drawn, so they look like they're floating (only on your screen).\n"
+                + "Shown again for loading screens, cutscenes and a moment as GPose starts or ends.");
+        if(!hide)
+            return;
+        bool only = _config.HideMountsOnlyTicked;
+        if(CharacterFilter.Draw("extras_mounts", "Hide mounts", ref only, _config.HideMountsCharacters ??= new(), _selection.ListCharacters(), _selection.Actor))
+        {
+            _config.HideMountsOnlyTicked = only;
+            _config.Save();
+        }
     }
 }
