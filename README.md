@@ -40,22 +40,22 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 | **Symmetry** | Pose one side and the other side copies it as a mirror image, live. |
 | **Rest pose** | Puts the whole body (or one bone) back in its plain, default stance. |
 | **Face Posing** | Move, turn and resize each part of the face (brows, eyelids, eyes, lips, jaw and more) on a face map or right on the face. |
-| **Look at** | The head and eyes follow another character, one of their bones, or the camera. |
+| **Look at** | The head and eyes follow another character, one of their bones, or the camera. Fine adjustments nudge where they look, tilt or turn the head on top, and turn or uncross the eyes, for when the look lands a little off. |
 | **Hands** | Ready-made finger poses, such as a fist, an open hand or pointing. |
 | **Bone scale** | Make any bone bigger or smaller, choosing whether the bones attached to it grow too. |
 | **Attach** | Hold a bone onto another character, for hands on shoulders or holding hands. |
 | **Move character** | Move, turn and resize a whole character, along the world's directions or the way they face. |
 | **Animations** | Play any of the game's animations, shown as a grid with icons. You can change the speed too. |
-| **Actors** | Add extra characters to the scene, as copies of someone, wearing a saved look, or looking like any named character from the game. |
+| **Actors** | Add extra characters to the scene, as copies of someone, wearing a saved look, or looking like any named character from the game. With "Also run outside GPose" on, you can add them in the open world too (only on your screen). |
 
 ### Body
 
 | Page | What it does |
 | --- | --- |
-| **Body physics** | Soft, jiggling body parts that react to movement and touch. Press **Rig** once, then turn each part on or off. |
-| **Body shape** | Sliders for the body's shape, shown live or built into the character's models. |
+| **Body physics** | Soft, jiggling breasts, butt, testicles and belly that react to movement and touch. Press **Rig** once, then turn each part on or off. The soft belly has its own rig, and the breasts rest on it. The live rig works with no rigging and no redraw, and with separate wobbles each nearby character wobbles on their own. Pick which characters it affects, or leave it on everyone. |
+| **Body shape** | Sliders for the body's shape, shown live or built into the character's models. With the live rig on, the detail sliders change the body as you drag them, with no build and no redraw. Pick which characters it affects, or leave it on everyone. |
 | **Dynamic Bones** | Parts that sway and spring with the body, from stiff to loose. |
-| **Limber Animations** | Animations Limber plays by itself: throbbing, twerking, an ahegao face and expansion, each with many patterns. |
+| **Limber Animations** | Animations Limber plays by itself: throbbing, twerking, an ahegao face, expansion (breasts, butt, penis, and a pregnant belly that grows round) and height growth or shrinking (from ant-sized up to a mountain-sized giant), each with many patterns. Tick the ones you want and start them all at once with **Start all selected**. |
 | **Oral** | A two-character mode with head and mouth movement. The mouth rig can be turned off. |
 
 ### Scene
@@ -67,7 +67,8 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 | **Camera** | Set the zoom, angles, tilt and position. You can unlock its limits, let it pass through walls and save camera shots. |
 | **Timeline** | Make your own animations by setting keyframes for poses, movement and almost any setting, then playing them back. It can open in its own window. |
 | **Devices** | Colliders (like hands or toys) that press the soft body, and motion devices that move bones on their own. |
-| **Housing props / World props** | Browse the game's furniture and objects, preview them, and place them in your scene. World props can be sorted by area or by type. |
+| **Housing props / World props** | Browse the game's furniture and objects, preview them, and place them in your scene. World props can be sorted by area or by type. Attach any placed prop to a character's bone (a hand, the head, the hips...) so it moves with them. |
+| **Effects** | Every visual effect in the game: spells, statuses, emotes, area markers, tethers and the effects placed in every zone (steam, smoke, torches...). Find them by kind (smoke, fire, sparkles, hearts...), by job, by place or by name. Place them in the scene, put them on a bone, or play them on a character so they bind to its hands and head. **Move it** shifts a character's effect to a new spot along the character's axes or the world's. Loop any effect. |
 | **Renderer** | See every bone of a character, and mark which bones are soft body parts on bodies Limber doesn't know. |
 
 ### Koikatsu link
@@ -91,13 +92,16 @@ Needs the Limber Koikatsu plugin (see **Install** above).
 - **Redraw**: draws a character again so changes to their look show up.
 - **Pose files**: save a pose and load it back later.
 - **Hide Limber window when UI is hidden**: an option in Advanced settings.
+- **Ragdoll mode** (Extras): a character goes limp and falls where they stand; push them again while they're down.
+- **Hide mounts** (Extras): riders' mounts aren't drawn, so they look like they're floating.
+- **Performance (stutters)** (Advanced): lists any part of Limber that took long enough in a frame to cause a stutter, to track down hitches.
 
 ## Planned features
 
 Quality of life and bug fixes always come first.
 
 - [ ] Stomach / abdominal bulge (with shape)
-- [ ] Stomach / belly expansion and impregnation
+- [x] Stomach / belly expansion and impregnation
 - [ ] Mouth / throat bulge (with shape)
 - [x] Vanilla voice switcher
 - [ ] Test the sync player with partnered animations: custom animations, custom + IK adjusted, and Limber Animations
@@ -108,5 +112,5 @@ Quality of life and bug fixes always come first.
 - [ ] Improve the experimental VLC video to animation feature
 - [ ] Bring Honey Select 2 into Limber the same way as Koikatsu
 - [ ] Import minions, mounts, enemies and non-human NPCs with their animations intact and playable, and pose them
-- [ ] Attach housing props and world props to bones
+- [x] Attach housing props and world props to bones
 - [x] Preset saving for every feature
