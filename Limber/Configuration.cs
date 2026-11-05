@@ -90,7 +90,7 @@ public class Configuration : IPluginConfiguration
     public bool SyncShowGenitals { get; set; } = true;
     public bool SyncShowBreasts { get; set; } = true;
 
-    /// <summary>The whole plugin on / off (/limber on|off): posing, soft bodies, props, the live mesh and the links.</summary>
+    /// <summary>The whole plugin on / off (/limber1 on|off): posing, soft bodies, props, the live mesh and the links.</summary>
     public bool PluginEnabled { get; set; } = true;
     public bool OutsideGPoseUnified { get; set; }
     /// <summary>Show the unfinished Video and VLC Live tabs (main Advanced tab).</summary>

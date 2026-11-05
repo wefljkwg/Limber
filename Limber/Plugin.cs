@@ -20,7 +20,7 @@ namespace Limber;
 // Limber: IK posing (the "Limber" tab) with the Koikatsu live link (formerly KoiPoseLink) packed in.
 public sealed class Plugin : IDalamudPlugin
 {
-    private const string Command = "/limber";
+    private const string Command = "/limber1";
     private const string KoiCommand = "/koilink";
     private const string ShortCommand = "/lmb";
 
@@ -393,19 +393,19 @@ public sealed class Plugin : IDalamudPlugin
 
             bool registered = CommandManager.AddHandler(Command, new CommandInfo(OnCommand)
             {
-                HelpMessage = "Open Limber. '/limber on' / '/limber off' turn the whole plugin on or off; '/limber close' closes the window; '/limber undo' / '/limber redo'; '/limber reset' puts moved / scaled characters back.",
+                HelpMessage = "Open Limber. '/limber1 on' / '/limber1 off' turn the whole plugin on or off; '/limber1 close' closes the window; '/limber1 undo' / '/limber1 redo'; '/limber1 reset' puts moved / scaled characters back.",
             });
             CommandManager.AddHandler(KoiCommand, new CommandInfo(OnKoiCommand)
             {
                 HelpMessage = "Koikatsu link: '/koilink on' / '/koilink off' start or stop all links; '/koilink pause' pauses or resumes Koikatsu's animation.",
             });
-            // A short alias too (also a way in if another plugin has taken /limber).
-            bool shortRegistered = CommandManager.AddHandler(ShortCommand, new CommandInfo(OnCommand) { HelpMessage = "Same as /limber.", ShowInHelp = false });
-            Log.Information($"Limber: commands registered: /limber {registered}, /lmb {shortRegistered}");
+            // A short alias too (also a way in if another plugin has taken /limber1).
+            bool shortRegistered = CommandManager.AddHandler(ShortCommand, new CommandInfo(OnCommand) { HelpMessage = "Same as /limber1.", ShowInHelp = false });
+            Log.Information($"Limber: commands registered: /limber1 {registered}, /lmb {shortRegistered}");
             if(!registered)
             {
-                Log.Warning("Limber: /limber is already used by another plugin; use /lmb instead.");
-                ChatGui.PrintError("Limber: another plugin already uses /limber. Use /lmb to open Limber.");
+                Log.Warning("Limber: /limber1 is already used by another plugin; use /lmb instead.");
+                ChatGui.PrintError("Limber: another plugin already uses /limber1. Use /lmb to open Limber.");
             }
 
             // Dalamud hides plugin windows in GPose, in cutscenes and whenever the game UI is hidden. Limber is a
@@ -754,7 +754,7 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    // Open (and bring to the front), so /limber always shows the window rather than toggling it shut.
+    // Open (and bring to the front), so /limber1 always shows the window rather than toggling it shut.
     private void OpenWindow()
     {
         _mainWindow.IsOpen = true;

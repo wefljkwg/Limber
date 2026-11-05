@@ -267,7 +267,7 @@ public sealed class MainWindow : Window
             SaveLocked();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Turns all of Limber on or off (/limber on|off). Your setup is kept.");
+            ImGui.SetTooltip("Turns all of Limber on or off (/limber1 on|off). Your setup is kept.");
         ImGui.SameLine();
         _limberTab.DrawShowHandles();
         ImGui.SameLine();
@@ -439,7 +439,7 @@ public sealed class MainWindow : Window
             _plugin.SendAnimationCommand(!kkLive ? Protocol.Wire.CmdToggle : paused ? Protocol.Wire.CmdResume : Protocol.Wire.CmdPause);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Freezes (or restarts) every character's animation in Koikatsu.\n" +
-                             "Same as Ctrl+F8 in Koikatsu, or /limber pause.");
+                             "Same as Ctrl+F8 in Koikatsu, or /limber1 pause.");
 
         if (receiver.LastError != null)
         {

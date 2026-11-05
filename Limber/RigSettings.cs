@@ -30,7 +30,7 @@ public sealed class RigSettings
     public bool UndoHotkeys { get; set; } = true;
     public Hotkey UndoKey { get; set; } = new() { Key = 0x5A, Ctrl = true }; // Ctrl+Z
     public Hotkey RedoKey { get; set; } = new() { Key = 0x59, Ctrl = true }; // Ctrl+Y
-    /// <summary>Opens / closes Limber's window (another way in besides /limber and Dalamud's plugin list).</summary>
+    /// <summary>Opens / closes Limber's window (another way in besides /limber1 and Dalamud's plugin list).</summary>
     public Hotkey OpenKey { get; set; } = new() { Key = 0x4C, Ctrl = true, Shift = true }; // Ctrl+Shift+L
 
     // Moving the hips keeps the chest and feet where they are (off: the hips carry the whole body).

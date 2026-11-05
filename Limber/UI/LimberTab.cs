@@ -321,7 +321,7 @@ public sealed partial class LimberTab
         HotkeyRow("Redo", _config.RedoKey ??= new());
         ImGui.Spacing();
         HotkeyRow("Open / close Limber", _config.OpenKey ??= new());
-        Tooltip("Opens or closes this window from anywhere in the game (also when /limber doesn't get through).");
+        Tooltip("Opens or closes this window from anywhere in the game (also when /limber1 doesn't get through).");
         ImGui.Spacing();
         ImGui.TextDisabled("Click Change, then press the key with any Ctrl / Shift / Alt you want. Esc cancels.");
     }

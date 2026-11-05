@@ -12,7 +12,7 @@
        https://raw.githubusercontent.com/wefljkwg/Limber/main/repo.json
 
 3. Type `/xlplugins`, search for **Limber**, and click **Install**.
-4. Type `/limber` to open it.
+4. Type `/limber1` to open it.
 
 ### Koikatsu plugin (only needed to mirror Koikatsu characters)
 1. Close Koikatsu.
@@ -29,7 +29,7 @@ Koikatsu needs BepInEx and KKAPI, which any HF Patch or BetterRepack install alr
 
 ## What Limber does
 
-Pose, shape and animate characters in group pose. Everything happens on your screen only. Open it with `/limber` (or `/lmb`).
+Pose, shape and animate characters in group pose. Everything happens on your screen only. Open it with `/limber1` (or `/lmb`).
 
 ### Posing
 
@@ -80,7 +80,7 @@ Needs the Limber Koikatsu plugin (see **Install** above).
 | **Channels and links** | Each Koikatsu character sends on its own channel. Link a channel to any actor, your current target, or your own character. One channel can drive several actors. |
 | **Face** | Eyes, mouth, brows, blinking and gaze follow the Koikatsu face. Save in-game faces as presets for each Koikatsu expression. |
 | **Smoothing** | Fills in frames between Koikatsu updates, so motion stays smooth at high frame rates. |
-| **Pause / resume** | Freezes or restarts every Koikatsu animation from Limber (or `/limber pause`). |
+| **Pause / resume** | Freezes or restarts every Koikatsu animation from Limber (or `/limber1 pause`). |
 | **Sync** | Two players see the same thing: the host's Koikatsu moves both characters on both screens. The other player doesn't need Koikatsu. |
 | **Outside group pose** | "My character" links can also move your own character in the open world. |
 
