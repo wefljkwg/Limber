@@ -74,9 +74,30 @@ public sealed class RigPart
     public bool OwnHeight { get; init; }
     /// <summary>Left-right distance to assume when the skeleton's own can't be measured.</summary>
     public float FallbackSeparation { get; init; } = 0.17f;
+    /// <summary>Two bones whose distance is the part's unit instead of its two parents' (the belly: both halves hang
+    /// from the spine, so the hip joints give its size).</summary>
+    public (string Left, string Right)? SeparationBones { get; init; }
+    /// <summary>A parent per row (top row first; null = the part's own bone): the belly's bottom row hangs from the
+    /// hips, so the lower belly follows the pelvis while the rest follows the spine.</summary>
+    public string?[]? RowParents { get; init; }
+    /// <summary>
+    /// The part is a region of bones the whole body shares (the belly: the spine and hips), not a bone of its own: each
+    /// half only takes the vertices on its own side, and only as much of them as a smooth oval over the box's front
+    /// (<see cref="MdlRigger.RegionShare"/>), the rest staying on the bones they had.
+    /// </summary>
+    public bool Region { get; init; }
 
     public int PerLayer => Rows * Columns;
     public int PerSide => Layers * Rows * Columns;
+
+    /// <summary>The parent pattern for a bone of this part (its row's, else the part's own).</summary>
+    public string? RowParent(int index)
+    {
+        if (RowParents == null || !Lattice)
+            return null;
+        int row = index % PerLayer / Columns;
+        return row < RowParents.Length ? RowParents[row] : null;
+    }
 
     /// <summary>Bone name, e.g. lmb_mune_l_00 (row by row, top row first, inner column first).</summary>
     public string BoneName(bool left, int index) => $"{Prefix}{(left ? 'l' : 'r')}_{index:00}";
@@ -201,6 +222,24 @@ public static class RigParts
         FallbackSeparation = 0.12f,
     };
 
+    // The belly: a box per half (3 rows x 2 columns x 2 layers: back face and front), from the middle of the body out,
+    // hanging from the pelvis (not the spine, which turns with the head). The vertices the spine and hips carry go on it
+    // through a smooth oval over the front (the rest of the torso stays as it was), so moving the box wobbles the
+    // belly, and spreading it out grows it, round, like a pregnant belly (Limber Animations' expansion).
+    public static readonly RigPart Belly = new()
+    {
+        Key = "belly", Label = "Belly", Prefix = "lmb_lat_hara_", Rows = 3, Columns = 2, Layers = 2, Lattice = true, BackLayerBones = true,
+        Region = true, OwnHeight = true,
+        // (all of it hangs from the pelvis: the spine turns with the head and shoulders, the pelvis doesn't, so the
+        // belly stays put when she looks around; it still moves with the hips and the whole body)
+        Parents = ["j_kosi"],
+        SeparationBones = ("j_asi_a_l", "j_asi_a_r"),
+        // (in hip-joint widths from the lower spine: from the middle out, from under the breasts to above the pubis,
+        // from just behind the spine to well in front of the belly)
+        DefaultShape = () => new BreastRigShape { Size = 1.0f, Out = 0.5f, Height = 1.6f, Up = 0f, Forward = -0.25f, Depth = 1.6f },
+        FallbackSeparation = 0.17f,
+    };
+
     // Body shape grids (the Body Shape tab's detail sliders move them; no physics). Small, so they fit next to the
     // rest of the rig in a mesh: a box of 2 x 2 x 2 bones (thighs 3 tall), lined up along each limb.
     private static RigPart ShapeGrid(string key, string label, string bone, string? child, int rows, BreastRigShape shape, float separation, bool single = false)
@@ -249,12 +288,17 @@ public static class RigParts
     };
 
     /// <summary>The parts shown in the Rigging tab and moved by the soft bodies.</summary>
-    public static readonly RigPart[] All = [Breasts, Testicles, Butt];
+    public static readonly RigPart[] All = [Breasts, Testicles, Butt, Belly];
 
-    /// <summary>Everything the rig mod adds to the skeleton (old grids first, so they keep their place).</summary>
-    // (The body shape grids aren't built: on top of the rest, the skeleton has more bones than the game moves models
-    // with, so skin on them stayed behind. Kept defined so models rigged with them can be rigged again without.)
-    public static readonly RigPart[] Built = [LegacyBreasts, LegacyTesticles, Breasts, Testicles, Butt];
+    /// <summary>Everything the rig mod adds to the skeleton.</summary>
+    // The game only moves so many of a body skeleton's bones: past that, a bone takes the head's movement (or none), so
+    // skin on it follows the head or stays behind. So only what's in use is built: not the body shape grids, and no
+    // longer the old breast and testicle grids either (their weights are taken over when a model is rigged again; they
+    // stay known as rig bones so that still works), which left room for the belly.
+    public static readonly RigPart[] Built = [Breasts, Testicles, Butt, Belly];
+
+    // Old parts still recognised as rig bones (models rigged with them get rigged again without them).
+    private static readonly RigPart[] Retired = [LegacyBreasts, LegacyTesticles];
 
     /// <summary>Everything one-click rigging does: the soft parts first (they get room in a mesh first), then the shape grids.</summary>
     public static readonly RigPart[] Rigged = [.. All];
@@ -265,6 +309,9 @@ public static class RigParts
             if (part.IsMine(name))
                 return true;
         foreach (var part in Built)
+            if (part.IsMine(name))
+                return true;
+        foreach (var part in Retired)
             if (part.IsMine(name))
                 return true;
         return false;

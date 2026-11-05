@@ -478,6 +478,7 @@ public sealed class TimelineService
         (nameof(RigSettings.SoftBody), "Soft breasts", 1),
         (nameof(RigSettings.SoftBodyTesticles), "Soft testicles", 1),
         (nameof(RigSettings.SoftBodyButt), "Soft butt", 1),
+        (nameof(RigSettings.SoftBodyBelly), "Soft belly", 1),
         (nameof(RigSettings.LiveMesh), "Live mesh", 1),
         (nameof(RigSettings.Props), "Props and colliders", 2),
         (nameof(RigSettings.Motions), "Motion devices", 2),

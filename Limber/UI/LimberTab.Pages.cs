@@ -844,6 +844,25 @@ public sealed partial class LimberTab
             bool changed = false;
             ImGui.Checkbox("Same on every axis###lmb_bs_same", ref _scaleSameAxes);
             Tooltip("On: one size for the whole bone. Off: length, width and depth separately (the bone's own axes).");
+            var other = Limber.Rig.RigService.OtherSide(bone);
+            if(other != null)
+            {
+                ImGui.SameLine();
+                bool mirror = _config.BoneScaleMirror;
+                if(ImGui.Checkbox("Mirror###lmb_bs_mirror", ref mirror))
+                {
+                    _config.BoneScaleMirror = mirror;
+                    _config.Save();
+                }
+                Tooltip($"On: whatever you do to this bone is done to the other side's too ({HandleCatalog.Label(other)}), so both stay the same.");
+                if(mirror)
+                {
+                    ImGui.SameLine();
+                    if(ImGui.SmallButton("Copy to the other side###lmb_bs_copy"))
+                        SetBoneScale(who, other, e.Copy());
+                    Tooltip("Gives the other side this bone's scale and settings now (Mirror keeps them together from then on).");
+                }
+            }
             var s = e.Scale;
             if(_scaleSameAxes)
             {
@@ -893,7 +912,11 @@ public sealed partial class LimberTab
                 changed = true;
             }
             if(changed)
+            {
                 SetBoneScale(who, bone, e);
+                if(other != null && _config.BoneScaleMirror && snap != null && snap.IndexOf(other) is int o && o >= 0)
+                    SetBoneScale(who, other, e.Copy());
+            }
         }
 
         if(_scaleDirty && !ImGui.IsAnyItemActive())

@@ -52,6 +52,9 @@ public sealed class RigSettings
     // The body shape grids' placement (by part key), fitted when rigging.
     public System.Collections.Generic.Dictionary<string, Limber.BodyRig.BreastRigShape> ShapeLattices { get; set; } = new();
     public Limber.BodyRig.SoftBodySettings SoftBodyButt { get; set; } = Limber.BodyRig.SoftBodySettings.ButtDefaults();
+    // The belly rig: its box's placement (fitted when rigging) and the soft belly.
+    public Limber.BodyRig.BreastRigShape? BellyLattice { get; set; }
+    public Limber.BodyRig.SoftBodySettings SoftBodyBelly { get; set; } = Limber.BodyRig.SoftBodySettings.BellyDefaults();
     // Props tab: pill-shaped colliders the soft bodies always collide with.
     public System.Collections.Generic.List<Limber.BodyRig.PropCollider> Props { get; set; } = new();
     // How hard props push the soft body bones (Props tab), 0..1.
@@ -84,6 +87,13 @@ public sealed class RigSettings
     /// <summary>Body shape and body physics switched on (each its own switch on its page; off whenever Limber starts).</summary>
     public bool BodyShapeOn { get; set; }
     public bool BodyPhysicsOn { get; set; }
+    /// <summary>Soft bodies and detail sliders with no rig mod and no redraw (Limber's own lattice bones, the models'
+    /// vertices moved on the GPU).</summary>
+    public bool LiveRig { get; set; } = true;
+    /// <summary>Separate wobbles: characters in the same outfit each get their own copy of it (experimental).</summary>
+    public bool LiveRigSeparate { get; set; } = true;
+    /// <summary>Bone scale page: a left or right bone's scale goes on its other side too.</summary>
+    public bool BoneScaleMirror { get; set; } = true;
 
     // Oral page.
     public Limber.Rig.OralSettings Oral { get; set; } = new();

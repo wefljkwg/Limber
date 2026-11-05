@@ -37,7 +37,7 @@ public enum ExpansionRepeat
     Reverse,  // plays back down to the start, then up again
 }
 
-/// <summary>One part's expansion (breasts, butt, or penis).</summary>
+/// <summary>One part's expansion (breasts, butt, penis, or belly).</summary>
 public sealed class ExpansionPart
 {
     public bool Enabled { get; set; }
@@ -47,13 +47,17 @@ public sealed class ExpansionPart
     /// <summary>Seconds for one growth.</summary>
     public float Duration { get; set; } = 10f;
     public ExpansionRepeat Repeat { get; set; } = ExpansionRepeat.Hold;
+    /// <summary>Held at the end: the pulses, beats, pumps or wobble die away too (it stays still at full size), instead
+    /// of going on at it.</summary>
+    public bool StillWhenHeld { get; set; } = true;
     /// <summary>Beats / pumps / wobbles per minute (for the patterns that have them).</summary>
     public float Speed { get; set; } = 60f;
     /// <summary>How strong the pulses / beats / wobble are (0..1).</summary>
     public float Strength { get; set; } = 0.5f;
     /// <summary>Uneven growth (0..1).</summary>
     public float Randomness { get; set; } = 0.2f;
-    /// <summary>Breasts: forward (+) or round (0) / wide (-). Butt: outward (+) or round. Penis: length (+) or girth (-).</summary>
+    /// <summary>Breasts: forward (+) or round (0) / wide (-). Butt: outward (+) or round. Penis: length (+) or girth (-).
+    /// Belly: more forward (+) or rounder and wider (-).</summary>
     public float Shape { get; set; }
     /// <summary>Penis: the testicles grow too (0..1 of it).</summary>
     public float Testicles { get; set; } = 0.5f;
@@ -67,16 +71,25 @@ public sealed class ExpansionSettings
     public ExpansionPart Breasts { get; set; } = new();
     public ExpansionPart Butt { get; set; } = new();
     public ExpansionPart Penis { get; set; } = new() { Amount = 0.5f, Shape = 0.3f };
+    /// <summary>The belly (on the belly rig): Amount 1 = a full-term pregnant belly.</summary>
+    public ExpansionPart Belly { get; set; } = new() { Amount = 1f, Duration = 30f };
+    /// <summary>How pregnant the belly is all the time (0 = as modelled, 1 = full term), under any growth; stays on
+    /// (not a growth that's started), with the belly's Shape.</summary>
+    public float Pregnant { get; set; }
+
+    [Newtonsoft.Json.JsonIgnore]
+    public bool AnyOn => Breasts.Enabled || Butt.Enabled || Penis.Enabled || Belly.Enabled || Pregnant != 0f;
 
     public ExpansionSettings Copy() => Newtonsoft.Json.JsonConvert.DeserializeObject<ExpansionSettings>(Newtonsoft.Json.JsonConvert.SerializeObject(this))!;
 }
 
 /// <summary>
-/// Expansion (Limber Animations): breasts, butt and penis growing over time with a choice of patterns: steady, eased,
+/// Expansion (Limber Animations): breasts, butt, penis and belly growing over time with a choice of patterns: steady, eased,
 /// in surges, pulses, heartbeats, steps, spurts, pumps, overinflating and settling, wobbling, breathing, throbbing,
 /// bursting, back and forth, or shrinking; held, looped or played back down. Breasts and butt grow by scaling their
 /// bones (the soft bodies grow with them); the penis lengthens (each bone placed further along the shaft) and
-/// thickens, and the testicles can grow with it. Bone update, before the physics. Adult characters only. Only on
+/// thickens, and the testicles can grow with it; the belly grows round like a pregnant belly on the belly rig (the
+/// soft belly spreads its box out, see <see cref="Limber.BodyRig.SoftBody"/>), on top of a held pregnancy. Bone update, before the physics. Adult characters only. Only on
 /// your screen.
 /// </summary>
 public sealed unsafe class ExpansionService
@@ -103,7 +116,9 @@ public sealed unsafe class ExpansionService
 
     private sealed class State
     {
-        public readonly PartState Breasts = new(), Butt = new(), Penis = new();
+        public readonly PartState Breasts = new(), Butt = new(), Penis = new(), Belly = new();
+        public float BellyGrowth; // this frame's belly growth (held pregnancy and the growth), and its shape
+        public float BellyShape;
         public long LastTicks;
         // what the pose had before (to put back when the game hasn't rebuilt it), per bone (parents first), and what was written
         public readonly List<Write> Writes = new();
@@ -115,6 +130,7 @@ public sealed unsafe class ExpansionService
     private readonly Dictionary<nint, State> _states = new();
     private volatile (nint Address, ushort Index, ExpansionSettings Settings)[] _targets = [];
     private volatile Dictionary<(nint, int), float> _shown = new();
+    private volatile Dictionary<nint, (float Amount, float Shape)> _belly = new();
 
     public ExpansionService(IObjectTable objects, Func<Dictionary<string, ExpansionSettings>> settings)
     {
@@ -122,8 +138,14 @@ public sealed unsafe class ExpansionService
         _settings = settings;
     }
 
-    /// <summary>How grown a part is now (0 = its own size, 1 = full), -1 if it isn't expanding. Part: 0 breasts, 1 butt, 2 penis.</summary>
+    /// <summary>How grown a part is now (0 = its own size, 1 = full), -1 if it isn't expanding. Part: 0 breasts, 1 butt, 2 penis, 3 belly.</summary>
     public float ShownOf(nint address, int part) => _shown.TryGetValue((address, part), out var v) ? v : -1f;
+
+    /// <summary>How grown a character's belly is this frame (1 = full term) and its shape, for the soft belly (bone update).</summary>
+    public (float Amount, float Shape) BellyOf(nint address) => _belly.TryGetValue(address, out var v) ? v : (0f, 0f);
+
+    /// <summary>Anyone's belly is grown now.</summary>
+    public bool AnyBelly => _belly.Count > 0;
 
     private readonly HashSet<(nint, int)> _restart = new();
     /// <summary>Start a part's growth over from the beginning.</summary>
@@ -165,6 +187,7 @@ public sealed unsafe class ExpansionService
         var targets = _targets;
         long now = Stopwatch.GetTimestamp();
         var shown = new Dictionary<(nint, int), float>();
+        var belly = new Dictionary<nint, (float, float)>();
         var seen = new HashSet<nint>();
         foreach(var (address, index, s) in targets)
         {
@@ -173,19 +196,25 @@ public sealed unsafe class ExpansionService
             {
                 if(!_states.TryGetValue(address, out var state))
                 {
-                    if(!s.Breasts.Enabled && !s.Butt.Enabled && !s.Penis.Enabled)
+                    if(!s.AnyOn)
                         continue;
                     _states[address] = state = new State { LastTicks = now };
                 }
                 Step(address, index, s, state, now);
                 bool any = false;
-                foreach(var (part, ps) in new[] { (0, state.Breasts), (1, state.Butt), (2, state.Penis) })
+                foreach(var (part, ps) in new[] { (0, state.Breasts), (1, state.Butt), (2, state.Penis), (3, state.Belly) })
                     if(ps.Level > 0f)
                     {
                         shown[(address, part)] = ps.Shown;
                         any = true;
                     }
-                if(!any && !s.Breasts.Enabled && !s.Butt.Enabled && !s.Penis.Enabled)
+                // (while the belly is on at all, even passing through its own size: the rig it needs stays put)
+                if(s.Belly.Enabled || state.Belly.Level > 0f || s.Pregnant != 0f)
+                {
+                    belly[address] = (state.BellyGrowth, state.BellyShape);
+                    any = true;
+                }
+                if(!any && !s.AnyOn)
                     _states.Remove(address);
             }
             catch
@@ -198,6 +227,7 @@ public sealed unsafe class ExpansionService
                 if(!seen.Contains(a))
                     _states.Remove(a);
         _shown = shown;
+        _belly = belly;
     }
 
     // ---- The patterns: how grown (0..1, can overshoot a little) at time t of a growth lasting d seconds
@@ -255,6 +285,10 @@ public sealed unsafe class ExpansionService
         }
         long n = (long)Math.Floor(t / beat);
         float wobbleRnd = 1f + rnd * (Hash(n, 5) - 0.5f) * 0.6f;
+        // (held at the end and asked to be still: the rhythm dies away over a beat once it's grown)
+        float beats = p.Repeat == ExpansionRepeat.Hold && p.StillWhenHeld && cycle > 1.0
+            ? 1f - Smooth((float)((cycle - 1.0) * d / beat)) : 1f;
+        strength *= beats;
         switch(p.Pattern)
         {
             default:
@@ -406,7 +440,10 @@ public sealed unsafe class ExpansionService
         state.Writes.Clear();
 
         int partIndex = 0;
-        foreach(var (part, ps) in new[] { (s.Breasts, state.Breasts), (s.Butt, state.Butt), (s.Penis, state.Penis) })
+        // The belly: the held pregnancy, plus its growth below.
+        state.BellyGrowth = Math.Clamp(s.Pregnant, -0.6f, 4f);
+        state.BellyShape = Math.Clamp(s.Belly.Shape, -1f, 1f);
+        foreach(var (part, ps) in new[] { (s.Breasts, state.Breasts), (s.Butt, state.Butt), (s.Penis, state.Penis), (s.Belly, state.Belly) })
         {
             int which = partIndex++;
             lock(_restart)
@@ -432,6 +469,8 @@ public sealed unsafe class ExpansionService
                 case 0: Grow(sk, state, BreastBones, extra, shape); break;
                 case 1: Grow(sk, state, ButtBones, extra, shape); break;
                 case 2: GrowPenis(sk, state, extra, shape, Math.Clamp(part.Testicles, 0f, 1f)); break;
+                // (the soft belly reads it: its box is spread out, see BellyOf)
+                case 3: state.BellyGrowth = Math.Clamp(state.BellyGrowth + extra, -0.6f, 4f); break;
             }
         }
         Written(sk, state);

@@ -124,6 +124,35 @@ public static unsafe class LiveMesh
     [DllImport("kernel32.dll")]
     private static extern nint VirtualQuery(nint address, out MemoryBasicInformation info, nint length);
 
+    /// <summary>
+    /// Memory regions already looked up (readable or not), for a search that reads many pointers: most land in the same
+    /// few regions, so it asks the system once per region instead of once per pointer (a search used to take long
+    /// enough to hitch the frame).
+    /// </summary>
+    private sealed class Regions
+    {
+        // (by 64 KB block: the region last found there)
+        private readonly Dictionary<long, (nint From, nint To, bool Ok)> _known = new();
+
+        public bool Readable(nint address, int length)
+        {
+            if (address < 0x10000 || address > 0x7FFFFFFF0000 || (address & 7) != 0)
+                return false;
+            long block = (long)address >> 16;
+            if (_known.TryGetValue(block, out var r) && address >= r.From && address < r.To)
+                return r.Ok && address + length <= r.To;
+            if (VirtualQuery(address, out var info, sizeof(MemoryBasicInformation)) == 0)
+                return false;
+            const uint commit = 0x1000;
+            uint p = info.Protect & 0xFF;
+            bool read = info.State == commit && (p is 0x02 or 0x04 or 0x08 or 0x20 or 0x40 or 0x80) && (info.Protect & 0x100) == 0;
+            nint end = info.BaseAddress + info.RegionSize;
+            if (_known.Count < 65536)
+                _known[block] = (info.BaseAddress, end, read);
+            return read && address + length <= end;
+        }
+    }
+
     private static bool Readable(nint address, int length)
     {
         if (address < 0x10000 || address > 0x7FFFFFFF0000 || (address & 7) != 0)
@@ -339,6 +368,7 @@ public static unsafe class LiveMesh
             log.Add("The character has no model slots.");
             return found;
         }
+        var regions = new Regions();
         for (int slot = 0; slot < slots; slot++)
         {
             var model = cb->Models[slot];
@@ -358,12 +388,12 @@ public static unsafe class LiveMesh
             while (queue.Count > 0 && nodes++ < MaxNodes)
             {
                 var (at, path, depth) = queue.Dequeue();
-                if (!seen.Add(at) || !Readable(at, ScanBytes))
+                if (!seen.Add(at) || !regions.Readable(at, ScanBytes))
                     continue;
                 for (int off = 0; off < ScanBytes; off += 8)
                 {
                     nint value = *(nint*)(at + off);
-                    if (value == 0 || seen.Contains(value) || !Readable(value, 16))
+                    if (value == 0 || seen.Contains(value) || !regions.Readable(value, 16))
                         continue;
                     if (*(nint*)value == cls)
                     {
@@ -429,6 +459,52 @@ public static unsafe class LiveMesh
         if (desc.Usage == UsageImmutable)
             desc.Usage = UsageDefault; // a copy made by Replace
         Write(buffer, desc, data);
+    }
+
+    /// <summary>A new writable buffer like the found one, holding <paramref name="contents"/> (0 if it couldn't be made).
+    /// Nothing points to it until someone is given it; free it with <see cref="Free"/>.</summary>
+    public static nint CreateCopy(BufferDesc desc, byte[] contents)
+    {
+        desc.Usage = UsageDefault;
+        desc.CPUAccessFlags = 0;
+        return CreateBuffer(desc, contents);
+    }
+
+    /// <summary>Frees a buffer made by <see cref="CreateCopy"/>.</summary>
+    public static void Free(nint buffer) => Release(buffer);
+
+    /// <summary>The bytes are committed, readable memory (any thread).</summary>
+    public static bool IsReadable(nint address, int length) => Readable(address, length);
+
+    /// <summary>Write only bytes <paramref name="from"/> to <paramref name="to"/> of a buffer (render thread): less to
+    /// send each frame when only part of a model moves. A dynamic buffer is always written whole.</summary>
+    public static void UploadRange(nint buffer, BufferDesc desc, byte[] data, int from, int to)
+    {
+        if (desc.Usage == UsageImmutable)
+            desc.Usage = UsageDefault; // a copy made by Replace
+        int length = Math.Min(data.Length, (int)desc.ByteWidth);
+        from = Math.Clamp(from, 0, length);
+        to = Math.Clamp(to, 0, length);
+        if (desc.Usage == UsageDynamic || (from == 0 && to == length))
+        {
+            Write(buffer, desc, data);
+            return;
+        }
+        if (to <= from)
+            return;
+        var context = ContextHandle();
+        if (context == 0)
+            return;
+        // D3D11_BOX: left, top, front, right, bottom, back (a buffer's bytes are its x).
+        uint* box = stackalloc uint[6];
+        box[0] = (uint)from;
+        box[1] = 0;
+        box[2] = 0;
+        box[3] = (uint)to;
+        box[4] = 1;
+        box[5] = 1;
+        fixed (byte* p = data)
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, void*, void*, uint, uint, void>)Vtable(context, 48))(context, buffer, 0, box, p + from, 0, 0);
     }
 
     // ---- The wobble test

@@ -39,6 +39,9 @@ public sealed partial class LimberTab
     public Limber.BodyRig.SoftBody? SoftBreasts { get; set; }
     public Limber.BodyRig.SoftBody? SoftTesticles { get; set; }
     public Limber.BodyRig.SoftBody? SoftButt { get; set; }
+    public Limber.BodyRig.SoftBody? SoftBelly { get; set; }
+    // Expansion (Limber Animations): the belly's growth, shown on the belly's line.
+    public Limber.Rig.ExpansionService? Expansion { get; set; }
     // Props (for "Attach a collider" in the Attach tab).
     public Limber.BodyRig.PropService? PropService { get; set; }
     // Whole-character move / turn / scale (Actor tab).
@@ -1194,7 +1197,8 @@ public sealed partial class LimberTab
 
     private Limber.BodyRig.RigPart CurrentPart
         => _config.RigPartKey == Limber.BodyRig.RigParts.Testicles.Key ? Limber.BodyRig.RigParts.Testicles
-            : _config.RigPartKey == Limber.BodyRig.RigParts.Butt.Key ? Limber.BodyRig.RigParts.Butt : Limber.BodyRig.RigParts.Breasts;
+            : _config.RigPartKey == Limber.BodyRig.RigParts.Butt.Key ? Limber.BodyRig.RigParts.Butt
+            : _config.RigPartKey == Limber.BodyRig.RigParts.Belly.Key ? Limber.BodyRig.RigParts.Belly : Limber.BodyRig.RigParts.Breasts;
 
     private Limber.BodyRig.BreastRigShape ShapeFor(Limber.BodyRig.RigPart part)
     {
@@ -1202,6 +1206,8 @@ public sealed partial class LimberTab
             return _config.TesticleLattice ??= part.DefaultShape();
         if(part == Limber.BodyRig.RigParts.Butt)
             return _config.ButtLattice ??= part.DefaultShape();
+        if(part == Limber.BodyRig.RigParts.Belly)
+            return _config.BellyLattice ??= part.DefaultShape();
         if(part.Shape)
         {
             _config.ShapeLattices ??= new();
@@ -1224,6 +1230,8 @@ public sealed partial class LimberTab
             _config.BreastLattice = shape;
         else if(part == Limber.BodyRig.RigParts.Butt)
             _config.ButtLattice = shape;
+        else if(part == Limber.BodyRig.RigParts.Belly)
+            _config.BellyLattice = shape;
         else if(part.Shape)
             (_config.ShapeLattices ??= new())[part.Key] = shape;
     }
@@ -1233,7 +1241,9 @@ public sealed partial class LimberTab
             ? _config.SoftBodyTesticles ??= Limber.BodyRig.SoftBodySettings.TesticleDefaults()
             : part == Limber.BodyRig.RigParts.Butt
                 ? _config.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults()
-                : _config.SoftBody ??= new Limber.BodyRig.SoftBodySettings();
+                : part == Limber.BodyRig.RigParts.Belly
+                    ? _config.SoftBodyBelly ??= Limber.BodyRig.SoftBodySettings.BellyDefaults()
+                    : _config.SoftBody ??= new Limber.BodyRig.SoftBodySettings();
 
     /// <summary>The Rigging tab: one collapsible section per rigged part, then one build for all of them.</summary>
     /// <summary>Opens the Body physics guide window.</summary>
@@ -1247,7 +1257,39 @@ public sealed partial class LimberTab
             _config.BodyPhysicsOn = physicsOn;
             _config.Save();
         }
-        Tooltip("Turns all body physics on or off: the soft breasts, butt and testicles, and the live mesh (off whenever Limber starts).");
+        Tooltip("Turns all body physics on or off: the soft breasts, butt, testicles and belly, and the live mesh (off whenever Limber starts).");
+        bool liveRig = _config.LiveRig;
+        if(ImGui.Checkbox("Live rig (no rigging, no redraw)###lmb_live_rig", ref liveRig))
+        {
+            _config.LiveRig = liveRig;
+            _config.Save();
+        }
+        Tooltip("Physics works on the chosen character straight away: Limber keeps the extra bones itself and bends the worn "
+            + "models on the graphics card, so nothing is rigged, built or redrawn. The Body shape page's detail sliders show "
+            + "live too.\nOne character at a time per outfit (the game shares a model between everyone wearing it). "
+            + "\"Rig everything\" below still works, and is lighter on the PC for several characters at once.");
+        if(liveRig)
+        {
+            bool separate = _config.LiveRigSeparate;
+            ImGui.Indent();
+            if(ImGui.Checkbox("Separate wobbles (experimental)###lmb_live_rig_separate", ref separate))
+            {
+                _config.LiveRigSeparate = separate;
+                _config.Save();
+            }
+            Tooltip("Characters wearing the same outfit or body each wobble on their own: the chosen character and the three "
+                + "nearest others with physics. Each gets its own copy of what it wears, and the game's draws of it are sent to "
+                + "that copy. Off: only the chosen character moves on a shared outfit.");
+            if(separate && Limber.Gpu.LiveRig.SeparateProblem.Length > 0)
+                ImGui.TextColored(Warning, "Separate wobbles: " + Limber.Gpu.LiveRig.SeparateProblem);
+            ImGui.Unindent();
+            var actor = _selection.Actor;
+            var report = actor.IsSet ? Limber.Gpu.LiveRig.ReportFor(actor.Address) : "";
+            if(report.Length > 0)
+                ImGui.TextWrapped(report);
+            if(Limber.Gpu.LiveRig.Status.Length > 0)
+                ImGui.TextDisabled(Limber.Gpu.LiveRig.Status);
+        }
         ImGui.Separator();
         if(ShowPhysicsHelp != null)
         {
@@ -1554,8 +1596,47 @@ public sealed partial class LimberTab
         }
     }
 
+    // The belly: how pregnant the chosen character is (kept with its expansion, Limber Animations).
+    private void DrawPregnancy()
+    {
+        var actor = _selection.Actor;
+        string name = actor.IsSet ? actor.Name ?? "" : "";
+        if(name.Length == 0 || !Limber.Koi.Safety.AdultAllowed(actor.Address))
+        {
+            ImGui.TextDisabled("Pregnancy: choose an adult character at the top.");
+            return;
+        }
+        var all = _config.Expansion ??= new();
+        if(!all.TryGetValue(name, out var ex))
+            all[name] = ex = new Limber.Rig.ExpansionSettings();
+        float pregnant = ex.Pregnant * 100f;
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Pregnancy###lmb_pregnant", ref pregnant, -50f, 300f, "%.0f%%"))
+        {
+            ex.Pregnant = pregnant / 100f;
+            _config.Save();
+        }
+        Tooltip($"How pregnant {name}'s belly is, all the time (100% = full term; below 0 flatter). It grows round and smooth "
+            + "on the belly rig, with or without its physics. To grow it over time (pumping, swelling, breathing...), use "
+            + "Expansion > Belly in Limber Animations, on top of this.\nCtrl+click to type a value.");
+        float shape = ex.Belly.Shape * 100f;
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Belly shape###lmb_pregnant_shape", ref shape, -100f, 100f, "%.0f%%"))
+        {
+            ex.Belly.Shape = shape / 100f;
+            _config.Save();
+        }
+        Tooltip("-100%: rounder and wider. 0: in between. +100%: more forward, narrower (for the held pregnancy and the growth).");
+        bool grown = MathF.Abs(Expansion?.BellyOf(actor.Address).Amount ?? 0f) > 1e-4f;
+        if(grown && !_config.LiveRig && SoftBelly is { } sim && (System.Environment.TickCount64 - sim.LastTicks > 1000 || sim.LastCount == 0))
+            ImGui.TextColored(Warning, "No belly rig on this character yet: turn on Live rig above, or Rig everything.");
+        ImGui.Spacing();
+    }
+
     private void DrawRigPart(Limber.BodyRig.RigPart part)
     {
+        if(part == Limber.BodyRig.RigParts.Belly)
+            DrawPregnancy();
         DrawSoftBody(part);
 
         if(!ImGui.TreeNode("Bone placement (advanced)###lmb_rig_placement"))
@@ -1564,15 +1645,30 @@ public sealed partial class LimberTab
         bool changed = false;
         float size = shape.Size, forward = shape.Forward, up = shape.Up, outward = shape.Out, depth = shape.Depth;
         ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
-        if(ImGui.SliderFloat("Size##lmb_rig", ref size, 0.3f, 8f, "%.2f")) { shape.Size = size; changed = true; }
+        if(ImGui.SliderFloat("Size##lmb_rig", ref size, 0.3f, 8f, "%.2f"))
+        {
+            shape.Size = size;
+            if(part.Region)
+                shape.Out = size * 0.5f; // (each belly half from the middle of the body out)
+            changed = true;
+        }
         ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
         if(ImGui.SliderFloat("Forward##lmb_rig", ref forward, -2f, 4f, "%.2f")) { shape.Forward = forward; changed = true; }
         ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
         if(ImGui.SliderFloat("Up / down##lmb_rig", ref up, -3f, 3f, "%.2f")) { shape.Up = up; changed = true; }
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
-        if(ImGui.SliderFloat("Outward##lmb_rig", ref outward, -3f, 3f, "%.2f")) { shape.Out = outward; changed = true; }
+        if(!part.Region)
+        {
+            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("Outward##lmb_rig", ref outward, -3f, 3f, "%.2f")) { shape.Out = outward; changed = true; }
+        }
         ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
         if(ImGui.SliderFloat("Depth##lmb_rig", ref depth, 0.1f, 5f, "%.2f")) { shape.Depth = depth; changed = true; }
+        if(part.OwnHeight)
+        {
+            float height = shape.Height > 0f ? shape.Height : shape.Size;
+            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("Height##lmb_rig", ref height, 0.3f, 8f, "%.2f")) { shape.Height = height; changed = true; }
+        }
         Tooltip("The box the rig bones fill. Set automatically when the box is fitted; applies on the next rig.");
         if(ImGui.SmallButton("Default placement##lmb_rig"))
         {
@@ -1640,7 +1736,7 @@ public sealed partial class LimberTab
             if(ImGui.Button(label, new Vector2(-1, 0)))
                 StartOneClick(Limber.BodyRig.RigParts.Rigged);
         }
-        Tooltip("Rigs the breasts, testicles and butt of the chosen character's worn models.");
+        Tooltip("Rigs the breasts, testicles, butt and belly of the chosen character's worn models.");
         bool fit = _config.RigAutoFit;
         if(ImGui.Checkbox("Fit the boxes to the models automatically###lmb_auto_fit", ref fit))
         {
@@ -1718,7 +1814,8 @@ public sealed partial class LimberTab
     // What a part's physics is doing right now (on its line).
     private void DrawSoftStatus(Limber.BodyRig.RigPart part)
     {
-        var sim = part == Limber.BodyRig.RigParts.Testicles ? SoftTesticles : part == Limber.BodyRig.RigParts.Butt ? SoftButt : SoftBreasts;
+        var sim = part == Limber.BodyRig.RigParts.Testicles ? SoftTesticles : part == Limber.BodyRig.RigParts.Butt ? SoftButt
+            : part == Limber.BodyRig.RigParts.Belly ? SoftBelly : SoftBreasts;
         if(sim == null || !SoftFor(part).Enabled)
         {
             ImGui.TextDisabled("off");
@@ -1728,7 +1825,9 @@ public sealed partial class LimberTab
         if(!recent || sim.LastCount == 0)
         {
             ImGui.TextColored(Warning, "not running");
-            Tooltip("No nearby character has this part's rig bones: rig it above (and check the worn models).");
+            Tooltip(_config.LiveRig
+                ? "No nearby character has this part's bones yet: the live rig is getting ready, or the worn models have no bones for this part."
+                : "No nearby character has this part's rig bones: turn on the live rig, or rig it above (and check the worn models).");
         }
         else
             ImGui.TextDisabled($"running on {sim.LastCount} (moving up to {sim.LastMove * 100f:0.0} cm)");
@@ -1755,6 +1854,7 @@ public sealed partial class LimberTab
     private void CheckModels()
     {
         var actor = _selection.Actor;
+        bool liveRig = _config.LiveRig;
         _modelChecking = true;
         _modelCheck = [("Checking...", null)];
         System.Threading.Tasks.Task.Run(async () =>
@@ -1784,19 +1884,20 @@ public sealed partial class LimberTab
                             if(data == null)
                                 continue;
                             var text = System.Text.Encoding.ASCII.GetString(data, 0, Math.Min(data.Length, 65536));
-                            bool breasts = text.Contains("lmb_lat_mune_"), testicles = text.Contains("lmb_lat_kougan_"), butt = text.Contains("lmb_lat_shiri_");
-                            bool hasParts = text.Contains("mune") || text.Contains("kougan") || text.Contains("kintama") || text.Contains("shiri");
+                            bool breasts = text.Contains("lmb_lat_mune_"), testicles = text.Contains("lmb_lat_kougan_"), butt = text.Contains("lmb_lat_shiri_"),
+                                belly = text.Contains("lmb_lat_hara_");
+                            bool hasParts = text.Contains("mune") || text.Contains("kougan") || text.Contains("kintama") || text.Contains("shiri") || text.Contains("j_sebo_a");
                             if(!hasParts)
                                 continue;
                             string origin = System.IO.Path.IsPathRooted(file) ? System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file) ?? "") : "game";
-                            bool rigged = breasts || testicles || butt;
+                            bool rigged = breasts || testicles || butt || belly;
                             lines.Add(($"{System.IO.Path.GetFileName(game)}: " + (rigged
-                                ? "rigged (" + string.Join(", ", new[] { breasts ? "breasts" : null, testicles ? "testicles" : null, butt ? "butt" : null }.Where(x => x != null)) + ")"
-                                : "NOT rigged") + $" - from {origin}", rigged ? null : game));
+                                ? "rigged (" + string.Join(", ", new[] { breasts ? "breasts" : null, testicles ? "testicles" : null, butt ? "butt" : null, belly ? "belly" : null }.Where(x => x != null)) + ")"
+                                : liveRig ? "not rigged (the live rig moves it)" : "NOT rigged") + $" - from {origin}", rigged ? null : game));
                         }
                     }
                     if(lines.Count == 0)
-                        lines.Add(("No worn model has breast, testicle or butt bones.", null));
+                        lines.Add(("No worn model has breast, testicle, butt or belly bones.", null));
                 }
             }
             catch(Exception e)
@@ -1878,7 +1979,10 @@ public sealed partial class LimberTab
                 ? Limber.BodyRig.SoftBodySettings.TesticleDefaults()
                 : part == Limber.BodyRig.RigParts.Butt
                     ? Limber.BodyRig.SoftBodySettings.ButtDefaults()
-                    : new Limber.BodyRig.SoftBodySettings();
+                    : part == Limber.BodyRig.RigParts.Belly
+                        ? Limber.BodyRig.SoftBodySettings.BellyDefaults()
+                        : new Limber.BodyRig.SoftBodySettings();
+            fresh.Enabled = soft.Enabled;
             fresh.Size = soft.Size; fresh.Width = soft.Width; fresh.Height = soft.Height; fresh.Projection = soft.Projection;
             fresh.Lift = soft.Lift; fresh.Spacing = soft.Spacing;
             fresh.Shapes = new Dictionary<string, float>(soft.Shapes ?? new());
@@ -1886,6 +1990,8 @@ public sealed partial class LimberTab
                 _config.SoftBodyTesticles = fresh;
             else if(part == Limber.BodyRig.RigParts.Butt)
                 _config.SoftBodyButt = fresh;
+            else if(part == Limber.BodyRig.RigParts.Belly)
+                _config.SoftBodyBelly = fresh;
             else
                 _config.SoftBody = fresh;
             changed = true;

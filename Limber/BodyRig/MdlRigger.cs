@@ -40,6 +40,36 @@ public static class MdlRigger
         public int Steps { get; init; } = 2;
         /// <summary>Lattice bones its mesh needs room for; when there isn't, this side is left out (not the model).</summary>
         public bool Optional { get; init; }
+        /// <summary>A region of bones the body shares (the belly, see <see cref="RigPart.Region"/>): this half takes the
+        /// vertices on its own side only, each as much as <see cref="RegionShare"/> gives, the rest left on its bones.
+        /// Only the box's bones its vertices need go in a mesh, and a mesh with no room leaves it out (not the model).</summary>
+        public bool Region { get; init; }
+    }
+
+    /// <summary>Where a region part's oval is centred, down its box (0 top row, 1 bottom row): a little below the
+    /// middle, like a belly (the soft body grows it from the same height).</summary>
+    public const float RegionCentre = 0.6f;
+
+    /// <summary>
+    /// How much of a vertex a region part takes (0..1), from where it is in the box (box units, not clamped: column,
+    /// row, layer): a smooth oval over the front, full in the middle of the belly, fading out toward the box's top,
+    /// bottom and outer side, and toward the back (so the back, the flanks, the crotch and under the breasts keep their
+    /// own weights). Smooth all the way, so what it moves (a wobble, a growth) has no edge.
+    /// </summary>
+    public static float RegionShare(Vector3 c, int columns, int rows, int steps)
+    {
+        float across = c.X / Math.Max(1, columns - 1);         // 0 at the middle of the body, 1 at the box's outer side
+        float down = c.Y / Math.Max(1, rows - 1);              // 0 at the top, 1 at the bottom
+        float depth = c.Z / Math.Max(1, steps);                // 0 at the back face, 1 at the front
+        if (across < 0f)
+            across = 0f;                                       // (just over the middle: the same as on it)
+        float v = down - RegionCentre;
+        // (reaching up under the breasts, and less far down: the belly overhangs the pubis, which stays as it is)
+        float rv = v < 0f ? 0.7f : 0.42f;
+        float r2 = across * across / (0.95f * 0.95f) + v * v / (rv * rv);
+        float oval = MathF.Pow(SmoothStep(1f - r2), 0.8f);
+        float front = SmoothStep((depth - 0.1f) / 0.35f);
+        return oval * front;
     }
 
     /// <summary>Passes of evening out how the lattice's share fades into the body (see Smooth).</summary>
@@ -97,6 +127,7 @@ public static class MdlRigger
         var data = file.AsSpan(m.DataStart).ToArray();
         int cap = m.Version == V5 ? 64 : 128;
         int total = 0;
+        var compacted = new HashSet<int>(); // bone tables already cleared of unused bones
 
         int BoneId(string name)
         {
@@ -109,7 +140,7 @@ public static class MdlRigger
         }
 
         // Rounder, smoother parts (and a filled crease), baked into the geometry before weighting.
-        foreach (var pair in sides.Where(s => s.Roundness > 0f || s.Fill > 0f).GroupBy(s => s.PartKey))
+        foreach (var pair in sides.Where(s => !s.Region && (s.Roundness > 0f || s.Fill > 0f)).GroupBy(s => s.PartKey))
         {
             try
             {
@@ -162,10 +193,10 @@ public static class MdlRigger
                         continue;
                     }
 
-                    // A shape grid: only the grid points this mesh's vertices land near go in its bone table (a mesh
-                    // that only reaches the edge of a grid needs a few, so more fit next to the rest of the rig).
+                    // Only the lattice bones this mesh's vertices land near go in its bone table (a mesh that only
+                    // reaches the edge of a box needs a few, so more fit next to the rest of the rig: a mesh has room
+                    // for only so many bones).
                     IEnumerable<string> needed = side.Bones;
-                    if (side.Optional)
                     {
                         var sourceNames = new HashSet<string>((side.Merge ? usedSources : usedSources.Take(1)).Concat(side.Bones).Append(side.Parent));
                         var sourceSlots = new HashSet<int>();
@@ -184,7 +215,10 @@ public static class MdlRigger
                                 on = data[wa + k] != 0 && sourceSlots.Contains(data[ia + k]);
                             if (!on)
                                 continue;
-                            var c = Vector3.Transform(ReadPosition(data, pa, pe.Type) - origin, inverse);
+                            var at = ReadPosition(data, pa, pe.Type);
+                            var c = Vector3.Transform(at - origin, inverse);
+                            if (side.Region && (!OnSide(side, at) || RegionShare(c, side.Columns, side.Rows, side.Steps) < 1e-3f))
+                                continue;
                             float cu = Math.Clamp(c.X, 0f, side.Columns - 1), ct = Math.Clamp(c.Y, 0f, side.Rows - 1), cd = Math.Clamp(c.Z, 0f, side.Steps);
                             foreach (var (col, row, layer, x) in Corners(cu, ct, cd, side.Columns, side.Rows, side.Steps))
                                 if (layer > 0 || gridBack)
@@ -196,31 +230,37 @@ public static class MdlRigger
                     }
 
                     // The lattice bones (and the bone the back face stays on) in this mesh's bone table.
-                    bool full = false;
-                    int before = table.Count;
-                    foreach (var name in needed.Prepend(side.Parent).Concat(side.Nipple != null ? new[] { side.Nipple } : Array.Empty<string>()))
+                    var wantedNames = needed.Prepend(side.Parent).Concat(side.Nipple != null ? new[] { side.Nipple } : Array.Empty<string>()).ToList();
+                    bool AddAll()
                     {
-                        var id = (ushort)BoneId(name);
-                        if (table.Contains(id))
-                            continue;
-                        if (table.Count >= cap)
+                        int before = table.Count;
+                        foreach (var name in wantedNames)
                         {
-                            full = true;
-                            break;
+                            var id = (ushort)BoneId(name);
+                            if (table.Contains(id))
+                                continue;
+                            if (table.Count >= cap)
+                            {
+                                table.RemoveRange(before, table.Count - before);
+                                return false;
+                            }
+                            table.Add(id);
                         }
-                        table.Add(id);
+                        return true;
                     }
-                    if (full && side.Optional)
+                    if (!AddAll())
                     {
-                        // No room for this one: left out of this mesh (the rest of the rig still goes on).
-                        table.RemoveRange(before, table.Count - before);
-                        log.Add($"mesh {mi}: no room for {side.PartKey} ({cap} bones a mesh), left out");
-                        continue;
-                    }
-                    if (full)
-                    {
-                        log.Add($"mesh {mi}: too many bones for one mesh ({cap}), skipped");
-                        return null;
+                        // No room: first the bones the mesh's table lists but no vertex uses are let go of (models
+                        // often carry many), then it's tried again; still none, and this part is left out of this
+                        // mesh only (the rest of the rig still goes on, and the model still loads as it was there).
+                        int freed = compacted.Add(mesh.BoneTable) ? Compact(m, data, tables, mesh.BoneTable) : 0;
+                        if (freed > 0)
+                            log.Add($"mesh {mi}: {freed} unused bone(s) taken out of its table to make room");
+                        if (freed == 0 || !AddAll())
+                        {
+                            log.Add($"mesh {mi}: no room for {side.PartKey} ({cap} bones a mesh), left out of this mesh");
+                            continue;
+                        }
                     }
 
                     var local = new Dictionary<string, int>();
@@ -316,6 +356,21 @@ public static class MdlRigger
                         // the model's own weights already blend the part into the body around it, so nothing is left
                         // behind on the part's bone to crease when the box grows.
                         float share = 1f;
+                        if (side.Region)
+                        {
+                            // A region (the belly): its own half only (the other half's pass takes the rest), done once,
+                            // and only the oval's share; the rest stays on the bones it had, as it had them.
+                            if (already || !OnSide(side, position))
+                                continue;
+                            share = RegionShare(c, side.Columns, side.Rows, side.Steps);
+                            if (share < 1e-3f)
+                                continue;
+                            for (int k = 0; k < slots; k++)
+                                if (w[k] != 0 && source.Contains(ix[k]) && !ownLattice.Contains(ix[k]))
+                                    others.Add((ix[k], w[k] / 255f * (1f - share)));
+                            weight *= share;
+                            share = 1f;
+                        }
 
                         var wanted = new Dictionary<int, float>();
                         float onParent = weight * (1f - share);
@@ -416,6 +471,8 @@ public static class MdlRigger
                     if (verts.Count == 0)
                         continue;
                     var partSides = sides.Where(x => x.PartKey == key).ToList();
+                    if (partSides.Count > 0 && partSides[0].Region)
+                        continue; // (its share is smooth already: evening it out would only flatten the oval)
                     // A shape grid: each side on its own, handing back to its own side's bone (never the other leg's).
                     var groups = partSides[0].Optional ? partSides.Select(x => new List<Side> { x }).ToList() : new List<List<Side>> { partSides };
                     foreach (var group in groups)
@@ -1261,6 +1318,77 @@ public static class MdlRigger
         }
         return slot > 0;
     }
+
+    /// <summary>
+    /// Takes the bones out of a bone table that no vertex of any mesh using it is weighted to, and renumbers the
+    /// vertices' bone indices to match (the same weights on the same bones). How many were taken out.
+    /// </summary>
+    private static int Compact(Parsed m, byte[] data, List<List<ushort>> tables, int tableIndex)
+    {
+        var table = tables[tableIndex];
+        var used = new bool[table.Count];
+        var users = new List<(int Mesh, int Lod)>();
+        for (int lod = 0; lod < m.LodCount; lod++)
+        {
+            var (first, count) = m.Lods[lod];
+            for (int mi = first; mi < first + count && mi < m.Meshes.Count; mi++)
+                if (m.Meshes[mi].BoneTable == tableIndex && mi < m.Declarations.Count)
+                    users.Add((mi, lod));
+        }
+        var layouts = new List<(Mesh Mesh, Element W, Element I, int Slots, int Lod)>();
+        foreach (var (mi, lod) in users)
+        {
+            var decl = m.Declarations[mi];
+            var we = decl.FirstOrDefault(e => e.Usage == 1);
+            var ie = decl.FirstOrDefault(e => e.Usage == 2);
+            if (we == null || ie == null)
+                return 0; // (a mesh using it without weights: can't tell what it needs, leave it)
+            int slots = we.Type == 17 ? 8 : 4;
+            if ((ie.Type == 17 ? 8 : 4) != slots)
+                return 0;
+            layouts.Add((m.Meshes[mi], we, ie, slots, lod));
+        }
+        int Address(Mesh mesh, Element e, int lod, int v)
+            => (int)(m.VertexOffset[lod] - m.DataStart + mesh.BufferOffset[e.Stream] + v * mesh.Stride[e.Stream] + e.Offset);
+        foreach (var (mesh, we, ie, slots, lod) in layouts)
+            for (int v = 0; v < mesh.VertexCount; v++)
+            {
+                int wa = Address(mesh, we, lod, v), ia = Address(mesh, ie, lod, v);
+                if (wa + slots > data.Length || ia + slots > data.Length)
+                    break;
+                for (int k = 0; k < slots; k++)
+                    if (data[wa + k] != 0 && data[ia + k] < used.Length)
+                        used[data[ia + k]] = true;
+            }
+        int freed = used.Count(u => !u);
+        if (freed == 0)
+            return 0;
+        var map = new int[table.Count];
+        var kept = new List<ushort>();
+        for (int k = 0; k < table.Count; k++)
+        {
+            map[k] = used[k] ? kept.Count : 0;
+            if (used[k])
+                kept.Add(table[k]);
+        }
+        if (kept.Count == 0)
+            return 0;
+        foreach (var (mesh, we, ie, slots, lod) in layouts)
+            for (int v = 0; v < mesh.VertexCount; v++)
+            {
+                int wa = Address(mesh, we, lod, v), ia = Address(mesh, ie, lod, v);
+                if (wa + slots > data.Length || ia + slots > data.Length)
+                    break;
+                for (int k = 0; k < slots; k++)
+                    data[ia + k] = data[wa + k] != 0 && data[ia + k] < map.Length ? (byte)map[data[ia + k]] : (byte)0;
+            }
+        table.Clear();
+        table.AddRange(kept);
+        return freed;
+    }
+
+    // A region half's own side of the body (the middle, x = 0, is the left half's).
+    private static bool OnSide(Side side, Vector3 position) => side.Left ? position.X >= 0f : position.X < 0f;
 
     private static float SmoothStep(float x)
     {

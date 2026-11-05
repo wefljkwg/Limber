@@ -45,7 +45,7 @@ public static class RigBuilder
     public sealed record Result(string? PackagePath, List<string> Lines, bool Installed,
         Dictionary<string, Dictionary<string, (System.Numerics.Vector3 Position, string Parent)>>? Bones = null);
 
-    public const string Description = "Limber's body rig: a lattice of extra bones per breast (lmb_lat_mune_*), testicle (lmb_lat_kougan_*) and butt cheek (lmb_lat_shiri_*), " +
+    public const string Description = "Limber's body rig: a lattice of extra bones per breast (lmb_lat_mune_*), testicle (lmb_lat_kougan_*), butt cheek (lmb_lat_shiri_*) and belly half (lmb_lat_hara_*), " +
                                       "plus the older surface grids (lmb_mune_* / lmb_kougan_*), added to your active skeleton for Limber's soft " +
                                       "breasts and soft testicles. Put this mod above your skeleton mod. Rebuild it in Limber whenever your " +
                                       "skeleton mod changes.";
@@ -232,74 +232,10 @@ public static class RigBuilder
         var skeleton = new SkeletonXml(HavokXml.FromBinary(file.Havok));
         replaced = skeleton.RemoveTrailing(RigParts.IsRigBone);
         var model = skeleton.ModelPose();
-        var report = new List<string>();
-        var missing = new List<string>();
-
-        foreach (var part in parts)
-        {
-            var shape = shapes.TryGetValue(part.Key, out var given) ? given : part.DefaultShape();
-            var leftName = part.ParentBone(n => skeleton.IndexOf(n) >= 0, left: true);
-            var rightName = part.ParentBone(n => skeleton.IndexOf(n) >= 0, left: false);
-            if (leftName == null || rightName == null)
-            {
-                // (for the soft parts: what it looked for, marked ones first, so the log says why there's no rig for it)
-                if (!part.Legacy && !part.Shape)
-                    missing.Add($"{part.Label.ToLowerInvariant()} (looked for {string.Join(", ", part.AllParents.Take(6).Select(p => SoftBoneMarks.ForSide(p, true)))}"
-                        + (SoftBoneMarks.ParentsFor(part.Key).Length > 0 ? "; your marked bones aren't in this skeleton: if the Renderer shows them under another skeleton part, they're in an extra skeleton, which the rig doesn't add to yet" : "") + ")");
-                continue;
-            }
-            int leftParent = skeleton.IndexOf(leftName), rightParent = skeleton.IndexOf(rightName);
-            float separation = Vector3.Distance(model[leftParent].Position, model[rightParent].Position);
-            if (!(separation > 0.005f && separation < 1f))
-                separation = part.FallbackSeparation;
-            // A limb's grid lines up along it: where its next joint is.
-            Vector3? ChildAt(bool left)
-            {
-                if (part.Child == null)
-                    return null;
-                int c = skeleton.IndexOf(part.Child.Replace("{side}", left ? "l" : "r"));
-                return c >= 0 ? model[c].Position : null;
-            }
-            if (part.Child != null && (ChildAt(true) == null || ChildAt(false) == null))
-                continue;
-
-            // Where the part's own bones are (for fitting its box to a model): "#breasts:l" / ":r", ":sep", and a
-            // limb's next joint ("#thigh:lc" / ":rc").
-            bones[$"#{part.Key}:l"] = (model[leftParent].Position, leftName);
-            bones[$"#{part.Key}:r"] = (model[rightParent].Position, rightName);
-            bones[$"#{part.Key}:sep"] = (new Vector3(separation, 0, 0), "");
-            if (ChildAt(true) is { } lc && ChildAt(false) is { } rc)
-            {
-                bones[$"#{part.Key}:lc"] = (lc, "");
-                bones[$"#{part.Key}:rc"] = (rc, "");
-            }
-
-            foreach (var (parent, left) in part.Single ? new[] { (leftParent, true) } : new[] { (leftParent, true), (rightParent, false) })
-            {
-                var p = model[parent];
-                float outward = part.Single ? 1f : MathF.Sign(p.Position.X);
-                if (outward == 0)
-                    outward = left ? 1f : -1f;
-                var axes = part.Axes(p.Position, ChildAt(left), outward);
-                var inverse = Quaternion.Inverse(p.Rotation);
-                for (int i = 0; i < part.PerSide; i++)
-                {
-                    var offset = part.PlacedOffset(i, shape, separation, axes);
-                    var local = Vector3.Transform(offset, inverse) / Safe(p.Scale);
-                    skeleton.Add(part.BoneName(left, i), parent, new SkeletonXml.Transform(local, Quaternion.Identity, Vector3.One));
-                    bones[part.BoneName(left, i)] = (p.Position + offset, skeleton.Names[parent]);
-                }
-                if (part.Nipples)
-                {
-                    var n = part.NippleOffset(shape, separation);
-                    var offset = new Vector3(n.X * outward, n.Y, n.Z);
-                    var local = Vector3.Transform(offset, inverse) / Safe(p.Scale);
-                    skeleton.Add(part.NippleName(left), parent, new SkeletonXml.Transform(local, Quaternion.Identity, Vector3.One));
-                    bones[part.NippleName(left)] = (p.Position + offset, skeleton.Names[parent]);
-                }
-            }
-            report.Add($"{part.Label.ToLowerInvariant()} {(part.PerSide + (part.Nipples ? 1 : 0)) * (part.Single ? 1 : 2)} bones");
-        }
+        var placed = Place(parts, shapes, skeleton.IndexOf, i => (model[i].Position, model[i].Rotation, model[i].Scale), i => skeleton.Names[i],
+            bones, out var report, out var missing);
+        foreach (var bone in placed)
+            skeleton.Add(bone.Name, bone.Parent, new SkeletonXml.Transform(bone.Local, Quaternion.Identity, Vector3.One));
         added = (report.Count > 0 ? "added " + string.Join(", ", report) : "") + (missing.Count > 0 ? (report.Count > 0 ? "; " : "") + "no " + string.Join("; no ", missing) : "");
         if (report.Count == 0)
             return null;
@@ -315,6 +251,106 @@ public static class RigBuilder
 
         file.Havok = havok;
         return file.ToBytes();
+    }
+
+    /// <summary>One bone the rig adds: its name, its parent (an index in the skeleton it's placed on), and where it sits
+    /// under that parent (the parent's own axes and scale, as a skeleton keeps it; no turn of its own).</summary>
+    public readonly record struct PlacedBone(string Name, int Parent, Vector3 Local, Vector3 Model);
+
+    /// <summary>
+    /// Where each part's grid goes on a skeleton (any skeleton: a file's, or the one a character is drawn with now):
+    /// from the part's own bones at rest, in model space. <paramref name="bones"/> gets every added bone's model-space
+    /// spot and parent name, and the "#part:..." entries the fitting uses. Nothing is changed.
+    /// </summary>
+    public static List<PlacedBone> Place(RigPart[] parts, IReadOnlyDictionary<string, BreastRigShape> shapes, Func<string, int> indexOf,
+        Func<int, (Vector3 Position, Quaternion Rotation, Vector3 Scale)> model, Func<int, string> nameOf,
+        Dictionary<string, (Vector3 Position, string Parent)> bones, out List<string> report, out List<string> missing)
+    {
+        var result = new List<PlacedBone>();
+        report = new List<string>();
+        missing = new List<string>();
+        foreach (var part in parts)
+        {
+            var shape = shapes.TryGetValue(part.Key, out var given) ? given : part.DefaultShape();
+            var leftName = part.ParentBone(n => indexOf(n) >= 0, left: true);
+            var rightName = part.ParentBone(n => indexOf(n) >= 0, left: false);
+            if (leftName == null || rightName == null)
+            {
+                // (for the soft parts: what it looked for, marked ones first, so the log says why there's no rig for it)
+                if (!part.Legacy && !part.Shape)
+                    missing.Add($"{part.Label.ToLowerInvariant()} (looked for {string.Join(", ", part.AllParents.Take(6).Select(p => SoftBoneMarks.ForSide(p, true)))}"
+                        + (SoftBoneMarks.ParentsFor(part.Key).Length > 0 ? "; your marked bones aren't in this skeleton: if the Renderer shows them under another skeleton part, they're in an extra skeleton, which the rig doesn't add to yet" : "") + ")");
+                continue;
+            }
+            int leftParent = indexOf(leftName), rightParent = indexOf(rightName);
+            float separation = Vector3.Distance(model(leftParent).Position, model(rightParent).Position);
+            if (part.SeparationBones is { } sepBones)
+            {
+                int sl = indexOf(sepBones.Left), sr = indexOf(sepBones.Right);
+                if (sl >= 0 && sr >= 0)
+                    separation = Vector3.Distance(model(sl).Position, model(sr).Position);
+            }
+            if (!(separation > 0.005f && separation < 1f))
+                separation = part.FallbackSeparation;
+            // A limb's grid lines up along it: where its next joint is.
+            Vector3? ChildAt(bool left)
+            {
+                if (part.Child == null)
+                    return null;
+                int c = indexOf(part.Child.Replace("{side}", left ? "l" : "r"));
+                return c >= 0 ? model(c).Position : null;
+            }
+            if (part.Child != null && (ChildAt(true) == null || ChildAt(false) == null))
+                continue;
+
+            // Where the part's own bones are (for fitting its box to a model): "#breasts:l" / ":r", ":sep", and a
+            // limb's next joint ("#thigh:lc" / ":rc").
+            bones[$"#{part.Key}:l"] = (model(leftParent).Position, leftName);
+            bones[$"#{part.Key}:r"] = (model(rightParent).Position, rightName);
+            bones[$"#{part.Key}:sep"] = (new Vector3(separation, 0, 0), "");
+            if (ChildAt(true) is { } lc && ChildAt(false) is { } rc)
+            {
+                bones[$"#{part.Key}:lc"] = (lc, "");
+                bones[$"#{part.Key}:rc"] = (rc, "");
+            }
+
+            foreach (var (parent, left) in part.Single ? new[] { (leftParent, true) } : new[] { (leftParent, true), (rightParent, false) })
+            {
+                var p = model(parent);
+                // (a part whose halves hang from one middle bone, the belly: by side, never by that bone's x, which
+                // is a hair off zero either way and would put both halves on one side)
+                float outward = part.Single ? 1f : part.Region || MathF.Abs(p.Position.X) < 1e-3f ? (left ? 1f : -1f) : MathF.Sign(p.Position.X);
+                var axes = part.Axes(p.Position, ChildAt(left), outward);
+                var inverse = Quaternion.Inverse(p.Rotation);
+                for (int i = 0; i < part.PerSide; i++)
+                {
+                    var offset = part.PlacedOffset(i, shape, separation, axes);
+                    var at = p.Position + offset;
+                    // (a row with a parent of its own: placed the same, hung from that bone)
+                    int boneParent = parent;
+                    if (part.RowParent(i) is { } rowName)
+                    {
+                        int rp = indexOf(SoftBoneMarks.ForSide(rowName, left));
+                        if (rp >= 0)
+                            boneParent = rp;
+                    }
+                    var bp = boneParent == parent ? p : model(boneParent);
+                    var local = Vector3.Transform(at - bp.Position, Quaternion.Inverse(bp.Rotation)) / Safe(bp.Scale);
+                    result.Add(new PlacedBone(part.BoneName(left, i), boneParent, local, at));
+                    bones[part.BoneName(left, i)] = (at, nameOf(boneParent));
+                }
+                if (part.Nipples)
+                {
+                    var n = part.NippleOffset(shape, separation);
+                    var offset = new Vector3(n.X * outward, n.Y, n.Z);
+                    var local = Vector3.Transform(offset, inverse) / Safe(p.Scale);
+                    result.Add(new PlacedBone(part.NippleName(left), parent, local, p.Position + offset));
+                    bones[part.NippleName(left)] = (p.Position + offset, nameOf(parent));
+                }
+            }
+            report.Add($"{part.Label.ToLowerInvariant()} {(part.PerSide + (part.Nipples ? 1 : 0)) * (part.Single ? 1 : 2)} bones");
+        }
+        return result;
     }
 
     private static Vector3 Safe(Vector3 scale) => new(

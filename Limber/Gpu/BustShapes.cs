@@ -69,6 +69,9 @@ public static unsafe class BustShapes
     public static bool Wears(nint address) => _wearers.Contains(address);
     public static int Count => Targets.Count;
 
+    /// <summary>A model file whose vertices the size shapes are writing (render thread).</summary>
+    public static bool Owns(string file) => Targets.ContainsKey(file);
+
     private static volatile Dictionary<nint, float[]> _sizes = new();
 
     /// <summary>The sizes a character's shaped top has (for the page, any thread), or null.</summary>
@@ -180,7 +183,7 @@ public static unsafe class BustShapes
         {
             // The GPU soft body owns that model's vertices while it runs (both writing it, each would keep taking it
             // back from the other: jerky): the size shapes step aside for it.
-            if(LiveSoftBody.IsOn(a))
+            if(LiveSoftBody.IsOn(a) || LiveRig.IsOn(a))
             {
                 paused.Add(a);
                 continue;

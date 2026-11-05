@@ -82,6 +82,7 @@ public sealed unsafe class SoftBody
     private sealed class State
     {
         public SkeletonInfo? Info;
+        public VirtualRig? Rig; // the live rig's bones it was mapped to (null: the skeleton's own)
         public readonly Breast Left, Right;
         public State(int n)
         {
@@ -113,6 +114,13 @@ public sealed unsafe class SoftBody
     public Func<SoftBodySettings> Settings = () => new SoftBodySettings();
     /// <summary>The Body physics switch (off: no soft body at all).</summary>
     public static Func<bool> On = () => true;
+
+    /// <summary>A region part (the belly): how grown each character's is now (0 = as modelled, 1 = a full-term
+    /// pregnant belly; below 0 flatter) and its shape (-1 rounder and wider .. +1 more forward). Set by the plugin
+    /// (Limber Animations' expansion), read in the bone update.</summary>
+    public Func<nint, (float Amount, float Shape)> Growth = _ => (0f, 0f);
+    /// <summary>Anyone's belly is grown (it's shown then even with the physics off).</summary>
+    public Func<bool> Growing = () => false;
 
     /// <summary>Props (pill-shaped colliders) placed this frame; always collided with, whatever the Collisions setting.</summary>
     public Func<PropWorld[]> Props = () => [];
@@ -414,7 +422,9 @@ public sealed unsafe class SoftBody
     public void UpdateFrame()
     {
         var settings = Settings();
-        if ((!settings.Enabled && settings.ShapeIsDefault) || !On())
+        // (a grown belly shows with the physics off too: still, just its shape)
+        bool growing = _part.Region && Growing();
+        if ((!settings.Enabled && settings.ShapeIsDefault && !growing) || (!On() && !growing))
         {
             _states.Clear();
             DebugSurface = [];
@@ -423,6 +433,11 @@ public sealed unsafe class SoftBody
             GrabNormals = [];
             Shifts = new();
             return;
+        }
+        if (!On())
+        {
+            settings = settings.Clone();
+            settings.Enabled = false;
         }
         _frame++;
         _count = 0;
@@ -449,7 +464,9 @@ public sealed unsafe class SoftBody
             if (!Limber.Koi.Safety.AdultAllowed(address))
                 continue;
             var info = skeleton.Info;
-            if (info.IndexOf(_part.BoneName(true, 0)) < 0)
+            // The rig bones: in the skeleton (the rig mod), else Limber's own (the live rig, no redraw).
+            var rig = new RigSkeleton(skeleton, info.IndexOf(_part.BoneName(true, 0)) < 0 ? VirtualRigs.For(address, info) : null);
+            if (rig.IndexOf(_part.BoneName(true, 0)) < 0)
             {
                 // No rig on this body (a model without Limber's grid): Size still works, by scaling the game's own
                 // breast bones, like the game's bust slider does.
@@ -458,16 +475,16 @@ public sealed unsafe class SoftBody
                 continue;
             }
 
-            if (!_states.TryGetValue(address, out var state) || state.Info != info)
+            if (!_states.TryGetValue(address, out var state) || state.Info != info || !ReferenceEquals(state.Rig, rig.Virtual))
             {
-                state = new State(Side) { Info = info };
-                if (!Map(skeleton, state.Left, true) || !Map(skeleton, state.Right, false))
+                state = new State(Side) { Info = info, Rig = rig.Virtual };
+                if (!Map(rig, state.Left, true) || !Map(rig, state.Right, false))
                     continue;
                 _states[address] = state;
             }
             state.SeenFrame = _frame;
             _count++;
-            Simulate(skeleton, state, settings, address);
+            Simulate(rig, state, settings, address);
         }
 
         // Locks let go of: forget what they held.
@@ -512,23 +529,22 @@ public sealed unsafe class SoftBody
         }
     }
 
-    private bool Map(in ActorSkeleton skeleton, Breast breast, bool left)
+    private bool Map(in RigSkeleton skeleton, Breast breast, bool left)
     {
-        var info = skeleton.Info;
         for (int i = 0; i < Side; i++)
         {
-            breast.Bones[i] = info.IndexOf(_part.BoneName(left, i));
+            breast.Bones[i] = skeleton.IndexOf(_part.BoneName(left, i));
             if (breast.Bones[i] < 0)
                 return false;
-            breast.Parents[i] = info.ParentOf(breast.Bones[i]);
+            breast.Parents[i] = skeleton.ParentOf(breast.Bones[i]);
             if (breast.Parents[i] < 0 || !skeleton.TryGetReferenceLocal(breast.Bones[i], out breast.RestLocal[i], out _))
                 return false;
         }
         breast.NippleBone = -1;
         if (_part.Nipples)
         {
-            int nip = info.IndexOf(_part.NippleName(left));
-            int parent = nip >= 0 ? info.ParentOf(nip) : -1;
+            int nip = skeleton.IndexOf(_part.NippleName(left));
+            int parent = nip >= 0 ? skeleton.ParentOf(nip) : -1;
             if (nip >= 0 && parent == breast.Parents[0] && skeleton.TryGetReferenceLocal(nip, out var local, out _))
             {
                 breast.NippleBone = nip;
@@ -575,10 +591,22 @@ public sealed unsafe class SoftBody
         return result.ToArray();
     }
 
-    private void Simulate(in ActorSkeleton skeleton, State state, SoftBodySettings s, nint self)
+    private void Simulate(in RigSkeleton skeleton, State state, SoftBodySettings s, nint self)
     {
-        var info = skeleton.Info;
         long now = Stopwatch.GetTimestamp();
+        // The breasts rest on this character's belly (where the belly was last frame).
+        _belly = null;
+        if (_part == RigParts.Breasts && Bellies.TryGetValue(self, out var belly) && Environment.TickCount64 - belly.Ticks < 500)
+            _belly = belly;
+        // Limber's own rig bones start each frame where their parents carry them (the game does that for real ones).
+        if (skeleton.Virtual != null)
+            foreach (var b in new[] { state.Left, state.Right })
+            {
+                foreach (var bone in b.Bones)
+                    skeleton.Follow(bone);
+                if (b.NippleBone >= 0)
+                    skeleton.Follow(b.NippleBone);
+            }
         float dt = state.LastTicks == 0 ? 0f : (float)((now - state.LastTicks) / (double)Stopwatch.Frequency);
         state.LastTicks = now;
 
@@ -632,6 +660,18 @@ public sealed unsafe class SoftBody
                 * Math.Clamp(s.Projection, 0.1f, 5f)), 0.1f, 5f);
         }
 
+        // A grown belly (pregnant): its box spread out about one point (see Grow); heavier too.
+        float grown = 0f;
+        if (_part.Region)
+        {
+            var (amount, bias) = Growth(self);
+            if (MathF.Abs(amount) > 1e-4f && float.IsFinite(amount))
+            {
+                grown = Math.Clamp(amount, -0.6f, 4f);
+                Grow(skeleton, state, grown, Math.Clamp(bias, -1f, 1f));
+            }
+        }
+
         // Size of this body: the distance between the two grids' centres.
         var cl = Centre(state.Left.Target);
         var cr = Centre(state.Right.Target);
@@ -651,7 +691,7 @@ public sealed unsafe class SoftBody
         //     the surface also ripples and gives way locally (collisions, props) on top of the swing.
         // Sliders go from -3 to 3 (0..1 is the normal range); beyond it they extrapolate, kept physically sane.
         float firm = Math.Clamp(s.Firmness, -3f, 3f);
-        float weight = Math.Clamp(s.Weight, -3f, 3f);
+        float weight = Math.Clamp(s.Weight + 0.25f * MathF.Max(0f, grown), -3f, 3f);
         float bounce = Math.Clamp(s.Bounce, -3f, 3f);
         float cohesion = Math.Clamp(s.Cohesion, -3f, 3f);
         float stretch = Math.Clamp(s.MaxStretch, 0f, 3f);
@@ -681,7 +721,7 @@ public sealed unsafe class SoftBody
         float maxRipple = Math.Clamp(0.2f * stretch, 0.02f, 0.6f) * size;
 
         if (s.Collisions)
-            BuildColliders(skeleton, size);
+            BuildColliders(skeleton.Real, size);
         else
             _capsules.Clear();
         // Only props with "Bone collision" on push the bones (the live mesh has its own, "Mesh collision").
@@ -962,17 +1002,99 @@ public sealed unsafe class SoftBody
             }
             Write(skeleton, breast, uniform, nippleScale);
             for (int i = 0; i < Side; i++)
-                if (breast.Bones[i] >= 0 && breast.Bones[i] < info.Count)
-                    shifts[info.Names[breast.Bones[i]]] = Vector3.TransformNormal(breast.Display[i] - breast.Target[i], skeleton.WorldToModel);
-            if (breast.NippleBone >= 0 && breast.NippleBone < info.Count)
+                if (skeleton.NameOf(breast.Bones[i]) is { Length: > 0 } boneName)
+                    shifts[boneName] = Vector3.TransformNormal(breast.Display[i] - breast.Target[i], skeleton.WorldToModel);
+            if (breast.NippleBone >= 0 && skeleton.NameOf(breast.NippleBone).Length > 0)
             {
                 var nip = Vector3.Zero;
                 foreach (var (k, w) in breast.NippleCorners)
                     nip += (breast.Display[k] - breast.Target[k]) * w;
-                shifts[info.Names[breast.NippleBone]] = Vector3.TransformNormal(nip, skeleton.WorldToModel);
+                shifts[skeleton.NameOf(breast.NippleBone)] = Vector3.TransformNormal(nip, skeleton.WorldToModel);
             }
         }
         _shiftsBuilding[self] = shifts;
+        if (_part.Region)
+            PublishBelly(state, self);
+    }
+
+    // ---- The belly as something the breasts rest on
+
+    /// <summary>An ellipsoid in its own axes (world space).</summary>
+    private readonly record struct Ellipsoid(Vector3 Centre, Vector3 Side, Vector3 Up, Vector3 Forward, Vector3 Radii)
+    {
+        // How far inside it a point is (0 outside), along the line from its centre.
+        public float Depth(Vector3 q, out Vector3 outward)
+        {
+            var d = q - Centre;
+            var l = new Vector3(Vector3.Dot(d, Side) / Radii.X, Vector3.Dot(d, Up) / Radii.Y, Vector3.Dot(d, Forward) / Radii.Z);
+            float s = l.Length();
+            float len = d.Length();
+            outward = len > 1e-6f ? d / len : Forward;
+            if (s >= 1f || s < 1e-4f)
+                return 0f;
+            return len * (1f / s - 1f);
+        }
+    }
+
+    // Each character's belly now and at rest (as the belly soft body last had it), for the breasts.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, (Ellipsoid Now, Ellipsoid AtRest, long Ticks)> Bellies = new();
+    private (Ellipsoid Now, Ellipsoid AtRest, long Ticks)? _belly;
+
+    // The belly's front as an ellipsoid from its box: centred on the back face in the middle of the body, at the
+    // oval's height; as wide as both halves, about as tall as the oval, as deep as the belly's front sits in the box.
+    private Ellipsoid? BellyShape(Vector3[] l, Vector3[] r)
+    {
+        int cols = _part.Columns, rows = _part.Rows, perLayer = _part.PerLayer;
+        if (!_part.Lattice || _part.Layers < 2 || rows < 2 || cols < 2)
+            return null;
+        int Id(int layer, int row, int col) => layer * perLayer + row * cols + col;
+        int mid = rows / 2;
+        var up = l[Id(0, 0, 0)] - l[Id(0, rows - 1, 0)];
+        var forward = l[Id(1, mid, 0)] - l[Id(0, mid, 0)];
+        float height = up.Length();
+        if (height < 1e-4f)
+            return null;
+        up /= height;
+        forward -= up * Vector3.Dot(forward, up);
+        float depth = forward.Length();
+        if (depth < 1e-4f)
+            return null;
+        forward /= depth;
+        var side = Vector3.Cross(up, forward);
+        float width = Vector3.Distance(l[Id(0, mid, cols - 1)], r[Id(0, mid, cols - 1)]) * 0.5f;
+        float at = MdlRigger.RegionCentre * (rows - 1);
+        int r0 = Math.Clamp((int)MathF.Floor(at), 0, rows - 2);
+        float f = at - r0;
+        var centre = (Vector3.Lerp(l[Id(0, r0, 0)], l[Id(0, r0 + 1, 0)], f) + Vector3.Lerp(r[Id(0, r0, 0)], r[Id(0, r0 + 1, 0)], f)) * 0.5f;
+        // (a fitted box has the belly's front about 0.59 of the way to its front face)
+        var radii = new Vector3(MathF.Max(0.01f, width * 0.9f), MathF.Max(0.01f, height * 0.65f), MathF.Max(0.01f, depth * 0.6f));
+        return new Ellipsoid(centre, side, up, forward, radii);
+    }
+
+    private void PublishBelly(State state, nint self)
+    {
+        if (BellyShape(state.Left.Display, state.Right.Display) is { } now && BellyShape(state.Left.RestTarget, state.Right.RestTarget) is { } rest
+            && MathUtil.IsFinite(now.Centre) && MathUtil.IsFinite(now.Radii))
+            Bellies[self] = (now, rest, Environment.TickCount64);
+    }
+
+    // A breast point out of the belly, by as much as it's further in than its rest spot was in the belly at rest
+    // (so where they already touch at rest nothing changes): a growing or bouncing belly lifts and pushes the
+    // breasts, and breasts falling onto it stop on it.
+    private Vector3 PushOutOfBelly(Vector3 p, Vector3 rest, ref Vector3 velocity)
+    {
+        if (_belly is not { } b)
+            return p;
+        float allowed = b.AtRest.Depth(rest, out _);
+        float depth = b.Now.Depth(p, out var outward);
+        float push = depth - allowed;
+        if (push <= 1e-5f)
+            return p;
+        p += outward * push;
+        float into = Vector3.Dot(velocity, outward);
+        if (into < 0f)
+            velocity -= outward * into;
+        return p;
     }
 
     /// <summary>Keep a swing point within the largest turn about the pivot, and the largest stretch / squash.</summary>
@@ -1021,7 +1143,11 @@ public sealed unsafe class SoftBody
                 {
                     bool edgeRow = r == 0 || r == part.Rows - 1;
                     bool edgeCol = c == 0 || c == part.Columns - 1;
-                    float rim = part.Lattice
+                    float rim = part.Region
+                        // (a belly half: its inner column is the middle of the belly, the freest; the outer one is
+                        // the flank, held to the waist; the top under the ribs least of all)
+                        ? (c == 0 ? 1f : 0.55f) * (r == 0 ? 0.6f : r == part.Rows - 1 ? 0.8f : 1f)
+                        : part.Lattice
                         ? (edgeRow && edgeCol ? 0.65f : edgeRow || edgeCol ? 0.8f : 1f)
                         : (edgeRow && edgeCol ? 0.45f : edgeRow || edgeCol ? 0.7f : 1f);
                     m[layer * part.PerLayer + r * part.Columns + c] = rim * depth;
@@ -1089,7 +1215,7 @@ public sealed unsafe class SoftBody
     }
 
     /// <summary>Each grid bone's position (its rotation stays as the body set it), and its size from the shape sliders.</summary>
-    private void Write(in ActorSkeleton skeleton, Breast breast, float uniform, float nippleScale = 1f)
+    private void Write(in RigSkeleton skeleton, Breast breast, float uniform, float nippleScale = 1f)
     {
         // The nipple bone rides on the lattice around it, sized with everything else and by the nipple shapes.
         if (breast.NippleBone >= 0)
@@ -1214,6 +1340,68 @@ public sealed unsafe class SoftBody
     }
 
     /// <summary>
+    /// A region part (the belly) grown: both halves' boxes moved forward (and a little down), and spread out across and
+    /// up and down about one point at the back of the belly (in the middle, at the height the weighting's oval is
+    /// centred on), like a pregnant belly. Never stretched front to back, so the belly's own relief (the navel, the
+    /// line down the middle) isn't deepened as it grows. The vertices on the box move by exactly that, times their
+    /// share of the oval (the box's weights reproduce any even move), so it grows round and smooth with no edge, and
+    /// the physics springs toward the grown shape.
+    /// </summary>
+    private void Grow(in RigSkeleton skeleton, State state, float amount, float bias)
+    {
+        int cols = _part.Columns, rows = _part.Rows, perLayer = _part.PerLayer;
+        if (!_part.Lattice || _part.Layers < 2 || rows < 2 || cols < 2)
+            return;
+        int Id(int layer, int row, int col) => layer * perLayer + row * cols + col;
+        var l = state.Left.Target;
+        int midRow = rows / 2;
+        var across = l[Id(0, midRow, cols - 1)] - l[Id(0, midRow, 0)];
+        var up = l[Id(0, 0, 0)] - l[Id(0, rows - 1, 0)];
+        var forward = l[Id(1, midRow, 0)] - l[Id(0, midRow, 0)];
+        float height = up.Length();
+        if (height < 1e-4f || forward.LengthSquared() < 1e-10f || across.LengthSquared() < 1e-10f)
+            return;
+        up /= height;
+        forward -= up * Vector3.Dot(forward, up);
+        if (forward.LengthSquared() < 1e-10f)
+            return;
+        forward = Vector3.Normalize(forward);
+        var side = Vector3.Cross(up, forward);
+        if (Vector3.Dot(side, across) < 0f)
+            side = -side;
+        // How big this body is: its hip joints apart (the box's own unit), else from the box's height.
+        float unit = height / 1.55f;
+        if (_part.SeparationBones is { } hips)
+        {
+            int a = skeleton.IndexOf(hips.Left), b = skeleton.IndexOf(hips.Right);
+            if (a >= 0 && b >= 0)
+            {
+                float d = Vector3.Distance(skeleton.ModelToWorldPoint(skeleton.GetModelPosition(a)), skeleton.ModelToWorldPoint(skeleton.GetModelPosition(b)));
+                if (d > 0.01f && d < 2f)
+                    unit = d;
+            }
+        }
+        // The point it spreads from: the back face, in the middle of the body, at the oval's height.
+        float at = MdlRigger.RegionCentre * (rows - 1);
+        int r0 = Math.Clamp((int)MathF.Floor(at), 0, rows - 2);
+        float f = at - r0;
+        var centre = (Vector3.Lerp(l[Id(0, r0, 0)], l[Id(0, r0 + 1, 0)], f)
+            + Vector3.Lerp(state.Right.Target[Id(0, r0, 0)], state.Right.Target[Id(0, r0 + 1, 0)], f)) * 0.5f;
+        float g = amount;
+        float sx = MathF.Max(0.2f, 1f + g * (0.5f - 0.15f * bias)); // across
+        float sy = MathF.Max(0.2f, 1f + g * 0.25f);                  // up and down
+        // (a full-term belly sticks out about a hip-width's worth; it hangs a little lower too)
+        var move = forward * (g * (0.95f + 0.25f * bias) * unit) - up * (g * 0.15f * unit);
+        foreach (var half in new[] { state.Left, state.Right })
+            for (int i = 0; i < Side; i++)
+            {
+                var d = half.Target[i] - centre;
+                float x = Vector3.Dot(d, side), y = Vector3.Dot(d, up), z = Vector3.Dot(d, forward);
+                half.Target[i] = centre + side * (x * sx) + up * (y * sy) + forward * z + move;
+            }
+    }
+
+    /// <summary>
     /// Scale one grid in its own frame (across, up, forward, taken from the grid as it sits on the body now, so it
     /// follows the pose) around the breast bone, then move it.
     /// </summary>
@@ -1251,7 +1439,8 @@ public sealed unsafe class SoftBody
             pivot = new Vector3(Vector3.Dot(rel, outward), Vector3.Dot(rel, up), Vector3.Dot(rel, forward));
         }
         else
-            pivot = new Vector3(centre.X, centre.Y, back);
+            // (a belly half from the middle of the body, so the two halves stay together)
+            pivot = new Vector3(_part.Region ? 0f : centre.X, centre.Y, back);
 
         for (int i = 0; i < Side; i++)
         {
@@ -1311,6 +1500,7 @@ public sealed unsafe class SoftBody
             p = PushOut(p, rest, c, ref breast.Velocity[i]);
         foreach (var c in _otherHands)
             p = PushOut(p, rest, c, ref breast.Velocity[i]);
+        p = PushOutOfBelly(p, rest, ref breast.Velocity[i]);
         // (where the swing, flattened on the floor, puts it: a breast squashed as far as it goes isn't pushed further)
         float allowed = MathF.Min(floor, MathF.Min(rest.Y, breast.Goal[i].Y));
         if (p.Y < allowed)
@@ -1690,6 +1880,10 @@ public sealed unsafe class SoftBody
     private void BuildColliders(in ActorSkeleton skeleton, float size)
     {
         _capsules.Clear();
+        // (not the belly's: the upper arms hang against the waist, so they'd always be pushing its sides in, and
+        // follow every turn of the shoulders; hands, props and the floor still push it)
+        if (_part.Region)
+            return;
         foreach (var side in new[] { "l", "r" })
         {
             AddCapsule(skeleton, "j_ude_a_" + side, "j_ude_b_" + side, MathF.Max(0.30f * size, 0.045f));

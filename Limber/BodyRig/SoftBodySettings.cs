@@ -49,6 +49,14 @@ public sealed class SoftBodySettings
         Firmness = 0.45f, Bounce = 0.7f, Weight = 0.4f, Jiggle = 1.6f, Cohesion = 0.75f, MaxStretch = 0.45f,
     };
 
+    /// <summary>Starting values for the belly rig: soft and heavy, slow to settle, held to the body at its rim; off
+    /// until turned on (a grown belly shows without it).</summary>
+    public static SoftBodySettings BellyDefaults() => new()
+    {
+        Enabled = false, Firmness = 0.35f, Bounce = 0.65f, Weight = 0.35f, Jiggle = 1.4f, Cohesion = 0.85f, MaxStretch = 0.35f,
+        KeepShape = 1f, // (it wobbles, but doesn't sag at rest: it hangs from the spine, so a sag would tip the whole belly)
+    };
+
     /// <summary>Starting values for the testicle rig: heavier and swingier.</summary>
     public static SoftBodySettings TesticleDefaults() => new()
     {

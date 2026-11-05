@@ -341,6 +341,43 @@ public static class BodyShapeBuild
         }
     }
 
+    /// <summary>
+    /// The detail sliders' sculpts as a move of one vertex at rest (for the live rig, which puts them on the GPU with no
+    /// build or redraw): the same push the build gives it (its position, the mesh's bone names, its 8 bone slots and
+    /// weights, how many are used). Null when none of the values sculpts anything.
+    /// </summary>
+    public static Func<Vector3, string[], byte[], float[], int, Vector3>? SculptMove(IReadOnlyDictionary<string, float> values,
+        Dictionary<string, (Vector3 Position, Quaternion Rotation, Vector3 Scale, string Parent)> rest)
+    {
+        var sculpts = Sculpts(values, rest);
+        if (sculpts.Count == 0)
+            return null;
+        var owners = new Dictionary<string, string>();
+        string Owner(string bone)
+        {
+            if (owners.TryGetValue(bone, out var known))
+                return known;
+            string at = bone;
+            for (int guard = 0; Limber.BodyRig.RigParts.IsRigBone(at) && guard < 64; guard++)
+                at = rest.TryGetValue(at, out var r) && r.Parent.Length > 0 ? r.Parent : at;
+            return owners[bone] = at;
+        }
+        return (p, names, idx, w, slots) =>
+        {
+            var push = Vector3.Zero;
+            foreach (var sc in sculpts)
+            {
+                float carried = 0f;
+                for (int k = 0; k < slots; k++)
+                    if (w[k] > 0f && idx[k] < names.Length && Owner(names[idx[k]]) == sc.Bone)
+                        carried += w[k];
+                if (carried > 1e-4f)
+                    push += sc.Push(p) * MathF.Min(carried, 1f);
+            }
+            return push;
+        };
+    }
+
     // A move toward the middle of the body (in x) eased off the nearer it gets, so the skin between the legs is
     // squeezed toward the middle but never pushed across it (left and right sides crossing: folded skin).
     private static Vector3 KeepSide(Vector3 from, Vector3 to)

@@ -99,7 +99,7 @@ public static class BodySliders
 
     private static BodySlider Detail(string key, string group, string name, string tip, params Morph[] morphs) => new()
     {
-        Key = key, Group = group, Name = name, Tip = tip + " Built into the models (Build; see Auto-build).", Morphs = morphs, BuildOnly = true,
+        Key = key, Group = group, Name = name, Tip = tip + " Live with the live rig; Build bakes it into the models.", Morphs = morphs, BuildOnly = true,
     };
 
     // A limb: fuller where the lobe points, over a stretch of its length (0 = its joint, 1 = the next).
@@ -248,7 +248,7 @@ public static class BodySliders
         new() { Key = "calves", Group = "Legs", Name = "Calves", Tip = "Thicker or slimmer calves (not longer).",
             Ops = [new() { Bone = "j_asi_c_{side}", Next = "j_asi_d_{side}", Axes = OpAxes.Across, Scale = 0.4f, Keep = OpKeep.Children }] },
         new() { Key = "ankles", Group = "Legs", Name = "Ankles", BuildOnly = true,
-            Tip = "Thicker or slimmer ankles; the feet stay as they are. Built into the models.",
+            Tip = "Thicker or slimmer ankles; the feet stay as they are. Live with the live rig; Build bakes it into the models.",
             Morphs = [Limb(Shin, Ankle, Any, 0.7f, 1f, 1.5f), Limb(Ankle, Toes, Any, 0f, 0.3f, 1f)] },
         new() { Key = "feet", Group = "Legs", Name = "Feet",
             Tip = "Bigger or smaller feet, toes and all (longer and wider, the same height, so the soles stay on the floor).",

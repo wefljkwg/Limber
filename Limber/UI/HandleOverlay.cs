@@ -166,6 +166,8 @@ public sealed class HandleOverlay
 
         float scale = snapshot.Scale > 0.01f ? snapshot.Scale : 1f;
         float separation = Vector3.Distance(left.Position, right.Position) / scale;
+        if(part.SeparationBones is { } sepBones && snapshot.TryGetWorld(sepBones.Left, out var sl) && snapshot.TryGetWorld(sepBones.Right, out var sr))
+            separation = Vector3.Distance(sl.Position, sr.Position) / scale;
         if(!(separation > 0.005f && separation < 1f))
             separation = part.FallbackSeparation;
 
@@ -176,7 +178,8 @@ public sealed class HandleOverlay
         float dot = 4f * ImGuiHelpers.GlobalScale;
         foreach(var (frame, isLeft) in new[] { (left, true), (right, false) })
         {
-            float outward = Vector3.Transform(frame.Position - middle, inverseRoot).X >= 0 ? 1f : -1f;
+            float outward = leftName == rightName ? (isLeft ? 1f : -1f) // (both halves on one bone: the belly)
+                : Vector3.Transform(frame.Position - middle, inverseRoot).X >= 0 ? 1f : -1f;
             for(int i = 0; i < part.PerSide; i++)
             {
                 var offset = part.ModelOffset(i, shape, separation, outward);

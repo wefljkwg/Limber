@@ -199,6 +199,19 @@ public sealed class LimberAnimationsTab
         ("Huge", p => { p.Pattern = ExpansionPattern.Accelerating; p.Amount = 4f; p.Duration = 40f; p.Repeat = ExpansionRepeat.Hold; }),
     ];
 
+    // Belly growths that fit it (they set the pattern and timing; Amount 100% = full term).
+    private static readonly (string Name, Action<ExpansionPart> Apply)[] BellyPresets =
+    [
+        ("Pregnancy (slow)", p => { p.Pattern = ExpansionPattern.Smooth; p.Amount = 1f; p.Duration = 90f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Pregnancy (quick)", p => { p.Pattern = ExpansionPattern.Surge; p.Amount = 1f; p.Duration = 12f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Kicks", p => { p.Pattern = ExpansionPattern.Spurts; p.Amount = 1.1f; p.Duration = 40f; p.Speed = 20f; p.Randomness = 0.8f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Inflate", p => { p.Pattern = ExpansionPattern.Pump; p.Amount = 1.5f; p.Duration = 20f; p.Speed = 40f; p.Strength = 0.7f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Stuffed", p => { p.Pattern = ExpansionPattern.Steps; p.Amount = 0.6f; p.Duration = 15f; p.Speed = 12f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Breathing", p => { p.Pattern = ExpansionPattern.Breathing; p.Amount = 0.12f; p.Duration = 4.5f; p.Repeat = ExpansionRepeat.Loop; }),
+        ("Overfull", p => { p.Pattern = ExpansionPattern.Overinflate; p.Amount = 2f; p.Duration = 15f; p.Strength = 0.6f; p.Repeat = ExpansionRepeat.Hold; }),
+        ("Grow and shrink", p => { p.Pattern = ExpansionPattern.PingPong; p.Amount = 1f; p.Duration = 20f; p.Repeat = ExpansionRepeat.Loop; }),
+    ];
+
     private void DrawExpansion(string name, ActorRef actor)
     {
         var all = _config.Expansion ??= new();
@@ -208,18 +221,18 @@ public sealed class LimberAnimationsTab
 
         if(ImGui.SmallButton("Start all###lanim_ex_all_on"))
         {
-            s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = true;
+            s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = s.Belly.Enabled = true;
             changed = true;
         }
         ImGui.SameLine();
         if(ImGui.SmallButton("Stop all###lanim_ex_all_off"))
         {
-            s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = false;
+            s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = s.Belly.Enabled = false;
             changed = true;
         }
         ImGui.SameLine();
         if(ImGui.SmallButton("Restart all###lanim_ex_all_re"))
-            for(int i = 0; i < 3; i++)
+            for(int i = 0; i < 4; i++)
                 _expansion.Restart(actor.Address, i);
 
         foreach(var (part, index, partName, shapeTip) in new[]
@@ -227,12 +240,35 @@ public sealed class LimberAnimationsTab
             (s.Breasts, 0, "Breasts", "-100%: grows more across (wider). 0: evenly. +100%: grows more forward (projecting)."),
             (s.Butt, 1, "Butt", "-100%: grows more across (wider). 0: evenly. +100%: grows more outward (rounder at the back)."),
             (s.Penis, 2, "Penis", "-100%: mostly thicker. 0: evenly. +100%: mostly longer."),
+            (s.Belly, 3, "Belly", "-100%: rounder and wider. 0: in between. +100%: more forward and narrower."),
         })
         {
             ImGui.Spacing();
             using var id = ImRaii.PushId($"lanim_ex_{index}");
             if(!ImGui.TreeNodeEx($"{partName}###lanim_ex_node_{index}"))
                 continue;
+            if(index == 3)
+            {
+                // The held pregnancy (always on, under the growth), and what it needs.
+                changed |= SliderEx("Pregnant (held)", s.Pregnant * 100f, v => s.Pregnant = v / 100f, -50f, 300f, "%.0f%%",
+                    "How pregnant the belly is all the time, under the growth below (100% = full term; below 0 flatter). Stays on until set back to 0.");
+                ImGui.TextDisabled("Grows round on the belly rig: Live rig on (Body physics page), or rigged with Rig everything.");
+                if(BellyPresets.Length > 0)
+                {
+                    ImGui.Text("Belly:");
+                    int k = 0;
+                    foreach(var (presetName, apply) in BellyPresets)
+                    {
+                        if(k++ % 4 != 0)
+                            ImGui.SameLine();
+                        if(ImGui.SmallButton($"{presetName}###bpreset_{presetName}"))
+                        {
+                            apply(s.Belly);
+                            changed = true;
+                        }
+                    }
+                }
+            }
             changed |= DrawExpansionPart(part, index, partName, shapeTip, actor);
             ImGui.TreePop();
         }
@@ -263,7 +299,7 @@ public sealed class LimberAnimationsTab
         if(grown >= 0f)
             ImGui.ProgressBar(Math.Clamp(grown, 0f, 1f), new Vector2(-1, 0), $"+{grown * p.Amount * 100f:0}%");
         else
-            ImGui.TextDisabled(p.Enabled ? (index == 2 ? "starting... (no penis bones found?)" : "starting...") : "stopped");
+            ImGui.TextDisabled(p.Enabled ? (index == 2 ? "starting... (no penis bones found?)" : index == 3 ? "starting... (no belly rig?)" : "starting...") : "stopped");
 
         ImGui.Text("Presets:");
         int n = 0;
@@ -312,8 +348,21 @@ public sealed class LimberAnimationsTab
                     Tooltip(tip);
                 }
         }
+        if(p.Repeat == ExpansionRepeat.Hold && p.Pattern is ExpansionPattern.Pulses or ExpansionPattern.Heartbeat or ExpansionPattern.Pump
+               or ExpansionPattern.Wobble or ExpansionPattern.Throbbing)
+        {
+            bool still = p.StillWhenHeld;
+            if(ImGui.Checkbox("Still once held###still", ref still))
+            {
+                p.StillWhenHeld = still;
+                changed = true;
+            }
+            Tooltip("On: once it's grown, the pumping (beats, pulses, wobble) dies away and it stays still at full size.\nOff: it keeps pumping while it's held.");
+        }
 
-        changed |= SliderEx("Amount", p.Amount * 100f, v => p.Amount = v / 100f, -90f, 1000f, "+%.0f%%", $"How much bigger the {partName.ToLowerInvariant()} get at full size (100% = twice the size). Below 0 shrinks them.");
+        changed |= SliderEx("Amount", p.Amount * 100f, v => p.Amount = v / 100f, -90f, 1000f, "+%.0f%%", index == 3
+            ? "How much the belly grows at full size (100% = a full-term pregnant belly; 200% and up: more than any real one). Below 0 flattens it."
+            : $"How much bigger the {partName.ToLowerInvariant()} get at full size (100% = twice the size). Below 0 shrinks them.");
         changed |= SliderEx("Duration", p.Duration, v => p.Duration = v, 0.5f, 300f, "%.1f s", "Seconds for one growth (or one breath, for Breathing).");
         changed |= SliderEx("Speed", p.Speed, v => p.Speed = v, 5f, 240f, "%.0f /min", "Beats, pumps, steps or wobbles a minute (for the patterns that have them).");
         changed |= SliderEx("Strength", p.Strength * 100f, v => p.Strength = v / 100f, 0f, 100f, "%.0f%%", "How strong the pulses, beats, pumps, wobble or overshoot are.");

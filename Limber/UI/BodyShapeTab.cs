@@ -104,7 +104,9 @@ public sealed class BodyShapeTab
                 detailShown = true;
                 ImGui.Spacing();
                 ImGui.TextColored(Accent, "Detail");
-                ImGui.TextColored(Dim, "Sculpted into the models when building (no live preview): press Build to see them, or turn on\nAuto-build to build by itself a moment after you let go of one.");
+                ImGui.TextColored(Dim, _config.LiveRig
+                    ? "Shown live on the chosen character by the live rig (Body physics page): no build, no redraw.\nBuild bakes them into the models (for every character wearing them)."
+                    : "Sculpted into the models when building: press Build to see them, or turn on Auto-build to build\nby itself a moment after you let go of one. (Or turn on the live rig on the Body physics page to see them live.)");
                 bool auto = _config.BodyShapeAutoBuild;
                 if (ImGui.Checkbox("Auto-build###lmb_bs_autobuild", ref auto))
                 {

@@ -51,6 +51,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Limber.BodyRig.SoftBody _softBody = new(Limber.BodyRig.RigParts.Breasts);
     private readonly Limber.BodyRig.SoftBody _softBodyTesticles = new(Limber.BodyRig.RigParts.Testicles);
     private readonly Limber.BodyRig.SoftBody _softBodyButt = new(Limber.BodyRig.RigParts.Butt);
+    private readonly Limber.BodyRig.SoftBody _softBodyBelly = new(Limber.BodyRig.RigParts.Belly);
     private readonly Limber.BodyShape.BodyShapeLive _bodyShape = new();
     private List<System.Numerics.Vector3[]> _grabFrom = new();
     private (System.Numerics.Vector3[], System.Numerics.Vector3[]) _grabMerged = ([], []);
@@ -112,6 +113,7 @@ public sealed class Plugin : IDalamudPlugin
             _softBody.Settings = () => _config.Ik.SoftBody ??= new Limber.BodyRig.SoftBodySettings();
             _softBodyTesticles.Settings = () => _config.Ik.SoftBodyTesticles ??= Limber.BodyRig.SoftBodySettings.TesticleDefaults();
             _softBodyButt.Settings = () => _config.Ik.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults();
+            _softBodyBelly.Settings = () => _config.Ik.SoftBodyBelly ??= Limber.BodyRig.SoftBodySettings.BellyDefaults();
             _props = new Limber.BodyRig.PropService(ObjectTable, ClientState, () => _config.Ik.Props);
             _props.HandSize = () => _config.Ik.HandColliderSize;
             _housing = new Limber.BodyRig.HousingProps(DataManager, Log);
@@ -143,7 +145,10 @@ public sealed class Plugin : IDalamudPlugin
             foreach(var s in (_config.Ik.Twerk ??= new()).Values) s.Enabled = false;
             foreach(var s in (_config.Ik.Ahegao ??= new()).Values) s.Enabled = false;
             foreach(var s in (_config.Ik.Expansion ??= new()).Values)
-                s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = false;
+                s.Breasts.Enabled = s.Butt.Enabled = s.Penis.Enabled = s.Belly.Enabled = false;
+            // The soft belly: how grown each character's is (a held pregnancy and Limber Animations' growth).
+            _softBodyBelly.Growth = _expansion.BellyOf;
+            _softBodyBelly.Growing = () => _expansion.AnyBelly;
             _config.Ik.BodyShapeOn = false;
             _config.Ik.BodyPhysicsOn = false;
             Limber.BodyRig.SoftBody.On = () => _config.Ik.BodyPhysicsOn;
@@ -191,6 +196,7 @@ public sealed class Plugin : IDalamudPlugin
             _softBody.Props = () => _props.World;
             _softBodyTesticles.Props = () => _props.World;
             _softBodyButt.Props = () => _props.World;
+            _softBodyBelly.Props = () => _props.World;
             Limber.Gpu.LiveSoftBody.Props = () => _props.World;
             Limber.Gpu.LiveSoftBody.Settings = () => _config.Ik.LiveMesh ??= new Limber.Gpu.LiveMeshSettings();
             Limber.BodyRig.SoftBoneMarks.Source = () => _config.Ik.SoftBoneMarks ??= new();
@@ -204,7 +210,7 @@ public sealed class Plugin : IDalamudPlugin
                     return (live.Points, live.Normals);
                 // (merged only when what's in it changes: the grab keeps its lookup grid while the arrays are the same)
                 var parts = new List<(System.Numerics.Vector3[] P, System.Numerics.Vector3[] N)>();
-                foreach (var soft in new[] { _softBody, _softBodyTesticles, _softBodyButt })
+                foreach (var soft in new[] { _softBody, _softBodyTesticles, _softBodyButt, _softBodyBelly })
                 {
                     var (p, n) = (soft.GrabSurface, soft.GrabNormals);
                     if (p.Length > 0 && p.Length == n.Length)
@@ -228,7 +234,7 @@ public sealed class Plugin : IDalamudPlugin
             Limber.Gpu.LiveSoftBody.LatticeShift = address =>
             {
                 Dictionary<string, System.Numerics.Vector3>? found = null;
-                foreach (var soft in new[] { _softBody, _softBodyTesticles, _softBodyButt })
+                foreach (var soft in new[] { _softBody, _softBodyTesticles, _softBodyButt, _softBodyBelly })
                 {
                     if (!soft.Shifts.TryGetValue(address, out var shifts))
                         continue;
@@ -251,6 +257,7 @@ public sealed class Plugin : IDalamudPlugin
             _softBody.Skip = SkipGrabbing;
             _softBodyTesticles.Skip = SkipGrabbing;
             _softBodyButt.Skip = SkipGrabbing;
+            _softBodyBelly.Skip = SkipGrabbing;
             // Lock: where the locked hands are this frame (the soft body bones near them follow).
             var lockCache = new SkeletonInfoCache();
             (nint, int, Frame, float, bool)[] LockedHands()
@@ -279,14 +286,31 @@ public sealed class Plugin : IDalamudPlugin
             _softBody.LockedHands = LockedHands;
             _softBodyTesticles.LockedHands = LockedHands;
             _softBodyButt.LockedHands = LockedHands;
+            _softBodyBelly.LockedHands = LockedHands;
             Limber.Gpu.LiveSoftBody.Grabbing = SkipGrabbing;
             Limber.Gpu.LiveSoftBody.GrabFinger = () => FingerGrab.VisibleFinger * Math.Clamp(_config.Ik.HandColliderSize, 0.1f, 10f);
             _rigs.Grab.FingerRadius = () => FingerGrab.VisibleFinger * Math.Clamp(_config.Ik.HandColliderSize, 0.1f, 10f);
             Limber.Gpu.LiveSoftBody.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
+            // The live rig: soft bodies and detail sliders with no rig mod and no redraw.
+            Limber.Gpu.LiveRig.On = () => _config.PluginEnabled && _config.Ik.LiveRig && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);
+            Limber.Gpu.LiveRig.AutoFit = () => _config.Ik.RigAutoFit;
+            Limber.Gpu.LiveRig.Separate = () => _config.Ik.LiveRigSeparate;
+            Limber.Gpu.LiveRig.ReadFile = LimberTab.ReadModelFile;
+            Limber.Gpu.LiveRig.Placements = () => new Dictionary<string, Limber.BodyRig.BreastRigShape>
+            {
+                [Limber.BodyRig.RigParts.Breasts.Key] = _config.Ik.BreastLattice ?? Limber.BodyRig.RigParts.Breasts.DefaultShape(),
+                [Limber.BodyRig.RigParts.Testicles.Key] = _config.Ik.TesticleLattice ?? Limber.BodyRig.RigParts.Testicles.DefaultShape(),
+                [Limber.BodyRig.RigParts.Butt.Key] = _config.Ik.ButtLattice ?? Limber.BodyRig.RigParts.Butt.DefaultShape(),
+                [Limber.BodyRig.RigParts.Belly.Key] = _config.Ik.BellyLattice ?? Limber.BodyRig.RigParts.Belly.DefaultShape(),
+            };
+            // (the belly's box only while the soft belly or a grown belly wants it: else its vertices aren't moved at all)
+            Limber.Gpu.LiveRig.PartWanted = key => key != Limber.BodyRig.RigParts.Belly.Key
+                || (_config.Ik.SoftBodyBelly?.Enabled ?? false) || _expansion.AnyBelly;
             _softBody.BoneStrength = () => _config.Ik.PropBoneStrength;
             _softBodyTesticles.BoneStrength = () => _config.Ik.PropBoneStrength;
             _softBodyButt.BoneStrength = () => _config.Ik.PropBoneStrength;
-            _propOverlay = new PropOverlay(_props, _config.Ik, GameGui) { BodyColliders = [_softBody, _softBodyTesticles, _softBodyButt] };
+            _softBodyBelly.BoneStrength = () => _config.Ik.PropBoneStrength;
+            _propOverlay = new PropOverlay(_props, _config.Ik, GameGui) { BodyColliders = [_softBody, _softBodyTesticles, _softBodyButt, _softBodyBelly] };
             _overlay.SuppressGizmo = () => _propOverlay.GizmoWanted;
             _overlay.MouseTakenElsewhere = () => _propOverlay.OwnsMouse || _motions.OwnsMouse;
             _motions.Changed = () => _config.Ik.Save();
@@ -300,8 +324,8 @@ public sealed class Plugin : IDalamudPlugin
             _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
-                ("Limber soft body (butt)", _softBodyButt.UpdateFrame),
-                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
+                ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame),
+                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
                 ("Limber freeze motion (end of frame)", _freeze.CaptureFrame));
 
             var pluginDir = PluginInterface.AssemblyLocation.DirectoryName ?? ".";
@@ -310,7 +334,7 @@ public sealed class Plugin : IDalamudPlugin
             Framework.Update += OnFrameworkUpdate;
 
             var syncHelp = new SyncHelpWindow();
-            var limberTab = new LimberTab(_rigs, _selection, _overlay, _config.Ik) { SoftBreasts = _softBody, SoftTesticles = _softBodyTesticles, SoftButt = _softBodyButt, PropService = _props, Actors = _actors, Freeze = _freeze, Spawner = _spawner, Motions = _motions };
+            var limberTab = new LimberTab(_rigs, _selection, _overlay, _config.Ik) { SoftBreasts = _softBody, SoftTesticles = _softBodyTesticles, SoftButt = _softBodyButt, SoftBelly = _softBodyBelly, Expansion = _expansion, PropService = _props, Actors = _actors, Freeze = _freeze, Spawner = _spawner, Motions = _motions };
             _mainWindow = new MainWindow(_koi, _hook, limberTab, _video, _live, syncHelp,
                 new PropsTab(_props, _propOverlay, _selection, _config.Ik) { Motions = _motions },
                 new RendererTab(_rigs, _selection, _config.Ik, limberTab) { PropService = _props },
@@ -405,6 +429,57 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    // The live rig: the chosen character (soft bodies and detail sliders), and up to three more with detail sliders set.
+    private void UpdateLiveRigTargets(bool here)
+    {
+        if(!here || !_config.Ik.LiveRig)
+        {
+            if(Limber.Gpu.LiveRig.Wanted.Length > 0)
+                Limber.Gpu.LiveRig.Wanted = [];
+            return;
+        }
+        // (a grown belly needs the belly's box too, physics on or not)
+        bool physics = _config.Ik.BodyPhysicsOn || _expansion.AnyBelly;
+        bool preview = _config.Ik.BodyShapePreview && _config.Ik.BodyShapeOn;
+        var shapes = _config.Ik.BodyShapes;
+        var builtAll = _config.Ik.BodyShapeBuilt;
+        static bool Sculpts(Dictionary<string, float>? values)
+            => values != null && values.Any(kv => kv.Value != 0f && Limber.BodyShape.BodySliders.ByKey.TryGetValue(kv.Key, out var s) && s.Morphs.Length > 0);
+        var list = new List<Limber.Gpu.LiveRig.Want>();
+        nint main = _selection.Actor.IsSet ? _selection.Actor.Address : 0;
+        // Separate wobbles: the nearest few others with soft bodies get the live rig too (each its own copy of what it wears).
+        var alsoPhysics = new HashSet<nint>();
+        if(physics && _config.Ik.LiveRigSeparate)
+            foreach(var (address, _) in _softBody.Candidates)
+                if(address != main && alsoPhysics.Count < 3)
+                    alsoPhysics.Add(address);
+        foreach(var obj in ObjectTable)
+        {
+            if(obj is not Dalamud.Game.ClientState.Objects.Types.ICharacter || obj.Address == 0)
+                continue;
+            bool isMain = obj.Address == main;
+            var name = obj.Name.TextValue;
+            Dictionary<string, float>? values = null, built = null;
+            if(preview)
+                shapes?.TryGetValue(name, out values);
+            builtAll?.TryGetValue(name, out built);
+            // (Body shape off or not previewing: what's built stays as it is, nothing sculpted live)
+            bool sculpt = preview && (Sculpts(values) || Sculpts(built));
+            if(!preview)
+                values = built;
+            bool otherPhysics = alsoPhysics.Contains(obj.Address);
+            if(!isMain && !otherPhysics && (!sculpt || list.Count(w => !w.Main) >= 3))
+                continue;
+            if(isMain && !physics && !sculpt)
+                continue;
+            if(!Limber.Koi.Safety.AdultAllowed(obj.Address))
+                continue;
+            list.Add(new Limber.Gpu.LiveRig.Want(obj.Address, obj.ObjectIndex, isMain, physics && (isMain || otherPhysics),
+                values != null ? new Dictionary<string, float>(values) : null, built != null ? new Dictionary<string, float>(built) : null));
+        }
+        Limber.Gpu.LiveRig.Wanted = list.ToArray();
+    }
+
     // The Body Shape tab's live preview: every character on screen that has slider values (or a built shape).
     private void UpdateBodyShapeTargets(bool here)
     {
@@ -461,6 +536,7 @@ public sealed class Plugin : IDalamudPlugin
             HandleUndoKeys();
             UpdateSoftBodyCandidates();
             UpdateBodyShapeTargets(here);
+            UpdateLiveRigTargets(here);
         }
         catch (Exception e)
         {
@@ -651,7 +727,25 @@ public sealed class Plugin : IDalamudPlugin
 
     private void ToggleWindow() => _mainWindow.Toggle();
 
+    // Drawing (which also moves models on the GPU) and unloading never overlap: Dalamud can unload the plugin (a
+    // rebuild, an update) while a frame is being drawn, and then the models' memory being let go of under the live
+    // rig would crash the game.
+    private readonly object _drawLock = new();
+    private volatile bool _disposed;
+
     private void OnDraw()
+    {
+        if(_disposed)
+            return;
+        lock(_drawLock)
+        {
+            if(_disposed)
+                return;
+            DrawFrame();
+        }
+    }
+
+    private void DrawFrame()
     {
         try
         {
@@ -681,6 +775,7 @@ public sealed class Plugin : IDalamudPlugin
                 _oral.DrawGuide(GameGui);
                 Limber.Gpu.LiveMesh.Update(); // render thread, before the frame is presented
                 Limber.Gpu.LiveSoftBody.Update();
+                Limber.Gpu.LiveRig.Update();
                 _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
                 _dynamicBones.Refresh();
                 _throb.Refresh();
@@ -701,7 +796,8 @@ public sealed class Plugin : IDalamudPlugin
                     _config.Ik.Save();
                 if(!_config.Ik.BodyPhysicsOn && (Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveSoftBody.Preparing || Limber.Gpu.LiveSoftBody.Resuming))
                     Limber.Gpu.LiveSoftBody.Stop();
-                if(_selection.Actor.IsSet && _config.Ik.BodyPhysicsOn)
+                // (the live rig moves the chosen character's models: the experimental GPU soft body only starts by itself without it)
+                if(_selection.Actor.IsSet && _config.Ik.BodyPhysicsOn && !_config.Ik.LiveRig)
                     Limber.Gpu.LiveSoftBody.AutoTick(_selection.Actor.Address, _selection.Actor.ObjectIndex, LimberTab.ReadModelFile, LimberTab.LivePartOf);
                 _oral.UpdateLipMesh();
                 _ahegao.UpdateFaceRig(LimberTab.ReadModelFile);
@@ -724,6 +820,8 @@ public sealed class Plugin : IDalamudPlugin
                 _ragdoll.StopAll();
                 _facePosing.Clear();
             }
+            if(!(_config.PluginEnabled && here && _config.Ik.LiveRig) && Limber.Gpu.LiveRig.Active)
+                Limber.Gpu.LiveRig.Stop();
             if(!(_config.PluginEnabled && here) && (Limber.Gpu.LiveSoftBody.Running || Limber.Gpu.LiveMesh.Wobbling || Limber.Gpu.LipMesh.Running || Limber.Gpu.FaceRig.Running || Limber.Gpu.BustShapes.Count > 0))
             {
                 // Turned off (or left GPose without "Also run outside GPose"): the models' own vertices back.
@@ -852,11 +950,13 @@ public sealed class Plugin : IDalamudPlugin
         bool Wanted(Limber.BodyRig.SoftBodySettings? s) => s != null && (s.Enabled || !s.ShapeIsDefault);
         // Outside GPose only with "Also run outside GPose" (main Advanced tab).
         bool allowedHere = ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
-        if(!allowedHere || (!Wanted(_config.Ik.SoftBody) && !Wanted(_config.Ik.SoftBodyTesticles) && !Wanted(_config.Ik.SoftBodyButt)))
+        if(!allowedHere || (!Wanted(_config.Ik.SoftBody) && !Wanted(_config.Ik.SoftBodyTesticles) && !Wanted(_config.Ik.SoftBodyButt)
+            && !Wanted(_config.Ik.SoftBodyBelly) && !_expansion.AnyBelly))
         {
             _softBody.Candidates = [];
             _softBodyTesticles.Candidates = [];
             _softBodyButt.Candidates = [];
+            _softBodyBelly.Candidates = [];
             return;
         }
         var me = ObjectTable.Length > 0 ? ObjectTable[0] : null;
@@ -876,10 +976,16 @@ public sealed class Plugin : IDalamudPlugin
         _softBody.Candidates = candidates;
         _softBodyTesticles.Candidates = candidates;
         _softBodyButt.Candidates = candidates;
+        _softBodyBelly.Candidates = candidates;
     }
 
     public void Dispose()
     {
+        // (waits for a frame being drawn to finish; none starts after this)
+        lock(_drawLock)
+            _disposed = true;
+        PluginInterface.UiBuilder.Draw -= OnDraw;
+        try { _hook.Running = () => false; } catch { } // (no more bone stages either)
         CameraControl.Dispose();
         try { VoiceSwitcher.ResetAll(); } catch { }
         PluginInterface.UiBuilder.Draw -= OnDraw;
@@ -891,6 +997,8 @@ public sealed class Plugin : IDalamudPlugin
 
         Limber.Gpu.LiveMesh.StopWobble();
         Limber.Gpu.LiveSoftBody.Stop();
+        Limber.Gpu.LiveRig.Stop();
+        Limber.Gpu.LiveRigInstances.Dispose();
         Limber.Gpu.LipMesh.Stop();
         Limber.Gpu.FaceRig.Stop();
         Limber.Gpu.BustShapes.Stop();

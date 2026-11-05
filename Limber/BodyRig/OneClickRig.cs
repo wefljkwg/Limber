@@ -405,9 +405,56 @@ public static class OneClickRig
             Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
             return true;
         });
+
+        // 5. The new skeleton really loaded? The game keeps a skeleton file loaded while any character uses it (a
+        // GPose actor copy, another player of the same race...), so a redraw of this one character can leave it on the
+        // old skeleton: its models then use rig bones the skeleton hasn't got, and the game moves that skin with some
+        // other bone (the head). Everyone is redrawn then, so it's let go of and read again.
+        var check = parts.Where(p => !p.Shape).Select(p => p.BoneName(true, 0)).ToArray();
+        if (check.Length > 0)
+        {
+            await Task.Delay(2500);
+            var lacking = await Game(() => MissingBones(index, check));
+            if (lacking.Count > 0)
+            {
+                progress.Add("  The game still had the old skeleton loaded (another character uses it too): redrawing everyone...");
+                await Game(() =>
+                {
+                    Plugin.PluginInterface.GetIpcSubscriber<int, object?>("Penumbra.RedrawAll.V5").InvokeAction(0);
+                    return true;
+                });
+                await Task.Delay(3500);
+                lacking = await Game(() => MissingBones(index, check));
+                if (lacking.Count > 0)
+                    progress.Add("  Still the old skeleton (" + string.Join(", ", lacking) + " missing): until it's read again, the rigged skin "
+                        + "follows the wrong bones (e.g. the belly moves with the head). Leave GPose and come back, or change zone; "
+                        + "if that doesn't do it, restart the game.");
+                else
+                    progress.Add("  New skeleton loaded.");
+            }
+        }
         progress.Add(files.Count > 0
-            ? $"Done: {files.Count} model(s) rigged. Turn on Soft breasts / Soft testicles / Soft butt to see them move."
+            ? $"Done: {files.Count} model(s) rigged. Turn on Soft breasts / Soft testicles / Soft butt / Soft belly to see them move."
             : "Done (rig only).");
+    }
+
+    /// <summary>Which of these bones the character's skeleton (as the game has it loaded now) hasn't got. Game thread.</summary>
+    internal static unsafe List<string> MissingBones(ushort index, IEnumerable<string> bones)
+    {
+        var missing = new List<string>();
+        try
+        {
+            var obj = Limber.Core.ActorSkeleton.GetObject(index);
+            if (obj == null || !Limber.Core.ActorSkeleton.TryGet((nint)obj, index, new Limber.Core.SkeletonInfoCache(), out var sk))
+                return missing; // (can't tell: say nothing)
+            foreach (var b in bones)
+                if (sk.Info.IndexOf(b) < 0)
+                    missing.Add(b);
+        }
+        catch
+        {
+        }
+        return missing;
     }
 
     internal static unsafe bool StillThere(ushort index, nint address)
@@ -442,6 +489,7 @@ public static class OneClickRig
         string[] words = part == RigParts.Testicles ? ["kougan", "tama", "ball", "testic", "scrot", "kinta", "sack", "nuts"]
             : part == RigParts.Butt ? ["shiri", "butt", "glute", "hip", "ass_", "cheek", "oshiri"]
             : part == RigParts.Breasts ? ["mune", "breast", "boob", "chest", "oppai"]
+            : part == RigParts.Belly ? ["fukubu", "hara", "belly", "stomach", "abdomen", "onaka", "tummy", "navel", "heso"]
             : [];
         return words.Any(w => b.Contains(w, StringComparison.Ordinal));
     }
@@ -460,7 +508,10 @@ public static class OneClickRig
                 ? ["iv_mune_{side}", "iv_c_mune_phys_{side}", "j_mune_phys_{side}", "iv_mune_phys_{side}"]
                 : part == RigParts.Butt
                     ? ["iv_shiri_phys_{side}", "j_shiri_{side}", "iv_shiri_b_{side}"]
-                    : [];
+                    // (the belly is the torso's own: the spine and hips, and the belly bones body mods add)
+                    : part == RigParts.Belly
+                        ? ["j_sebo_a", "j_sebo_b", "iv_fukubu_phys", "ya_fukubu_phys", "iv_fukubu", "iv_hara", "iv_onaka", "j_hara"]
+                        : [];
         foreach (var e in extra)
         {
             var n = SoftBoneMarks.ForSide(e, side == "l");
@@ -474,9 +525,11 @@ public static class OneClickRig
     /// A box around the part as it is in the models: centred on it, as wide / tall as it, from its back to its front
     /// (robust bounds: the outer 2% of vertices on each side are ignored). Null if no model has the part.
     /// </summary>
-    private static BreastRigShape? Fit(RigPart part, List<(string Game, string Code, byte[] Data)> models,
+    internal static BreastRigShape? Fit(RigPart part, List<(string Game, string Code, byte[] Data)> models,
         Dictionary<string, Dictionary<string, (Vector3 Position, string Parent)>> skeletons)
     {
+        if (part.Region)
+            return FitBelly(part, models, skeletons);
         var found = new List<(BreastRigShape Shape, int Count)>();
         var nipples = new List<(Vector3 Offset, int Count)>();
         foreach (var (_, code, data) in models)
@@ -500,9 +553,7 @@ public static class OneClickRig
                 }
                 if (points.Count < 30)
                     continue;
-                float outward = part.Single ? 1f : MathF.Sign(pivot.X);
-                if (outward == 0)
-                    outward = side == "l" ? 1f : -1f;
+                float outward = part.Single ? 1f : part.Region || MathF.Abs(pivot.X) < 1e-3f ? (side == "l" ? 1f : -1f) : MathF.Sign(pivot.X);
                 // In the part's own axes (along a limb for a limb's grid): outward, up, forward from its bone.
                 Vector3? child = b.TryGetValue($"#{part.Key}:{side}c", out var cb) ? cb.Position : null;
                 var axes = part.Axes(pivot, child, outward);
@@ -554,7 +605,84 @@ public static class OneClickRig
         return shape;
     }
 
-    private static List<MdlRigger.Side> Sides(Dictionary<string, (Vector3 Position, string Parent)> bones, RigPart[] parts,
+    /// <summary>
+    /// The belly's box as it is in the models (all of them together: the belly is split between the top and the
+    /// bottom): from just above the crotch to just under the breasts, as wide as the front of the waist, from behind
+    /// the spine to well in front of the belly (room for it to grow). Null if no model has the torso's front.
+    /// </summary>
+    private static BreastRigShape? FitBelly(RigPart part, List<(string Game, string Code, byte[] Data)> models,
+        Dictionary<string, Dictionary<string, (Vector3 Position, string Parent)>> skeletons)
+    {
+        var torsoNames = new HashSet<string>(SourceNames(part, "l"), StringComparer.Ordinal);
+        var breastNames = new HashSet<string>(SourceNames(RigParts.Breasts, "l").Concat(SourceNames(RigParts.Breasts, "r")), StringComparer.Ordinal);
+        var front = new List<Vector3>();  // the torso's front, in separations from the spine bone
+        var breast = new List<Vector3>(); // the breasts' front
+        foreach (var (_, code, data) in models)
+        {
+            if (!skeletons.TryGetValue(code, out var b) || !b.TryGetValue($"#{part.Key}:sep", out var sep) || !b.TryGetValue($"#{part.Key}:l", out var pivot))
+                continue;
+            float separation = sep.Position.X;
+            if (!(separation > 0.005f))
+                continue;
+            try
+            {
+                foreach (var p in MdlRigger.Vertices(data, torsoNames.Contains, 0.6f))
+                {
+                    var q = (p - pivot.Position) / separation;
+                    if (q.Z > 0f && MathF.Abs(q.X) < 1.6f)
+                        front.Add(q);
+                }
+                foreach (var p in MdlRigger.Vertices(data, breastNames.Contains, 0.25f))
+                {
+                    var q = (p - pivot.Position) / separation;
+                    if (q.Z > 0f)
+                        breast.Add(q);
+                }
+            }
+            catch
+            {
+            }
+        }
+        if (front.Count < 50)
+            return null;
+        static float Q(IEnumerable<float> values, float q)
+        {
+            var sorted = values.OrderBy(x => x).ToArray();
+            return sorted.Length == 0 ? 0f : sorted[Math.Clamp((int)(q * (sorted.Length - 1)), 0, sorted.Length - 1)];
+        }
+        // Top: where the breasts start (else a little above the spine bone); bottom: the crotch (the torso's lowest
+        // point in the middle), else below it.
+        float top = breast.Count >= 30 ? Q(breast.Select(p => p.Y), 0.04f) : 1.1f;
+        var middle = front.Where(p => MathF.Abs(p.X) < 0.25f).ToList();
+        float bottom = middle.Count >= 20 ? Q(middle.Select(p => p.Y), 0.02f) : -1.4f;
+        if (top - bottom < 0.6f)
+        {
+            top = MathF.Max(top, 1.1f);
+            bottom = MathF.Min(bottom, -1.4f);
+        }
+        float span = top - bottom;
+        // (from above the pubis, which stays as it is, to a little over the breasts' lower edge)
+        float boxTop = top + 0.1f * span, boxBottom = bottom + 0.17f * span;
+        var band = front.Where(p => p.Y > boxBottom && p.Y < boxTop).ToList();
+        if (band.Count < 30)
+            band = front;
+        float half = Math.Clamp(Q(band.Select(p => MathF.Abs(p.X)), 0.97f), 0.3f, 2.5f);
+        var centre = band.Where(p => MathF.Abs(p.X) < half * 0.5f).ToList();
+        float face = Q((centre.Count >= 20 ? centre : band).Select(p => p.Z), 0.98f);
+        const float back = -0.25f;
+        return new BreastRigShape
+        {
+            Size = Math.Clamp(half * 1.25f, 0.3f, 3f),
+            Out = Math.Clamp(half * 1.25f, 0.3f, 3f) * 0.5f,
+            Height = Math.Clamp(boxTop - boxBottom, 0.5f, 6f),
+            Up = Math.Clamp((boxTop + boxBottom) * 0.5f, -4f, 3f),
+            Forward = back,
+            // (the front of the belly at about the middle of the box: room in front for it to grow and swing)
+            Depth = Math.Clamp((face - back) * 1.7f, 0.5f, 5f),
+        };
+    }
+
+    internal static List<MdlRigger.Side> Sides(Dictionary<string, (Vector3 Position, string Parent)> bones, RigPart[] parts,
         IReadOnlyDictionary<string, BreastRigShape> shapes, IReadOnlyDictionary<string, (float Roundness, float Fill)>? shaping = null)
     {
         var sides = new List<MdlRigger.Side>();
@@ -562,7 +690,7 @@ public static class OneClickRig
         {
             if (!parts.Contains(part))
                 continue;
-            bool merge = part == RigParts.Testicles;
+            bool merge = part == RigParts.Testicles || part.Region;
             foreach (var left in part.Single ? new[] { true } : new[] { true, false })
             {
                 var names = Enumerable.Range(0, part.PerSide).Select(i => part.BoneName(left, i)).ToArray();
@@ -580,7 +708,9 @@ public static class OneClickRig
                     PartKey = part.Key,
                     Left = left,
                     Roundness = shaping != null && shaping.TryGetValue(part.Key, out var sh) ? Math.Clamp(sh.Roundness, 0f, 1f) : 0f,
-                    Fill = shaping != null && shaping.TryGetValue(part.Key, out var sf) ? Math.Clamp(sf.Fill, 0f, 1f) : 0f,
+                    // (the belly's two halves always move as one in the middle)
+                    Fill = part.Region ? 0.6f : shaping != null && shaping.TryGetValue(part.Key, out var sf) ? Math.Clamp(sf.Fill, 0f, 1f) : 0f,
+                    Region = part.Region,
                     Nipple = nipple ? part.NippleName(left) : null,
                     NipplePosition = nipple ? bones[part.NippleName(left)].Position : default,
                     NippleRadius = part.NippleRadius * separation,
