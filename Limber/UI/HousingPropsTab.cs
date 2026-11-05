@@ -40,6 +40,27 @@ public sealed unsafe class HousingPropsTab
 
     private float _yaw = 0.6f, _pitch = 0.35f, _zoom = 1f;
 
+    // Attaching to a bone: the bone picked (per placed prop), and whether it stays where it is.
+    private readonly Dictionary<Guid, string> _attachBone = new();
+    private bool _attachKeep = true;
+
+    internal static readonly (string Bone, string Name)[] AttachBones =
+    [
+        ("j_te_r", "Right hand"), ("j_te_l", "Left hand"),
+        ("j_ude_b_r", "Right forearm"), ("j_ude_b_l", "Left forearm"),
+        ("j_ude_a_r", "Right upper arm"), ("j_ude_a_l", "Left upper arm"),
+        ("j_kao", "Head"), ("j_kubi", "Neck"),
+        ("j_sebo_c", "Chest"), ("j_sebo_b", "Upper spine"), ("j_sebo_a", "Waist"), ("j_kosi", "Hips"),
+        ("j_asi_a_r", "Right thigh"), ("j_asi_a_l", "Left thigh"),
+        ("j_asi_c_r", "Right calf"), ("j_asi_c_l", "Left calf"),
+        ("j_asi_d_r", "Right foot"), ("j_asi_d_l", "Left foot"),
+        ("n_buki_r", "Right weapon point"), ("n_buki_l", "Left weapon point"),
+        ("n_hara", "Root (feet)"),
+    ];
+
+    internal static string BoneLabel(string bone)
+        => Array.Find(AttachBones, b => b.Bone == bone).Name is { } n ? $"{n} ({bone})" : bone;
+
     private static readonly string[] WhereNames = ["Indoor and outdoor", "Indoor", "Outdoor"];
 
     private readonly bool _world;
@@ -302,16 +323,19 @@ public sealed unsafe class HousingPropsTab
             if(ImGui.SmallButton("Delete###delete"))
                 _props.Remove(prop.Id);
 
+            DrawAttach(prop);
+
+            bool onBone = prop.AttachTo != 0;
             var position = prop.Position;
             ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.7f);
-            if(ImGui.DragFloat3("Position###position", ref position, 0.01f, -10000f, 10000f, "%.2f"))
+            if(ImGui.DragFloat3(onBone ? "Offset from the bone###position" : "Position###position", ref position, onBone ? 0.002f : 0.01f, -10000f, 10000f, onBone ? "%.3f" : "%.2f"))
             {
                 prop.Position = position;
                 HousingProps.MarkChanged(prop);
             }
             var turn = prop.Turn;
             ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.7f);
-            if(ImGui.DragFloat3("Turn (°)###turn", ref turn, 0.5f, -360f, 360f, "%.1f"))
+            if(ImGui.DragFloat3(onBone ? "Turn on the bone (°)###turn" : "Turn (°)###turn", ref turn, 0.5f, -360f, 360f, "%.1f"))
             {
                 prop.Turn = turn;
                 HousingProps.MarkChanged(prop);
@@ -325,5 +349,70 @@ public sealed unsafe class HousingPropsTab
             }
             ImGui.TreePop();
         }
+    }
+
+    // On a character's bone: pick one of the chosen character's bones, attach, detach.
+    private void DrawAttach(SpawnedProp prop)
+    {
+        if(prop.AttachTo != 0)
+        {
+            bool found = _props.BoneFound(prop);
+            ImGui.TextUnformatted($"On {(prop.AttachName.Length > 0 ? prop.AttachName : "a character")}'s {BoneLabel(prop.AttachBone)}");
+            if(!found)
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled("(not found now: left where it was)");
+            }
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Detach###detach"))
+                _props.Detach(prop);
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Off the bone, left where it is now.");
+            bool size = prop.AttachSize;
+            if(ImGui.Checkbox("Size with the character###attach_size", ref size))
+            {
+                prop.AttachSize = size;
+                HousingProps.MarkChanged(prop);
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Bigger or smaller with the character (its Actor scale, height growth): it stays in proportion.");
+            return;
+        }
+
+        var actor = _selection.Actor;
+        if(!actor.IsSet)
+        {
+            ImGui.TextDisabled("Choose a character at the top of the window to attach this to one of its bones.");
+            return;
+        }
+        if(!_attachBone.TryGetValue(prop.Id, out var bone))
+            _attachBone[prop.Id] = bone = "j_te_r";
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.45f);
+        using(var combo = ImRaii.Combo("###attach_bone", BoneLabel(bone)))
+        {
+            if(combo.Success)
+                foreach(var (b, name) in AttachBones)
+                    if(ImGui.Selectable($"{name}###ab_{b}", b == bone))
+                        _attachBone[prop.Id] = bone = b;
+        }
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+        string typed = bone;
+        if(ImGui.InputText("###attach_bone_name", ref typed, 64))
+            _attachBone[prop.Id] = bone = typed.Trim();
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Or type any bone's name (as the skeleton has it, e.g. j_te_r, j_kao, j_ago).");
+        ImGui.SameLine();
+        using(ImRaii.Disabled(bone.Length == 0))
+        {
+            if(ImGui.SmallButton($"Attach to {actor.Name}###attach"))
+                HousingProps.Attach(prop, actor.Address, actor.ObjectIndex, actor.Name ?? "", bone, _attachKeep);
+        }
+        if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Puts it on this bone of the chosen character: it moves and turns with it from then on (only on your screen).");
+        ImGui.SameLine();
+        ImGui.Checkbox("Stay where it is###attach_keep", ref _attachKeep);
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("On: it stays where it is now and moves with the bone from there. Off: it goes right onto the bone (then set its offset).");
     }
 }

@@ -22,6 +22,8 @@ public sealed class LimberAnimationsTab
     private readonly ExpansionService _expansion;
     /// <summary>Testicle throbbing (set by the plugin).</summary>
     public BallThrobService? BallThrob { get; set; }
+    /// <summary>Height growth / shrinking (set by the plugin).</summary>
+    public SizeChangeService? SizeChange { get; set; }
 
     public LimberAnimationsTab(Selection selection, RigSettings config, ThrobService throb, TwerkService twerk, AhegaoService ahegao, ExpansionService expansion)
     {
@@ -125,6 +127,9 @@ public sealed class LimberAnimationsTab
             ImGui.TextDisabled("This character has no name to keep the settings under.");
             return;
         }
+        DrawSelected(name, actor);
+        ImGui.Separator();
+        ImGui.Spacing();
         // Both throbbings at once, in time with each other.
         if(BallThrob != null)
         {
@@ -156,6 +161,318 @@ public sealed class LimberAnimationsTab
             DrawAhegao(name, actor);
         if(ImGui.CollapsingHeader("Expansion###lanim_expansion"))
             DrawExpansion(name, actor);
+        if(SizeChange != null && ImGui.CollapsingHeader("Height growth / shrinking###lanim_height"))
+            DrawHeight(name, actor);
+    }
+
+    // ---- Height growth / shrinking
+
+    private static readonly (SizeChangePattern Pattern, string Name, string Tip)[] SizePatterns =
+    [
+        (SizeChangePattern.Smooth, "Smooth", "Eases into it and eases out at the end size."),
+        (SizeChangePattern.Steady, "Steady", "The same factor every second (looks even at any size: 1x to 10x takes as long as 10x to 100x)."),
+        (SizeChangePattern.Surge, "Surge", "Fast at first, slowing toward the end size."),
+        (SizeChangePattern.Accelerating, "Accelerating", "Slow at first, then faster and faster."),
+        (SizeChangePattern.Pulses, "Pulses", "In pulses, swelling a little past where it's heading on each (Speed, Strength)."),
+        (SizeChangePattern.Steps, "Steps", "Sudden jumps in size, holding between (Speed)."),
+        (SizeChangePattern.Spurts, "Spurts", "Random-sized jumps (Speed, Strength = how uneven)."),
+    ];
+
+    private static readonly (string Name, Action<SizeChangeSettings> Apply)[] SizePresets =
+    [
+        ("Taller", h => { h.From = 1f; h.To = 1.5f; h.Duration = 8f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Giantess", h => { h.From = 1f; h.To = 10f; h.Duration = 20f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Macro", h => { h.From = 1f; h.To = 100f; h.Duration = 40f; h.Pattern = SizeChangePattern.Accelerating; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Mega macro", h => { h.From = 1f; h.To = 1000f; h.Duration = 60f; h.Pattern = SizeChangePattern.Steady; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Growth spurts", h => { h.From = 1f; h.To = 30f; h.Duration = 30f; h.Pattern = SizeChangePattern.Spurts; h.Speed = 15f; h.Strength = 0.7f; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Pulsing growth", h => { h.From = 1f; h.To = 20f; h.Duration = 30f; h.Pattern = SizeChangePattern.Pulses; h.Speed = 40f; h.Strength = 0.7f; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Shrink", h => { h.From = 1f; h.To = 0.3f; h.Duration = 10f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Tiny", h => { h.From = 1f; h.To = 0.05f; h.Duration = 20f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Ant-sized", h => { h.From = 1f; h.To = 0.002f; h.Duration = 30f; h.Pattern = SizeChangePattern.Steady; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Grow and shrink", h => { h.From = 0.5f; h.To = 5f; h.Duration = 10f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Reverse; }),
+    ];
+
+    // A rough word for a size (1 = its own).
+    private static string SizeWord(float x) => x switch
+    {
+        < 0.005f => "ant-sized",
+        < 0.03f => "bug-sized",
+        < 0.12f => "palm-sized",
+        < 0.4f => "doll-sized",
+        < 0.85f => "small",
+        <= 1.18f => "own size",
+        < 2f => "tall",
+        < 6f => "giant",
+        < 30f => "giantess (building-sized)",
+        < 200f => "macro (skyscraper-sized)",
+        _ => "mega macro (mountain-sized)",
+    };
+
+    private static bool SizeSlider(string label, float value, Action<float> set, string tip)
+    {
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        bool edited = ImGui.SliderFloat($"{label}###lanim_h_{label}", ref value, SizeChangeService.MinSize, SizeChangeService.MaxSize,
+            value < 0.1f ? "%.4fx" : "%.2fx", ImGuiSliderFlags.Logarithmic);
+        Tooltip(tip + "\nCtrl+click to type a value.");
+        if(edited && float.IsFinite(value))
+            set(Math.Clamp(value, SizeChangeService.MinSize, SizeChangeService.MaxSize));
+        ImGui.SameLine();
+        ImGui.TextDisabled(SizeWord(value));
+        return edited;
+    }
+
+    private void DrawHeight(string name, ActorRef actor)
+    {
+        var all = _config.SizeChange ??= new();
+        if(!all.TryGetValue(name, out var h))
+            all[name] = h = new SizeChangeSettings();
+        bool changed = false;
+
+        float now = SizeChange!.SizeOf(actor.Address);
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f), !h.Enabled))
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.55f, 0.25f, 0.25f, 1f), h.Enabled))
+        {
+            if(ImGui.Button(h.Enabled ? "Stop###lanim_h_go" : "Start###lanim_h_go", new Vector2(120 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                if(!h.Enabled)
+                    SizeChange.Restart(actor.Address);
+                h.Enabled = !h.Enabled;
+                changed = true;
+            }
+        }
+        Tooltip("Stopped, it goes back to its own size (over Return).");
+        ImGui.SameLine();
+        if(ImGui.Button("Restart###lanim_h_restart"))
+            SizeChange.Restart(actor.Address);
+        Tooltip("Start over from the start size.");
+        ImGui.SameLine();
+        if(now > 0f)
+            ImGui.TextUnformatted($"now {(now < 0.1f ? now.ToString("0.0000") : now.ToString("0.00"))}x ({SizeWord(now)})");
+        else
+            ImGui.TextDisabled("own size");
+
+        ImGui.Text("Presets:");
+        int k = 0;
+        foreach(var (presetName, apply) in SizePresets)
+        {
+            if(k++ % 5 != 0)
+                ImGui.SameLine();
+            if(ImGui.SmallButton($"{presetName}###hpreset_{presetName}"))
+            {
+                apply(h);
+                SizeChange.Restart(actor.Address);
+                changed = true;
+            }
+        }
+
+        changed |= SizeSlider("Start size", h.From, v => h.From = v, "The size it starts from (1x = its own size).");
+        changed |= SizeSlider("End size", h.To, v => h.To = v,
+            "The size it grows (or shrinks) to: up to 2000x (a mountain-sized giant), down to 0.0005x (smaller than an ant). 1x = its own size.");
+        changed |= SliderEx("Duration", h.Duration, v => h.Duration = MathF.Max(0.1f, v), 0.5f, 300f, "%.1f s",
+            "Seconds from the start size to the end size.");
+
+        string pattern = Array.Find(SizePatterns, x => x.Pattern == h.Pattern).Name ?? h.Pattern.ToString();
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("Pattern###lanim_h_pattern", pattern))
+        {
+            if(combo.Success)
+                foreach(var (pt, ptName, tip) in SizePatterns)
+                {
+                    if(ImGui.Selectable($"{ptName}###hp_{pt}", h.Pattern == pt))
+                    {
+                        h.Pattern = pt;
+                        changed = true;
+                    }
+                    Tooltip(tip);
+                }
+        }
+        ImGui.TextDisabled(Array.Find(SizePatterns, x => x.Pattern == h.Pattern).Tip ?? "");
+        if(h.Pattern is SizeChangePattern.Pulses or SizeChangePattern.Steps or SizeChangePattern.Spurts)
+            changed |= SliderEx("Speed", h.Speed, v => h.Speed = v, 2f, 200f, "%.0f a minute", "How many pulses, steps or spurts a minute.");
+        if(h.Pattern is SizeChangePattern.Pulses or SizeChangePattern.Spurts)
+            changed |= SliderEx("Strength", h.Strength * 100f, v => h.Strength = v / 100f, 0f, 100f, "%.0f%%",
+                "Pulses: how far each one swells past. Spurts: how uneven they are.");
+
+        string repeat = Array.Find(ExpansionRepeats, x => x.Repeat == h.Repeat).Name ?? h.Repeat.ToString();
+        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("At the end###lanim_h_repeat", repeat))
+        {
+            if(combo.Success)
+                foreach(var (r, rName, tip) in ExpansionRepeats)
+                {
+                    if(ImGui.Selectable($"{rName}###hr_{r}", h.Repeat == r))
+                    {
+                        h.Repeat = r;
+                        changed = true;
+                    }
+                    Tooltip(tip);
+                }
+        }
+        changed |= SliderEx("Return", h.Return, v => h.Return = MathF.Max(0f, v), 0f, 20f, "%.1f s",
+            "Seconds to go back to its own size when stopped.");
+        ImGui.TextDisabled("Very big or very small: zoom the camera out (or in) a long way; the gpose camera only goes so far.");
+
+        if(changed)
+            _config.Save();
+    }
+
+    // The animations "Start all selected" can start: key, name, tooltip.
+    private static readonly (string Key, string Name, string Tip)[] Startable =
+    [
+        ("throb", "Throbbing", "Penis throbbing."),
+        ("balls", "Testicle throbbing", "Testicle throbbing (in time with the penis when both are picked)."),
+        ("twerk", "Twerking", "Twerking."),
+        ("ahegao", "Ahegao", "The ahegao face."),
+        ("ex_breasts", "Breast expansion", "Expansion: breasts (started over from their own size)."),
+        ("ex_butt", "Butt expansion", "Expansion: butt (started over from its own size)."),
+        ("ex_penis", "Penis expansion", "Expansion: penis (started over from its own size)."),
+        ("ex_belly", "Belly expansion", "Expansion: belly (started over from its own size)."),
+        ("height", "Height growth / shrinking", "The whole character growing or shrinking (started over from its start size)."),
+    ];
+
+    private bool IsOn(string name, string key) => key switch
+    {
+        "throb" => (_config.Throb ??= new()).TryGetValue(name, out var t) && t.Enabled,
+        "balls" => (_config.BallThrob ??= new()).TryGetValue(name, out var b) && b.Enabled,
+        "twerk" => (_config.Twerk ??= new()).TryGetValue(name, out var w) && w.Enabled,
+        "ahegao" => (_config.Ahegao ??= new()).TryGetValue(name, out var a) && a.Enabled,
+        "height" => (_config.SizeChange ??= new()).TryGetValue(name, out var h) && h.Enabled,
+        _ => (_config.Expansion ??= new()).TryGetValue(name, out var e) && ExpansionPartOf(e, key) is { Enabled: true },
+    };
+
+    private static ExpansionPart? ExpansionPartOf(ExpansionSettings e, string key) => key switch
+    {
+        "ex_breasts" => e.Breasts,
+        "ex_butt" => e.Butt,
+        "ex_penis" => e.Penis,
+        "ex_belly" => e.Belly,
+        _ => null,
+    };
+
+    private static int ExpansionIndexOf(string key) => key switch
+    {
+        "ex_breasts" => 0,
+        "ex_butt" => 1,
+        "ex_penis" => 2,
+        "ex_belly" => 3,
+        _ => -1,
+    };
+
+    private void SetOn(string name, string key, bool on, ActorRef actor)
+    {
+        switch(key)
+        {
+            case "throb":
+                ((_config.Throb ??= new()).TryGetValue(name, out var t) ? t : _config.Throb[name] = new ThrobSettings()).Enabled = on;
+                break;
+            case "balls":
+                ((_config.BallThrob ??= new()).TryGetValue(name, out var b) ? b : _config.BallThrob[name] = new BallThrobSettings()).Enabled = on;
+                break;
+            case "twerk":
+                ((_config.Twerk ??= new()).TryGetValue(name, out var w) ? w : _config.Twerk[name] = new TwerkSettings()).Enabled = on;
+                break;
+            case "ahegao":
+                ((_config.Ahegao ??= new()).TryGetValue(name, out var a) ? a : _config.Ahegao[name] = new AhegaoSettings()).Enabled = on;
+                break;
+            case "height":
+            {
+                var h = (_config.SizeChange ??= new()).TryGetValue(name, out var hs) ? hs : _config.SizeChange[name] = new SizeChangeSettings();
+                if(on && !h.Enabled)
+                    SizeChange?.Restart(actor.Address);
+                h.Enabled = on;
+                break;
+            }
+            default:
+            {
+                var all = _config.Expansion ??= new();
+                if(!all.TryGetValue(name, out var e))
+                    all[name] = e = new ExpansionSettings();
+                if(ExpansionPartOf(e, key) is not { } part)
+                    break;
+                bool was = part.Enabled;
+                part.Enabled = on;
+                if(on && !was)
+                    _expansion.Restart(actor.Address, ExpansionIndexOf(key));
+                break;
+            }
+        }
+    }
+
+    // At the top: the animations picked here started (or stopped) together with one button.
+    private void DrawSelected(string name, ActorRef actor)
+    {
+        var picked = _config.AnimationsSelected ??= new();
+        var available = Array.FindAll(Startable, x => (x.Key != "balls" || BallThrob != null) && (x.Key != "height" || SizeChange != null));
+        int count = Array.FindAll(available, x => picked.Contains(x.Key)).Length;
+        bool anyOn = Array.Exists(available, x => picked.Contains(x.Key) && IsOn(name, x.Key));
+
+        using(ImRaii.Disabled(count == 0))
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.25f, 0.5f, 0.3f, 1f)))
+        {
+            if(ImGui.Button($"Start all selected ({count})###lanim_sel_go", new Vector2(200 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                foreach(var (key, _, _) in available)
+                    if(picked.Contains(key))
+                        SetOn(name, key, true, actor);
+                // (both throbbings picked: their beats start together)
+                if(picked.Contains("throb"))
+                    _throb.Sync(actor.Address);
+                if(picked.Contains("balls") && BallThrob != null)
+                    BallThrob.Sync(actor.Address);
+                _config.Save();
+            }
+        }
+        if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(count == 0 ? "Tick the animations below first." : "Starts every animation ticked below at once (throbbings in time with each other, expansions from their own size).");
+        ImGui.SameLine();
+        using(ImRaii.Disabled(!anyOn))
+        using(ImRaii.PushColor(ImGuiCol.Button, new Vector4(0.55f, 0.25f, 0.25f, 1f)))
+        {
+            if(ImGui.Button("Stop all selected###lanim_sel_stop"))
+            {
+                foreach(var (key, _, _) in available)
+                    if(picked.Contains(key))
+                        SetOn(name, key, false, actor);
+                _config.Save();
+            }
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("All###lanim_sel_all"))
+        {
+            foreach(var x in available)
+                picked.Add(x.Key);
+            _config.Save();
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("None###lanim_sel_none"))
+        {
+            picked.Clear();
+            _config.Save();
+        }
+
+        // The picks, in two columns; each shows whether it's running now.
+        using var table = ImRaii.Table("###lanim_sel_table", 2, ImGuiTableFlags.SizingStretchSame);
+        if(!table.Success)
+            return;
+        foreach(var (key, label, tip) in available)
+        {
+            ImGui.TableNextColumn();
+            bool on = picked.Contains(key);
+            bool running = IsOn(name, key);
+            using(ImRaii.PushColor(ImGuiCol.Text, new Vector4(0.55f, 0.9f, 0.55f, 1f), running))
+            {
+                if(ImGui.Checkbox($"{label}{(running ? " (on)" : "")}###lanim_sel_{key}", ref on))
+                {
+                    if(on)
+                        picked.Add(key);
+                    else
+                        picked.Remove(key);
+                    _config.Save();
+                }
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip(tip + " Its settings are in its section below.");
+        }
     }
 
     private static readonly (ExpansionPattern Pattern, string Name, string Tip)[] ExpansionPatterns =

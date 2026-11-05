@@ -91,7 +91,7 @@ public static class BodyShapeBuild
                     .InvokeFunc(id, mod, "", false));
                 await OneClickRig.Game(() =>
                 {
-                    Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
+                    Limber.Rig.Appearance.Redraw((ushort)(index));
                     return true;
                 });
                 progress.Add($"Built shape taken off in {name}.");
@@ -201,7 +201,7 @@ public static class BodyShapeBuild
             progress.Add($"  Couldn't turn on \"{modName}\" in {collectionName} (the mod manager said {on}/{at}); turn it on there yourself, at the top.");
         await OneClickRig.Game(() =>
         {
-            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
+            Limber.Rig.Appearance.Redraw((ushort)(index));
             return true;
         });
         progress.Add($"Done: {count} model(s) reshaped.");
@@ -378,6 +378,48 @@ public static class BodyShapeBuild
         };
     }
 
+    /// <summary>One sculpt's push on one vertex, per unit of its slider: it moves the vertex by
+    /// Dir * max(Unit * value, Limit) (the limit: thinner only so far, never through its own line).</summary>
+    public readonly record struct SculptTerm(int Slider, Vector3 Dir, float Unit, float Limit);
+
+    /// <summary>
+    /// The detail sliders' sculpts as terms per vertex (for the live rig, which then sets any values with no build and
+    /// no new plan: see <see cref="SculptTerm"/>). Slider = the key's place in <paramref name="keys"/>. Null when none
+    /// of the keys sculpts anything.
+    /// </summary>
+    public static Action<Vector3, string[], byte[], float[], int, List<SculptTerm>>? SculptBasis(IReadOnlyList<string> keys,
+        Dictionary<string, (Vector3 Position, Quaternion Rotation, Vector3 Scale, string Parent)> rest)
+    {
+        var index = new Dictionary<string, int>();
+        for (int i = 0; i < keys.Count; i++)
+            index[keys[i]] = i;
+        var sculpts = Sculpts(keys.ToDictionary(k => k, _ => 1f), rest, index);
+        if (sculpts.Count == 0)
+            return null;
+        var owners = new Dictionary<string, string>();
+        string Owner(string bone)
+        {
+            if (owners.TryGetValue(bone, out var known))
+                return known;
+            string at = bone;
+            for (int guard = 0; Limber.BodyRig.RigParts.IsRigBone(at) && guard < 64; guard++)
+                at = rest.TryGetValue(at, out var r) && r.Parent.Length > 0 ? r.Parent : at;
+            return owners[bone] = at;
+        }
+        return (p, names, idx, w, slots, into) =>
+        {
+            foreach (var sc in sculpts)
+            {
+                float carried = 0f;
+                for (int k = 0; k < slots; k++)
+                    if (w[k] > 0f && idx[k] < names.Length && Owner(names[idx[k]]) == sc.Bone)
+                        carried += w[k];
+                if (carried > 1e-4f && sc.Term(p, out var dir, out var unit, out var limit))
+                    into.Add(new SculptTerm(sc.Slider, dir * MathF.Min(carried, 1f), unit, limit));
+            }
+        };
+    }
+
     // A move toward the middle of the body (in x) eased off the nearer it gets, so the skin between the legs is
     // squeezed toward the middle but never pushed across it (left and right sides crossing: folded skin).
     private static Vector3 KeepSide(Vector3 from, Vector3 to)
@@ -403,23 +445,30 @@ public static class BodyShapeBuild
         public Vector3 Lobe;          // body axes, x outward for this side (zero: all round)
         public float Side;            // +1 / -1 for a side bone; 0 for the trunk (outward by where the vertex is)
         public float From, To, Amount;
+        public int Slider;            // (the live rig's terms: which slider)
 
         // How far straight out from the line it pushes this point.
         public Vector3 Push(Vector3 p)
+            => Term(p, out var dir, out var amount, out var limit) ? dir * MathF.Max(amount, limit) : Vector3.Zero;
+
+        // The push as a direction, an amount (Amount's share here) and how far in it may go at most (negative).
+        public bool Term(Vector3 p, out Vector3 dir, out float amount, out float limit)
         {
+            dir = Vector3.Zero;
+            amount = limit = 0f;
             var d = p - A;
             float along = Vector3.Dot(d, U);
             var radial = d - U * along;
             float r = radial.Length();
             if (r < 1e-5f)
-                return Vector3.Zero;
-            var dir = radial / r;
+                return false;
+            dir = radial / r;
             // Over its stretch, fading at both ends.
             float at = Heights ? p.Y - A.Y : (L > 1e-5f ? along / L : 0f);
             float edge = Heights ? 0.03f : 0.15f;
             float window = Smooth((at - From) / edge + 1f) * Smooth((To - at) / edge + 1f);
             if (window <= 0f)
-                return Vector3.Zero;
+                return false;
             // Most where the lobe points.
             float lobe = 1f;
             if (Lobe != Vector3.Zero)
@@ -433,10 +482,10 @@ public static class BodyShapeBuild
                     lobe = c * c;
                 }
             }
-            float amount = Amount * window * lobe;
+            amount = Amount * window * lobe;
             // Thinner only so far: never through its own line.
-            amount = MathF.Max(amount, -0.85f * r);
-            return dir * amount;
+            limit = -0.85f * r;
+            return amount != 0f;
         }
 
         private static float Smooth(float x)
@@ -448,14 +497,15 @@ public static class BodyShapeBuild
 
     // The detail sliders that are set, as sculpts on this race's bones at rest.
     private static List<Sculpt> Sculpts(IReadOnlyDictionary<string, float> values,
-        Dictionary<string, (Vector3 Position, Quaternion Rotation, Vector3 Scale, string Parent)> rest)
+        Dictionary<string, (Vector3 Position, Quaternion Rotation, Vector3 Scale, string Parent)> rest, Dictionary<string, int>? unitIndex = null)
     {
         var list = new List<Sculpt>();
         foreach (var (key, raw) in values)
         {
             if (!BodySliders.ByKey.TryGetValue(key, out var slider) || slider.Morphs.Length == 0 || !float.IsFinite(raw) || raw == 0f)
                 continue;
-            float v = Math.Clamp(raw, slider.Min, slider.Max);
+            // (terms for the live rig: per unit of the slider, unclamped; it clamps the value)
+            float v = unitIndex != null ? 1f : Math.Clamp(raw, slider.Min, slider.Max);
             foreach (var m in slider.Morphs)
                 foreach (bool left in BodySliders.HasSides(m.Bone) ? new[] { true, false } : new[] { true })
                 {
@@ -475,7 +525,7 @@ public static class BodyShapeBuild
                     {
                         Bone = bone, A = b.Position, U = u, L = length, Heights = m.Heights || m.Next == null, Lobe = m.Lobe,
                         Side = BodySliders.HasSides(m.Bone) ? (b.Position.X >= 0f ? 1f : -1f) : 0f,
-                        From = m.From, To = m.To, Amount = m.Amount * v,
+                        From = m.From, To = m.To, Amount = m.Amount * v, Slider = unitIndex?.GetValueOrDefault(key) ?? 0,
                     });
                 }
         }

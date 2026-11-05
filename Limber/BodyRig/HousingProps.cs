@@ -39,6 +39,15 @@ public sealed unsafe class SpawnedProp
     public float Scale = 1f;
     public bool Visible = true;
 
+    // On a character's bone (0: not): Position and Turn are then its offset from the bone (in the bone's own axes, in
+    // metres at the character's own size), and it moves, turns (and, with AttachSize, sizes) with it every frame.
+    public nint AttachTo;
+    public ushort AttachIndex;
+    public string AttachBone = "";
+    public string AttachName = "";
+    public bool AttachSize = true;
+    internal bool KeepPlace; // just attached: its offset set so it stays where it is
+
     internal HousingPart[] Parts = [];
     internal BgObject*[] Objects = [];
     internal bool[] Ready = [];
@@ -59,6 +68,12 @@ public sealed unsafe class HousingProps : IDisposable
     private readonly List<SpawnedProp> _spawned = [];
     private readonly ConcurrentQueue<Action> _jobs = new(); // run on the framework thread
     private readonly ConcurrentDictionary<string, HousingPart[]> _partsCache = new();
+
+    // Attached props: where their bones are this frame (bone update), used to place them (framework).
+    private readonly record struct BoneWorld(Vector3 Position, Quaternion Rotation, float Scale);
+    private readonly ConcurrentDictionary<Guid, BoneWorld> _bones = new();
+    private volatile (Guid Id, nint Address, ushort Index, string Bone)[] _attached = [];
+    private readonly Limber.Core.SkeletonInfoCache _boneCache = new();
 
     public HousingProps(IDataManager data, IPluginLog log)
     {
@@ -513,6 +528,107 @@ public sealed unsafe class HousingProps : IDisposable
     public void RemoveAll()
         => _jobs.Enqueue(DestroyAllNow);
 
+    /// <summary>Put it on a character's bone; <paramref name="keep"/>: where it is now (else right on the bone).</summary>
+    public static void Attach(SpawnedProp prop, nint address, ushort index, string name, string bone, bool keep)
+    {
+        prop.AttachTo = address;
+        prop.AttachIndex = index;
+        prop.AttachName = name;
+        prop.AttachBone = bone;
+        prop.KeepPlace = keep;
+        if(!keep)
+        {
+            prop.Position = Vector3.Zero;
+            prop.Turn = Vector3.Zero;
+        }
+        prop.Dirty = true;
+    }
+
+    /// <summary>Off its bone, left where it is now.</summary>
+    public void Detach(SpawnedProp prop)
+    {
+        if(prop.AttachTo != 0 && !prop.KeepPlace && _bones.TryGetValue(prop.Id, out var b))
+        {
+            var (position, rotation, _) = WorldOf(prop, b);
+            prop.Position = position;
+            prop.Turn = ToYawPitchRoll(rotation);
+        }
+        prop.AttachTo = 0;
+        prop.KeepPlace = false;
+        _bones.TryRemove(prop.Id, out _);
+        prop.Dirty = true;
+    }
+
+    /// <summary>Its bone was found this frame (attached props).</summary>
+    public bool BoneFound(SpawnedProp prop) => _bones.ContainsKey(prop.Id);
+
+    /// <summary>Bone update stage (after the posing and physics): where the attached props' bones are.</summary>
+    public void CaptureBones()
+    {
+        var attached = _attached;
+        if(attached.Length == 0)
+        {
+            if(!_bones.IsEmpty)
+                _bones.Clear();
+            return;
+        }
+        foreach(var (id, address, index, bone) in attached)
+        {
+            try
+            {
+                if(!Limber.Core.ActorSkeleton.TryGet(address, index, _boneCache, out var sk) || sk.Info.Count == 0)
+                {
+                    _bones.TryRemove(id, out _);
+                    continue;
+                }
+                int i = sk.Info.IndexOf(bone);
+                if(i < 0)
+                {
+                    _bones.TryRemove(id, out _);
+                    continue;
+                }
+                var f = sk.GetModelFrame(i);
+                var world = new BoneWorld(sk.ModelToWorldPoint(f.Position), sk.ModelToWorldRotation(f.Rotation), sk.RootScale.Y);
+                if(Limber.Core.MathUtil.IsFinite(world.Position) && Limber.Core.MathUtil.IsFinite(world.Rotation) && float.IsFinite(world.Scale))
+                    _bones[id] = world;
+            }
+            catch
+            {
+                _bones.TryRemove(id, out _);
+            }
+        }
+    }
+
+    // An attached prop's place in the world: its offset in the bone's axes.
+    private static (Vector3 Position, Quaternion Rotation, float Scale) WorldOf(SpawnedProp prop, BoneWorld b)
+    {
+        var t = prop.Turn * (MathF.PI / 180f);
+        var local = Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z);
+        float size = prop.AttachSize ? b.Scale : 1f;
+        return (b.Position + Vector3.Transform(prop.Position * b.Scale, b.Rotation), Quaternion.Normalize(b.Rotation * local), size);
+    }
+
+    /// <summary>Inverse of Quaternion.CreateFromYawPitchRoll, in degrees.</summary>
+    private static Vector3 ToYawPitchRoll(Quaternion q)
+    {
+        q = Quaternion.Normalize(q);
+        float x = q.X, y = q.Y, z = q.Z, w = q.W;
+        float sp = Math.Clamp(2f * (w * x - y * z), -1f, 1f);
+        float pitch = MathF.Asin(sp);
+        float yaw, roll;
+        if(MathF.Abs(sp) < 1f - 1e-6f)
+        {
+            yaw = MathF.Atan2(2f * (w * y + x * z), 1f - 2f * (x * x + y * y));
+            roll = MathF.Atan2(2f * (w * z + x * y), 1f - 2f * (x * x + z * z));
+        }
+        else
+        {
+            yaw = MathF.Atan2(-2f * (x * z - w * y), 1f - 2f * (y * y + z * z));
+            roll = 0f;
+        }
+        return new Vector3(yaw, pitch, roll) * (180f / MathF.PI);
+    }
+
     /// <summary>Changed in the UI: place it again on the next update.</summary>
     public static void MarkChanged(SpawnedProp prop) => prop.Dirty = true;
 
@@ -539,6 +655,12 @@ public sealed unsafe class HousingProps : IDisposable
         SpawnedProp[] props;
         lock(_spawned)
             props = _spawned.ToArray();
+        // (the attached ones, for the bone update to look up)
+        var attached = new List<(Guid, nint, ushort, string)>();
+        foreach(var prop in props)
+            if(prop.AttachTo != 0 && prop.AttachBone.Length > 0)
+                attached.Add((prop.Id, prop.AttachTo, prop.AttachIndex, prop.AttachBone));
+        _attached = attached.ToArray();
         foreach(var prop in props)
         {
             for(int i = 0; i < prop.Objects.Length; i++)
@@ -553,17 +675,39 @@ public sealed unsafe class HousingProps : IDisposable
                     prop.Dirty = true;
                 }
             }
-            if(prop.Dirty)
+            // On a bone: placed every frame where the bone is (until it's first found, left where it was).
+            if(prop.AttachTo != 0 && _bones.TryGetValue(prop.Id, out var bone))
+            {
+                if(prop.KeepPlace)
+                {
+                    // Just attached, to stay where it is: its place now as an offset from the bone.
+                    var t0 = prop.Turn * (MathF.PI / 180f);
+                    var rotation0 = Quaternion.CreateFromYawPitchRoll(t0.X, t0.Y, t0.Z);
+                    var inverse = Quaternion.Inverse(bone.Rotation);
+                    prop.Position = Vector3.Transform(prop.Position - bone.Position, inverse) / MathF.Max(bone.Scale, 1e-5f);
+                    prop.Turn = ToYawPitchRoll(Quaternion.Normalize(inverse * rotation0));
+                    if(prop.AttachSize)
+                        prop.Scale /= MathF.Max(bone.Scale, 1e-5f);
+                    prop.KeepPlace = false;
+                }
+                var (position, rotation, size) = WorldOf(prop, bone);
+                Place(prop, position, rotation, size);
+            }
+            else if(prop.Dirty && prop.AttachTo == 0)
                 Place(prop);
         }
     }
 
     private static void Place(SpawnedProp prop)
     {
-        prop.Dirty = false;
         var t = prop.Turn * (MathF.PI / 180f);
-        var rotation = Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z);
-        float scale = Math.Clamp(prop.Scale, 0.01f, 100f);
+        Place(prop, prop.Position, Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z), 1f);
+    }
+
+    private static void Place(SpawnedProp prop, Vector3 at, Quaternion rotation, float size)
+    {
+        prop.Dirty = false;
+        float scale = Math.Clamp(prop.Scale, 0.01f, 100f) * size;
         for(int i = 0; i < prop.Objects.Length; i++)
         {
             var bg = prop.Objects[i];
@@ -571,7 +715,7 @@ public sealed unsafe class HousingProps : IDisposable
                 continue;
             var part = prop.Parts[i];
             var obj = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)bg;
-            obj->Position = prop.Position + Vector3.Transform(part.Position * scale, rotation);
+            obj->Position = at + Vector3.Transform(part.Position * scale, rotation);
             obj->Rotation = Quaternion.Normalize(rotation * part.Rotation);
             obj->Scale = part.Scale * scale;
             var draw = (DrawObject*)bg;

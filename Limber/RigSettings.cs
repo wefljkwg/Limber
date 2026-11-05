@@ -86,6 +86,12 @@ public sealed class RigSettings
     public bool BodyShapePreview { get; set; } = true;
     /// <summary>Body shape and body physics switched on (each its own switch on its page; off whenever Limber starts).</summary>
     public bool BodyShapeOn { get; set; }
+
+    /// <summary>Characters affected: only the ones ticked (by name), for Body physics and for Body shape.</summary>
+    public bool PhysicsOnlyTicked { get; set; }
+    public System.Collections.Generic.HashSet<string> PhysicsCharacters { get; set; } = new();
+    public bool BodyShapeOnlyTicked { get; set; }
+    public System.Collections.Generic.HashSet<string> BodyShapeCharacters { get; set; } = new();
     public bool BodyPhysicsOn { get; set; }
     /// <summary>Soft bodies and detail sliders with no rig mod and no redraw (Limber's own lattice bones, the models'
     /// vertices moved on the GPU).</summary>
@@ -121,6 +127,12 @@ public sealed class RigSettings
 
     /// <summary>Testicle throbbing (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.BallThrobSettings> BallThrob { get; set; } = new();
+
+    /// <summary>Height growth / shrinking (Limber Animations page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.SizeChangeSettings> SizeChange { get; set; } = new();
+
+    /// <summary>Which animations "Start all selected" starts (Limber Animations page).</summary>
+    public System.Collections.Generic.HashSet<string> AnimationsSelected { get; set; } = new();
 
     /// <summary>Face Posing: each face bone's offset, per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.FacePoseSettings> FacePoses { get; set; } = new();

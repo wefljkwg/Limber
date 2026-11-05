@@ -179,6 +179,48 @@ public sealed class LookAtTab
             changed |= Slider("Eye range", s.EyeRange, 0f, 45f, "%.0f°", v => s.EyeRange = v,
                 "How far the eyes can turn in the head.");
 
+        // Fine adjustments: where it looks, the head, the eyes (the game's look can land a little past or off).
+        ImGui.Spacing();
+        if(ImGui.CollapsingHeader("Adjustments###look_adjust"))
+        {
+            ImGui.TextDisabled("For when the look lands a little off. + is to the character's left and up.");
+            ImGui.Text("Where it looks");
+            changed |= Slider("Point left / right", s.AimLeft * 100f, -50f, 50f, "%.1f cm", v => s.AimLeft = v / 100f,
+                "Moves the point looked at to the character's left (+) or right (-), in centimetres.");
+            changed |= Slider("Point up / down", s.AimUp * 100f, -50f, 50f, "%.1f cm", v => s.AimUp = v / 100f,
+                "Moves the point looked at up (+) or down (-), in centimetres.");
+            changed |= Slider("Point nearer / further", s.AimForward * 100f, -50f, 50f, "%.1f cm", v => s.AimForward = v / 100f,
+                "Moves the point looked at toward the character's front (+) or back (-), in centimetres.");
+            changed |= Slider("Look left / right", s.AimYaw, -30f, 30f, "%.1f°", v => s.AimYaw = v,
+                "Turns the whole look (head and eyes) to the left (+) or right (-).");
+            changed |= Slider("Look up / down", s.AimPitch, -30f, 30f, "%.1f°", v => s.AimPitch = v,
+                "Turns the whole look (head and eyes) up (+) or down (-).");
+            ImGui.Text("Head");
+            changed |= Slider("Head turn left / right", s.HeadYaw, -45f, 45f, "%.1f°", v => s.HeadYaw = v,
+                "The head turned a little more to the left (+) or right (-) on top of the look (the eyes still find the target).");
+            changed |= Slider("Head nod up / down", s.HeadPitch, -30f, 30f, "%.1f°", v => s.HeadPitch = v,
+                "The head tipped up (+) or down (-) on top of the look (the eyes still find the target).");
+            changed |= Slider("Head tilt", s.HeadRoll, -30f, 30f, "%.1f°", v => s.HeadRoll = v,
+                "The head tilted to the character's left (+) or right (-).");
+            ImGui.Text("Eyes");
+            using(ImRaii.Disabled(!s.Eyes))
+            {
+                changed |= Slider("Eyes left / right", s.EyeYaw, -20f, 20f, "%.1f°", v => s.EyeYaw = v,
+                    "The eyes turned to the left (+) or right (-) of where they aim.");
+                changed |= Slider("Eyes up / down", s.EyePitch, -20f, 20f, "%.1f°", v => s.EyePitch = v,
+                    "The eyes turned up (+) or down (-) of where they aim.");
+                changed |= Slider("Eyes apart / together", s.EyeSpread, -10f, 10f, "%.1f°", v => s.EyeSpread = v,
+                    "+ turns each eye outward (they look less crossed), - inward (more crossed).");
+            }
+            if(ImGui.SmallButton("Clear the adjustments###look_adjust_clear"))
+            {
+                s.AimLeft = s.AimUp = s.AimForward = s.AimYaw = s.AimPitch = 0f;
+                s.HeadYaw = s.HeadPitch = s.HeadRoll = 0f;
+                s.EyeYaw = s.EyePitch = s.EyeSpread = 0f;
+                changed = true;
+            }
+        }
+
         if(ImGui.SmallButton("Defaults###look_defaults"))
         {
             var d = new LookAtSettings();

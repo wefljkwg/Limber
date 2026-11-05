@@ -22,7 +22,16 @@ public sealed unsafe class ActorSpawner : IDisposable
     private readonly Dictionary<ushort, ushort> _parent = new();      // object table slot -> the character it was copied from
     private readonly Dictionary<ushort, int> _number = new();         // object table slot -> its number ("Limber 1", ...)
     private readonly HashSet<ushort> _parentSet = new();              // Penumbra told whose copy it is
+    private readonly HashSet<ushort> _inGPose = new();                // added in GPose (the game ends those when it ends)
+    private readonly Dictionary<ushort, string> _names = new();       // the name Limber gave it (to know it's still ours)
     private bool _wasGPosing;
+    private uint _zone;
+
+    /// <summary>Actors can be added outside GPose too (Limber runs there: "Also run outside GPose").</summary>
+    public Func<bool> AllowedOutside = () => false;
+
+    /// <summary>Actors can be added right now.</summary>
+    public bool CanAdd => Plugin.ClientState.IsGPosing || AllowedOutside();
 
     /// <summary>The one the plugin made (for the character list's order).</summary>
     public static ActorSpawner? Current { get; private set; }
@@ -32,8 +41,20 @@ public sealed unsafe class ActorSpawner : IDisposable
         Current = this;
     }
 
-    /// <summary>The object table slots of the actors Limber added (in the order they were added).</summary>
-    public IReadOnlyList<ushort> Made => _made;
+    /// <summary>The object table slots of the actors Limber added (in the order they were added; not the hidden helpers).</summary>
+    public IReadOnlyList<ushort> Made => _helpers.Count == 0 ? _made : _made.FindAll(i => !_helpers.Contains(i));
+
+    // Hidden helpers (an effect's "Move it": a copy of its character the effect plays on, put where it's moved to).
+    private readonly HashSet<ushort> _helpers = new();
+
+    /// <summary>One of the hidden helpers (left out of every list of characters).</summary>
+    public bool IsHelper(ushort index) => _helpers.Contains(index);
+
+    /// <summary>
+    /// A hidden helper: a copy of <paramref name="source"/> (same body, so the same bones), not in any list, not named
+    /// after anyone (so no per-character setting reaches it). Returns its slot, or -1 (see LastError).
+    /// </summary>
+    public int SpawnHelper(ICharacter source) => Spawn(source, true, null, helper: true);
 
     public string? LastError { get; private set; }
 
@@ -45,7 +66,9 @@ public sealed unsafe class ActorSpawner : IDisposable
     /// or a pasted one), standing where <paramref name="source"/> does (or in front of it). GPose only. Returns its
     /// object table slot, or -1.
     /// </summary>
-    public int Spawn(ICharacter source, bool samePlace, AppearanceData? look = null)
+    public int Spawn(ICharacter source, bool samePlace, AppearanceData? look = null) => Spawn(source, samePlace, look, helper: false);
+
+    private int Spawn(ICharacter source, bool samePlace, AppearanceData? look, bool helper)
     {
         if(look != null && (look.Customize.Length < 26 || look.Customize[2] == 4))
         {
@@ -53,9 +76,17 @@ public sealed unsafe class ActorSpawner : IDisposable
             return -1;
         }
         LastError = null;
-        if(!Plugin.ClientState.IsGPosing)
+        bool gposing = Plugin.ClientState.IsGPosing;
+        if(!gposing && !AllowedOutside())
         {
-            LastError = "Actors can only be added in GPose.";
+            LastError = "Outside GPose, actors can be added with \"Also run outside GPose\" on (Advanced).";
+            return -1;
+        }
+        if(!gposing && (Plugin.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInCutSceneEvent]
+            || Plugin.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.WatchingCutscene]
+            || Plugin.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BoundByDuty]))
+        {
+            LastError = "Not during a cutscene or a duty.";
             return -1;
         }
         var com = ClientObjectManager.Instance();
@@ -80,15 +111,26 @@ public sealed unsafe class ActorSpawner : IDisposable
         }
         ushort index = obj->ObjectIndex;
         _made.Add(index);
+        if(helper)
+            _helpers.Add(index);
+        else
+            _helpers.Remove(index);
         _clientSlot[index] = clientSlot;
         _parent[index] = (ushort)source.ObjectIndex;
         _parentSet.Remove(index);
 
         var target = (NativeCharacter*)obj;
         var from = (NativeCharacter*)source.Address;
+        // (in GPose: one of its actors, gone when GPose ends; outside it: a character only on your screen, until you
+        // remove it, change zones or unload Limber)
         var events = EventFramework.Instance();
-        if(events != null)
+        if(gposing && events != null)
+        {
             events->EventSceneModule.EventGPoseController.AddCharacterToGPose(target);
+            _inGPose.Add(index);
+        }
+        else
+            _inGPose.Remove(index);
         // Copied from the source, then from itself (so Penumbra / Glamourer see it as its own character).
         target->CharacterSetup.CopyFromCharacter(from, CopyFlags.WeaponHiding);
         target->CharacterSetup.CopyFromCharacter(target, CopyFlags.None);
@@ -99,6 +141,18 @@ public sealed unsafe class ActorSpawner : IDisposable
         int number = 1;
         while(_number.ContainsValue(number))
             number++;
+        if(helper)
+        {
+            SetName(obj, $"Limber helper {index}");
+            _names[index] = $"Limber helper {index}";
+            TellPenumbra(index);
+            target->GameObject.DefaultPosition = from->GameObject.Position;
+            target->GameObject.Position = from->GameObject.Position;
+            target->GameObject.Rotation = from->GameObject.Rotation;
+            target->GameObject.DefaultRotation = from->GameObject.Rotation;
+            _waitingToDraw[index] = 300;
+            return index;
+        }
         _number[index] = number;
         // (a look with its own actor name: that name, made unique if it's in use already)
         string actorName = $"Limber {number}";
@@ -111,6 +165,7 @@ public sealed unsafe class ActorSpawner : IDisposable
                 actorName = $"{wanted} {copy++}";
         }
         SetName(obj, actorName);
+        _names[index] = actorName;
         // Penumbra told it's a copy of the source (as Brio does): it then knows the actor, draws it with the source's
         // collection, and the rig / soft body work on it (without this Penumbra didn't recognise it).
         TellPenumbra(index);
@@ -141,11 +196,14 @@ public sealed unsafe class ActorSpawner : IDisposable
         _parent.Remove(index);
         _number.Remove(index);
         _parentSet.Remove(index);
+        _inGPose.Remove(index);
+        _helpers.Remove(index);
         if(_clientSlot.Remove(index, out var clientSlot))
         {
             var com = ClientObjectManager.Instance();
             if(com != null && Still(com, index, clientSlot))
                 com->DeleteObjectByIndex(clientSlot, 0);
+            _names.Remove(index);
         }
         return true;
     }
@@ -189,10 +247,29 @@ public sealed unsafe class ActorSpawner : IDisposable
     }
 
     // The client object at that slot is still the actor Limber added there.
-    private static bool Still(ClientObjectManager* com, ushort index, ushort clientSlot)
+    // (the same slot, the same place in the object table and the name Limber gave it: the game reuses a slot, and its
+    // memory, for the next character it makes there, so the slot alone isn't enough)
+    private bool Still(ClientObjectManager* com, ushort index, ushort clientSlot)
     {
         var obj = (NativeObject*)com->GetObjectByIndex(clientSlot);
-        return obj != null && obj->ObjectIndex == index;
+        return obj != null && obj->ObjectIndex == index && (!_names.TryGetValue(index, out var name) || NameIs(obj, name));
+    }
+
+    private static bool NameIs(NativeObject* obj, string name)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(name);
+        int n = Math.Min(bytes.Length, 63);
+        for(int i = 0; i < n; i++)
+            if(obj->Name[i] != bytes[i])
+                return false;
+        return obj->Name[n] == 0;
+    }
+
+    /// <summary>The actor Limber added at this slot is still there (not a new character the game made in its place).</summary>
+    public bool StillOurs(ushort index)
+    {
+        var com = ClientObjectManager.Instance();
+        return com != null && _made.Contains(index) && _clientSlot.TryGetValue(index, out var slot) && Still(com, index, slot);
     }
 
     public void DespawnAll()
@@ -204,16 +281,25 @@ public sealed unsafe class ActorSpawner : IDisposable
     /// <summary>Framework update: start drawing new actors once they're ready; tidy up when GPose ends.</summary>
     public void Update()
     {
+        // A new zone: the game has removed every client-side character already (their slots may be reused).
+        uint zone = Plugin.ClientState.TerritoryType;
+        if(zone != _zone)
+        {
+            if(_zone != 0)
+                Forget();
+            _zone = zone;
+        }
         bool gposing = Plugin.ClientState.IsGPosing;
         if(_wasGPosing && !gposing)
         {
-            DespawnAll();
-            _made.Clear();
-            _clientSlot.Clear();
-            _waitingToDraw.Clear();
-            _parent.Clear();
-            _number.Clear();
-            _parentSet.Clear();
+            // GPose ended: the actors added in it go (removed if they're still there and still ours: the game may
+            // already have put a new character in their slot, which is then left alone). Ones added outside GPose stay.
+            foreach(var index in _made.ToArray())
+                if(_inGPose.Contains(index))
+                {
+                    Despawn(index);
+                    Forget(index);
+                }
         }
         _wasGPosing = gposing;
         if(_waitingToDraw.Count == 0)
@@ -244,13 +330,30 @@ public sealed unsafe class ActorSpawner : IDisposable
                     _parent.Remove(_made[k]);
                     _number.Remove(_made[k]);
                     _parentSet.Remove(_made[k]);
+                    _helpers.Remove(_made[k]);
                     _made.RemoveAt(k);
                 }
+    }
+
+    private void Forget(ushort index)
+    {
+        _made.Remove(index);
+        _clientSlot.Remove(index);
+        _waitingToDraw.Remove(index);
+        _parent.Remove(index);
+        _number.Remove(index);
+        _parentSet.Remove(index);
+        _inGPose.Remove(index);
+        _helpers.Remove(index);
+        _names.Remove(index);
     }
 
     /// <summary>A new zone: the game has cleared every GPose actor already.</summary>
     public void Forget()
     {
+        _names.Clear();
+        _inGPose.Clear();
+        _helpers.Clear();
         _made.Clear();
         _clientSlot.Clear();
         _waitingToDraw.Clear();

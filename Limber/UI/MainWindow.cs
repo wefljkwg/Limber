@@ -39,6 +39,7 @@ public sealed class MainWindow : Window
     public LimberAnimationsTab? LimberAnimationsTab { get; set; }
     public BustShapeTab? BustShapeTab { get; set; }
     public HousingPropsTab? WorldPropsTab { get; set; }
+    public EffectsTab? EffectsTab { get; set; }
     public LookAtTab? LookAtTab { get; set; }
     public TimelineTab? TimelineTab { get; set; }
     public AppearanceTab? AppearanceTab { get; set; }
@@ -116,6 +117,7 @@ public sealed class MainWindow : Window
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
         new("props", "Scene", "Housing props", "Place housing furniture around you in GPose, in sections by type.", () => _housingTab.Draw()),
         new("worldprops", "Scene", "World props", "Every prop the game world is built from (event objects, field objects, each region's props), in sections, to place around you.", () => WorldPropsTab?.Draw(), () => WorldPropsTab != null),
+        new("effects", "Scene", "Effects", "Every visual effect in the game (spells, auras, markers, tethers, sparkles...), in groups by type, to place around you or put on a character's bone.", () => EffectsTab?.Draw(), () => EffectsTab != null),
         new("renderer", "Scene", "Renderer", "Extra models and bones drawn on the character.", () => _rendererTab.Draw()),
 
         new("link", "Koikatsu", "Koikatsu link", "Pose FFXIV characters live from Koikatsu / KoiPose.", DrawKoikatsuPage),
@@ -997,6 +999,48 @@ public sealed class MainWindow : Window
         ImGui.TreePop();
     }
 
+    // Hitches: which part of Limber was slow, and how often (to find a stutter that comes and goes).
+    private void DrawPerformance()
+    {
+        if (!ImGui.CollapsingHeader("Performance (stutters)###limber_perf"))
+            return;
+        ImGui.TextColored(Dim, $"Every part of Limber that took longer than {Limber.Core.Perf.SlowMs:0} ms in a frame. A stutter that comes back every few seconds shows up here as the same part again and again.");
+        if (ImGui.SmallButton("Clear###limber_perf_clear"))
+            Limber.Core.Perf.Clear();
+        var summary = Limber.Core.Perf.Summary();
+        if (summary.Length == 0)
+        {
+            ImGui.TextColored(Dim, "Nothing slow so far.");
+            return;
+        }
+        using (var table = Dalamud.Interface.Utility.Raii.ImRaii.Table("###limber_perf_table", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            if (table.Success)
+            {
+                ImGui.TableSetupColumn("Part");
+                ImGui.TableSetupColumn("Times", ImGuiTableColumnFlags.WidthFixed, 50 * Dalamud.Interface.Utility.ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Worst", ImGuiTableColumnFlags.WidthFixed, 70 * Dalamud.Interface.Utility.ImGuiHelpers.GlobalScale);
+                ImGui.TableHeadersRow();
+                foreach (var (where, count, worst) in summary.Take(20))
+                {
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(where);
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(count.ToString());
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted($"{worst:0.0} ms");
+                }
+            }
+        }
+        var recent = Limber.Core.Perf.Recent();
+        if (recent.Length > 0 && ImGui.TreeNode("Latest###limber_perf_recent"))
+        {
+            foreach (var spike in recent.Take(15))
+                ImGui.TextUnformatted($"{spike.At:HH:mm:ss.f}  {spike.Ms,6:0.0} ms  {spike.Where}");
+            ImGui.TreePop();
+        }
+    }
+
     // Main Advanced tab: settings for the whole plugin.
     private void DrawMainAdvanced()
     {
@@ -1021,6 +1065,10 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Limber's window disappears while the game UI is hidden (in GPose too) and comes back with it.\n"
                 + "The handles on the character have their own setting (Posing settings > Hide with the game UI).");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        DrawPerformance();
 
         ImGui.Spacing();
         ImGui.Separator();

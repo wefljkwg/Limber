@@ -74,7 +74,7 @@ public unsafe struct ActorSkeleton
         Vector3 scale = sceneObject->Scale;
         float heightScale = ReadHeightScale(characterBase);
         result.RootScale = scale * heightScale;
-        if(!MathUtil.IsFinite(result.RootScale) || result.RootScale.X <= 0.01f || result.RootScale.Y <= 0.01f || result.RootScale.Z <= 0.01f)
+        if(!MathUtil.IsFinite(result.RootScale) || result.RootScale.X <= 1e-5f || result.RootScale.Y <= 1e-5f || result.RootScale.Z <= 1e-5f) // (height growth goes to ant-sized)
             result.RootScale = Vector3.One;
 
         result.ModelToWorld = Matrix4x4.CreateScale(result.RootScale)

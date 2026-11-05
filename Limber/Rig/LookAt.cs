@@ -31,6 +31,25 @@ public sealed class LookAtSettings
     /// <summary>Behind the shoulder: past this, the head turns back to the front instead of craning round.</summary>
     public bool LetGoBehind { get; set; } = true;
 
+    // Fine adjustments (the game's eyes and heads can look a little past or off what they aim at).
+    /// <summary>The point looked at moved (metres, along the looker's chest: X to its left, Y up, Z forward).</summary>
+    public float AimLeft { get; set; }
+    public float AimUp { get; set; }
+    public float AimForward { get; set; }
+    /// <summary>The whole look turned (degrees): + to the left, + up.</summary>
+    public float AimYaw { get; set; }
+    public float AimPitch { get; set; }
+    /// <summary>The head turned on top (degrees): + to the left, + up, + tilted to its left.</summary>
+    public float HeadYaw { get; set; }
+    public float HeadPitch { get; set; }
+    public float HeadRoll { get; set; }
+    /// <summary>The eyes turned on top (degrees): + to the left, + up; Spread + = further apart (wall-eyed), - = crossed.</summary>
+    public float EyeYaw { get; set; }
+    public float EyePitch { get; set; }
+    public float EyeSpread { get; set; }
+
+    public bool AdjustedHead => HeadYaw != 0f || HeadPitch != 0f || HeadRoll != 0f;
+
     public LookAtSettings Copy() => (LookAtSettings)MemberwiseClone();
 }
 
@@ -280,17 +299,21 @@ public sealed unsafe class LookAtService
         }
         var target = sk.WorldToModelPoint(world);
         var headPos = sk.GetModelFrame(head).Position;
+
+        // The chest's axes (right = up x forward: the character's left, +X).
+        var fwd = Facing(sk, chest, Vector3.UnitZ);
+        var up = Facing(sk, chest, Vector3.UnitY);
+        var right = Vector3.Normalize(Vector3.Cross(up, fwd));
+        // The point moved (metres, in the chest's axes; the model is in the character's own size already).
+        target += right * s.AimLeft + up * s.AimUp + fwd * s.AimForward;
         var to = target - headPos;
         if(to.LengthSquared() < 1e-8f || !MathUtil.IsFinite(to))
             return;
         to = Vector3.Normalize(to);
 
         // Kept within reach of the chest: side to side and up / down limits; behind the shoulder, back to the front.
-        var fwd = Facing(sk, chest, Vector3.UnitZ);
-        var up = Facing(sk, chest, Vector3.UnitY);
-        var right = Vector3.Normalize(Vector3.Cross(up, fwd));
-        float yaw = MathF.Atan2(Vector3.Dot(to, right), Vector3.Dot(to, fwd)) * 180f / MathF.PI;
-        float pitch = MathF.Asin(Math.Clamp(Vector3.Dot(to, up), -1f, 1f)) * 180f / MathF.PI;
+        float yaw = MathF.Atan2(Vector3.Dot(to, right), Vector3.Dot(to, fwd)) * 180f / MathF.PI + Math.Clamp(s.AimYaw, -90f, 90f);
+        float pitch = MathF.Asin(Math.Clamp(Vector3.Dot(to, up), -1f, 1f)) * 180f / MathF.PI + Math.Clamp(s.AimPitch, -60f, 60f);
         float maxYaw = Math.Clamp(s.MaxTurn, 0f, 120f), maxPitch = Math.Clamp(s.MaxTilt, 0f, 80f);
         bool behind = s.LetGoBehind && MathF.Abs(yaw) > maxYaw + 35f;
         if(behind)
@@ -320,7 +343,7 @@ public sealed unsafe class LookAtService
 
         // The head (the neck takes part of the turn), as much as Head says.
         float weight = Math.Clamp(s.Head, 0f, 1f);
-        if(weight > 0f)
+        if(weight > 0f || s.AdjustedHead)
         {
             if(neck >= 0)
             {
@@ -329,7 +352,21 @@ public sealed unsafe class LookAtService
                 Write(sk, state, 0, neck, neckTurn, Quaternion.Normalize(neckTurn * sk.GetModelFrame(neck).Rotation));
             }
             var nowFacing = Facing(sk, head, Vector3.UnitZ);
-            var rest = MathUtil.FromTo(nowFacing, Vector3.Normalize(Vector3.Lerp(current, dir, weight)));
+            var aimed = Vector3.Normalize(Vector3.Lerp(current, dir, weight));
+            var rest = MathUtil.FromTo(nowFacing, aimed);
+            // The head's own adjustment on top, about the way it now faces: turned (about up), nodded (about its
+            // side), tilted (about its forward).
+            if(s.AdjustedHead && MathUtil.IsFinite(aimed))
+            {
+                var hu = Vector3.Normalize(up - aimed * Vector3.Dot(up, aimed));
+                var hs = Vector3.Normalize(Vector3.Cross(hu, aimed));
+                const float D = MathF.PI / 180f;
+                var extra = Quaternion.CreateFromAxisAngle(hu, Math.Clamp(s.HeadYaw, -60f, 60f) * D)
+                    * Quaternion.CreateFromAxisAngle(hs, -Math.Clamp(s.HeadPitch, -45f, 45f) * D)
+                    * Quaternion.CreateFromAxisAngle(aimed, -Math.Clamp(s.HeadRoll, -45f, 45f) * D);
+                if(MathUtil.IsFinite(extra))
+                    rest = Quaternion.Normalize(extra * rest);
+            }
             Write(sk, state, 0, head, rest, Quaternion.Normalize(rest * sk.GetModelFrame(head).Rotation));
             sk.RealignPartials(_cache);
             // what the realign carried onto the face (eyes) isn't ours to take back
@@ -342,6 +379,10 @@ public sealed unsafe class LookAtService
         if(!s.Eyes)
             return;
         var faced = Facing(sk, head, Vector3.UnitZ);
+        // (the eyes' own adjustment: about the head's up and side)
+        var eu = Vector3.Normalize(up - faced * Vector3.Dot(up, faced));
+        var es = Vector3.Normalize(Vector3.Cross(eu, faced));
+        bool eyeAdjust = (s.EyeYaw != 0f || s.EyePitch != 0f || s.EyeSpread != 0f) && MathUtil.IsFinite(eu) && MathUtil.IsFinite(es);
         foreach(var name in EyeBones)
         {
             if(!sk.TryFindExtraBone(name, _cache, out int p, out int b))
@@ -352,6 +393,16 @@ public sealed unsafe class LookAtService
                 continue;
             var aim = behind ? faced : Vector3.Normalize(look);
             var turn = Limit(MathUtil.FromTo(faced, aim), Math.Clamp(s.EyeRange, 0f, 45f));
+            if(eyeAdjust)
+            {
+                // (the left eye, +X: outward is to the left; the right eye's outward the other way)
+                float outward = name.EndsWith("_l", StringComparison.Ordinal) ? 1f : -1f;
+                const float D = MathF.PI / 180f;
+                var extra = Quaternion.CreateFromAxisAngle(eu, (Math.Clamp(s.EyeYaw, -30f, 30f) + outward * Math.Clamp(s.EyeSpread, -20f, 20f)) * D)
+                    * Quaternion.CreateFromAxisAngle(es, -Math.Clamp(s.EyePitch, -30f, 30f) * D);
+                if(MathUtil.IsFinite(extra))
+                    turn = Quaternion.Normalize(extra * turn);
+            }
             var rot = Quaternion.Normalize(turn * eye.Rotation);
             sk.SetPartialRotation(p, b, rot, children: true);
             state.Writes[p << 16 | b] = (sk.GetPartialFrame(p, b).Rotation, turn);

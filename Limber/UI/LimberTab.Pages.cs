@@ -617,11 +617,13 @@ public sealed partial class LimberTab
     {
         if(Spawner == null)
             return;
-        if(!Plugin.ClientState.IsGPosing)
+        if(!Spawner.CanAdd)
         {
-            ImGui.TextDisabled("Enter GPose to add actors. Actors added here go away when you leave GPose.");
+            ImGui.TextDisabled("Enter GPose to add actors (they go away when you leave GPose),\nor turn on \"Also run outside GPose\" (Advanced) to add them anywhere.");
             return;
         }
+        if(!Plugin.ClientState.IsGPosing)
+            ImGui.TextDisabled("Outside GPose: only on your screen (nobody else sees them); they stay until you remove them, change zones or unload Limber.");
         var chosen = _selection.Actor;
         var me = Plugin.ObjectTable.LocalPlayer;
 

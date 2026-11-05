@@ -60,6 +60,7 @@ public static unsafe class LiveRig
         public string Key = "";           // what the plan in hand is for
         public string MakingKey = "";
         public Task<Plan?>? Making;
+        public Task<Plan?>? Resculpting;   // the detail sliders' new values put on the plan in hand
         public volatile Plan? Plan;
         public volatile Snapshot? Snapshot;
         public long NextLook;
@@ -75,6 +76,22 @@ public static unsafe class LiveRig
         public required Matrix4x4[] RestInverse;  // per slot (the skeleton's bones): its rest pose, inverted
         public required List<ModelPlan> Models;
         public required string Report;
+        // The detail sliders this plan has terms for, and the values on it now (changing them needs no new plan).
+        public string[] SculptKeys = [];
+        public float[] SculptMin = [], SculptMax = [];
+        public float[] SculptValues = [];
+        public Plan? From;                         // (resculpted: the plan it was made from)
+    }
+
+    // The detail sliders' sculpts on one model: every vertex they move, and its terms (see BodyShapeBuild.SculptTerm).
+    private sealed class SculptPlan
+    {
+        public required int[] At;            // its position's byte offset in the vertex block
+        public required byte[] Type;         // and how it's stored
+        public required Vector3[] Orig;      // where the file has it
+        public required Vector3[] Built;     // what's already built into the file (taken off)
+        public required int[] Start;         // its terms: Start[e] to Start[e + 1]
+        public required Limber.BodyShape.BodyShapeBuild.SculptTerm[] Terms;
     }
 
     private sealed class ModelPlan
@@ -85,6 +102,7 @@ public static unsafe class LiveRig
         public required MeshPlan[] Meshes; // the meshes with vertices on the lattice
         public (int From, int To)[] Ranges = []; // the bytes those vertices' positions and normals span (written each frame)
         public bool Changed;               // Base differs from Original
+        public SculptPlan? Sculpting;      // (null: nothing sculpted)
         public int Moving => Meshes.Sum(m => m.Vertex.Length);
     }
 
@@ -107,6 +125,83 @@ public static unsafe class LiveRig
         // to match (else a grown belly is lit as if it were still flat).
         public float[] Share = [];
         public Vector3[] Grad = [];
+        // Where each vertex is in the file, and which of the model's sculpted vertices it is (-1: none): Rest is this
+        // plus its sculpt.
+        public Vector3[] Orig = [];
+        public int[] SculptIndex = [];
+
+        public MeshPlan With(Vector3[] rest) => new()
+        {
+            Layout = Layout, Vertex = Vertex, Rest = rest, Normal = Normal, Start = Start, Mid = Mid, Slot = Slot, Weight = Weight,
+            Ranges = Ranges, Share = Share, Grad = Grad, Orig = Orig, SculptIndex = SculptIndex,
+        };
+    }
+
+    // The sculpts at these values: a new Base for each model and new rest places for its lattice vertices (new objects:
+    // the render thread may be using the old ones).
+    private static Plan Resculpt(Plan plan, float[] values)
+    {
+        var v = new float[values.Length];
+        for (int i = 0; i < v.Length; i++)
+            v[i] = float.IsFinite(values[i]) ? Math.Clamp(values[i], plan.SculptMin[i], plan.SculptMax[i]) : 0f;
+        var models = new List<ModelPlan>(plan.Models.Count);
+        foreach (var m in plan.Models)
+        {
+            if (m.Sculpting is not { } sp)
+            {
+                models.Add(m);
+                continue;
+            }
+            var work = (byte[])m.Original.Clone();
+            var move = new Vector3[sp.At.Length];
+            bool changed = false;
+            for (int e = 0; e < sp.At.Length; e++)
+            {
+                var d = -sp.Built[e];
+                for (int t = sp.Start[e]; t < sp.Start[e + 1]; t++)
+                {
+                    var term = sp.Terms[t];
+                    float x = term.Slider < v.Length ? v[term.Slider] : 0f;
+                    if (x != 0f)
+                        d += term.Dir * MathF.Max(term.Unit * x, term.Limit);
+                }
+                if (d.LengthSquared() <= 1e-12f || !MathUtil.IsFinite(d))
+                    continue;
+                move[e] = d;
+                MdlRigger.WriteVector(work, sp.At[e], sp.Type[e], sp.Orig[e] + d);
+                changed = true;
+            }
+            var meshes = new MeshPlan[m.Meshes.Length];
+            for (int k = 0; k < meshes.Length; k++)
+            {
+                var mesh = m.Meshes[k];
+                var rest = new Vector3[mesh.Vertex.Length];
+                for (int i = 0; i < rest.Length; i++)
+                {
+                    int e = i < mesh.SculptIndex.Length ? mesh.SculptIndex[i] : -1;
+                    rest[i] = (i < mesh.Orig.Length ? mesh.Orig[i] : mesh.Rest[i]) + (e >= 0 ? move[e] : Vector3.Zero);
+                }
+                meshes[k] = mesh.With(rest);
+            }
+            models.Add(new ModelPlan
+            {
+                File = m.File, Original = m.Original, Base = work, Meshes = meshes, Ranges = m.Ranges, Changed = changed, Sculpting = sp,
+            });
+        }
+        return new Plan
+        {
+            Info = plan.Info, Rig = plan.Rig, RealBone = plan.RealBone, VirtualBone = plan.VirtualBone, RestInverse = plan.RestInverse,
+            Models = models, Report = plan.Report, SculptKeys = plan.SculptKeys, SculptMin = plan.SculptMin, SculptMax = plan.SculptMax,
+            SculptValues = values, From = plan.From ?? plan,
+        };
+    }
+
+    private static float[] SculptValuesOf(string[] keys, IReadOnlyDictionary<string, float>? values)
+    {
+        var v = new float[keys.Length];
+        for (int i = 0; i < keys.Length; i++)
+            v[i] = values != null && values.TryGetValue(keys[i], out var x) && float.IsFinite(x) ? x : 0f;
+        return v;
     }
 
     // Byte ranges in order, ones close together joined (fewer, slightly bigger writes).
@@ -190,6 +285,26 @@ public static unsafe class LiveRig
                 VirtualRigs.Set(person.Address, made.Rig);
             else
                 VirtualRigs.Remove(person.Address);
+        }
+
+        // The detail sliders moved: the plan in hand with the new values (in the background; no new plan, no redraw).
+        if (person.Resculpting is { IsCompleted: true } resculpted)
+        {
+            try
+            {
+                if (resculpted.Result is { } r && person.Plan is { } current && ReferenceEquals(r.From, current.From ?? current))
+                    person.Plan = r;
+            }
+            catch
+            {
+            }
+            person.Resculpting = null;
+        }
+        if (person.Resculpting == null && person.Making == null && person.Plan is { SculptKeys.Length: > 0 } inHand)
+        {
+            var values = SculptValuesOf(inHand.SculptKeys, want.Sculpt);
+            if (!values.AsSpan().SequenceEqual(inHand.SculptValues))
+                person.Resculpting = Task.Run(() => (Plan?)Resculpt(inHand, values));
         }
 
         // What it needs now (looked at twice a second: the files it wears, its skeleton, the settings).
@@ -282,12 +397,14 @@ public static unsafe class LiveRig
                 var d = new Dictionary<string, float>();
                 if (values != null)
                     foreach (var (k, v) in values)
-                        if (v != 0f && float.IsFinite(v) && Limber.BodyShape.BodySliders.ByKey.TryGetValue(k, out var s) && s.Morphs.Length > 0)
+                        if (float.IsFinite(v) && Limber.BodyShape.BodySliders.ByKey.TryGetValue(k, out var s) && s.Morphs.Length > 0)
                             d[k] = v;
                 return d;
             }
             var sculpt = Sculpts(want.Sculpt);
             var built = Sculpts(want.Built);
+            foreach (var k in built.Where(kv => kv.Value == 0f).Select(kv => kv.Key).ToList())
+                built.Remove(k);
             bool fit = AutoFit();
             static string Of(Dictionary<string, float> d) => string.Join(",", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value:0.###}"));
             string key = string.Join("|",
@@ -295,7 +412,7 @@ public static unsafe class LiveRig
                 string.Join(";", files.OrderBy(f => f, StringComparer.Ordinal)),
                 want.Physics ? "p" : "-", fit ? "f" : "-", string.Join(",", real.OrderBy(x => x)), string.Join(",", parts.Select(p => p.Key)),
                 string.Join(";", placements.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + ":" + ShapeKey(kv.Value))),
-                Of(sculpt), Of(built));
+                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built));
             return new Inputs
             {
                 Info = info, Rest = rest, Files = files, Placements = placements, Fit = fit, Physics = want.Physics, RealParts = real, Parts = parts,
@@ -433,7 +550,8 @@ public static unsafe class LiveRig
             + (sd.Nipple != null ? $"n{sd.NipplePosition.X:0.####} {sd.NipplePosition.Y:0.####} {sd.NipplePosition.Z:0.####}" : "")));
 
         // 2. The detail sliders' sculpts (less what's already built into the models).
-        var sculpt = inp.Sculpt.Count > 0 ? Limber.BodyShape.BodyShapeBuild.SculptMove(inp.Sculpt, rest) : null;
+        var sculptKeys = inp.Sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        var sculpt = sculptKeys.Length > 0 ? Limber.BodyShape.BodyShapeBuild.SculptBasis(sculptKeys, rest) : null;
         var builtSculpt = inp.Built.Count > 0 ? Limber.BodyShape.BodyShapeBuild.SculptMove(inp.Built, rest) : null;
 
         // 3. Each model: what changes in its vertices.
@@ -486,18 +604,25 @@ public static unsafe class LiveRig
             report.Add($"{shapedTotal} vertices sculpted");
         if (plans.Count == 0 && inp.Physics && sides.Count == 0)
             report.Add("none of the worn models has breast, butt, testicle or belly bones Limber knows");
-        return new Plan
+        var made = new Plan
         {
             Info = info, Rig = rig, RealBone = realBone, VirtualBone = virtualBone, RestInverse = restInverse, Models = plans,
             Report = "Live rig: " + (report.Count > 0 ? string.Join("; ", report) : "nothing to do on what's worn") + ".",
         };
+        if (sculpt == null)
+            return Resculpt(made, []);
+        made.SculptKeys = sculptKeys;
+        made.SculptMin = sculptKeys.Select(k => Limber.BodyShape.BodySliders.ByKey[k].Min).ToArray();
+        made.SculptMax = sculptKeys.Select(k => Limber.BodyShape.BodySliders.ByKey[k].Max).ToArray();
+        // (the sculpts at the values asked for; later values go on with Resculpt, no new plan)
+        return Resculpt(made, SculptValuesOf(sculptKeys, inp.Sculpt));
     }
 
     private static string ShortName(string file) => System.IO.Path.GetFileName(file.Split('|').Last());
 
     private static ModelPlan? MakeModel(string file, byte[] data, List<MdlRigger.Side> sides, string sidesKey,
-        Func<Vector3, string[], byte[], float[], int, Vector3>? sculpt, Func<Vector3, string[], byte[], float[], int, Vector3>? builtSculpt,
-        Func<string, int> slotOf, byte[] idx, float[] w, ref int movingTotal, ref int shapedTotal)
+        Action<Vector3, string[], byte[], float[], int, List<Limber.BodyShape.BodyShapeBuild.SculptTerm>>? sculpt,
+        Func<Vector3, string[], byte[], float[], int, Vector3>? builtSculpt, Func<string, int> slotOf, byte[] idx, float[] w, ref int movingTotal, ref int shapedTotal)
     {
         var (offset, size, layouts) = MdlRigger.Layout(data);
         if (size[0] == 0 || offset[0] + size[0] > data.Length)
@@ -535,6 +660,13 @@ public static unsafe class LiveRig
         var work = (byte[])original.Clone();
         bool changed = false;
         var meshes = new List<MeshPlan>();
+        // The sculpted vertices (their values go on in Resculpt).
+        var sAt = new List<int>();
+        var sType = new List<byte>();
+        var sOrig = new List<Vector3>();
+        var sBuilt = new List<Vector3>();
+        var sStart = new List<int>();
+        var sTerms = new List<Limber.BodyShape.BodyShapeBuild.SculptTerm>();
         foreach (var layout in layouts.Where(l => l.Lod == 0))
         {
             var skin = skins.FirstOrDefault(k => k.Mesh == layout.Mesh);
@@ -553,6 +685,8 @@ public static unsafe class LiveRig
             var allPos = new Vector3[layout.VertexCount];
             var allShare = new float[layout.VertexCount];
             var shares = new List<float>();
+            var origs = new List<Vector3>();
+            var sculptIndex = new List<int>();
             int posFrom = int.MaxValue, posTo = 0, nrmFrom = int.MaxValue, nrmTo = 0;
             for (int v = 0; v < layout.VertexCount; v++)
             {
@@ -565,15 +699,27 @@ public static unsafe class LiveRig
                     idx[k] = skin.Indices[v * 8 + k];
                     w[k] = skin.Weights[v * 8 + k];
                 }
-                // The sculpts (a blend shape: the same move for this vertex every frame).
-                var d = (sculpt?.Invoke(p, skin.Bones, idx, w, skin.Slots) ?? Vector3.Zero)
-                    - (builtSculpt?.Invoke(p, skin.Bones, idx, w, skin.Slots) ?? Vector3.Zero);
-                if (d.LengthSquared() > 1e-12f && MathUtil.IsFinite(d))
+                // The sculpts (a blend shape: the same move for this vertex every frame), as terms per slider, so new
+                // values go on with no new plan.
+                int sculptEntry = -1;
+                if (sculpt != null || builtSculpt != null)
                 {
-                    p += d;
-                    MdlRigger.WriteVector(work, pa, layout.PositionType, p);
-                    changed = true;
-                    shapedTotal++;
+                    int t0 = sTerms.Count;
+                    sculpt?.Invoke(p, skin.Bones, idx, w, skin.Slots, sTerms);
+                    var baked = builtSculpt?.Invoke(p, skin.Bones, idx, w, skin.Slots) ?? Vector3.Zero;
+                    if (!MathUtil.IsFinite(baked))
+                        baked = Vector3.Zero;
+                    if (sTerms.Count > t0 || baked.LengthSquared() > 1e-12f)
+                    {
+                        sculptEntry = sAt.Count;
+                        sAt.Add(pa);
+                        sType.Add(layout.PositionType);
+                        sOrig.Add(p);
+                        sBuilt.Add(baked);
+                        sStart.Add(t0);
+                        changed = true;
+                        shapedTotal++;
+                    }
                 }
 
                 allPos[v] = p;
@@ -647,6 +793,8 @@ public static unsafe class LiveRig
                 }
                 vertex.Add(v);
                 restList.Add(p);
+                origs.Add(p);
+                sculptIndex.Add(sculptEntry);
                 shares.Add(lat);
                 normals.Add(layout.NormalAt >= 0 ? MdlRigger.ReadVector(original, layout.NormalAt + v * layout.NormalStride, layout.NormalType) : Vector3.Zero);
                 start.Add(s0);
@@ -669,6 +817,7 @@ public static unsafe class LiveRig
                 Start = start.ToArray(), Mid = mid.ToArray(), Slot = slot.ToArray(), Weight = weight.ToArray(),
                 Ranges = MergeRanges([(posFrom, Math.Min(posTo, original.Length)), (nrmFrom, Math.Min(nrmTo, original.Length))]),
                 Share = shares.ToArray(), Grad = ShareGradients(allPos, allShare, vertex, normals),
+                Orig = origs.ToArray(), SculptIndex = sculptIndex.ToArray(),
             });
             movingTotal += vertex.Count;
         }
@@ -677,6 +826,11 @@ public static unsafe class LiveRig
         return new ModelPlan
         {
             File = file, Original = original, Base = work, Meshes = meshes.ToArray(), Changed = changed,
+            Sculpting = sAt.Count == 0 ? null : new SculptPlan
+            {
+                At = sAt.ToArray(), Type = sType.ToArray(), Orig = sOrig.ToArray(), Built = sBuilt.ToArray(),
+                Start = sStart.Append(sTerms.Count).ToArray(), Terms = sTerms.ToArray(),
+            },
             Ranges = MergeRanges(meshes.SelectMany(m => m.Ranges).ToList()),
         };
     }
@@ -699,6 +853,7 @@ public static unsafe class LiveRig
     private static readonly Dictionary<string, Target> Targets = new();
     private static readonly Dictionary<string, long> NextTry = new();
     private static readonly Dictionary<string, int> Fails = new();
+    private static readonly Dictionary<string, ModelPlan> GaveUp = new(); // render thread: the plan a model was given up on
 
     public static int Count => Targets.Count;
 
@@ -762,13 +917,22 @@ public static unsafe class LiveRig
                 {
                     if (NextTry.TryGetValue(file, out var when) && now < when)
                         continue;
-                    NextTry[file] = now + 2000L * (1 + Math.Min(Fails.GetValueOrDefault(file), 5));
+                    // (looking for a model's vertices in memory takes a long moment (a visible hitch): a model it keeps
+                    // not finding is tried a few times, then not again until its plan changes: a redraw, an outfit or
+                    // slider change)
+                    int failed = Fails.GetValueOrDefault(file);
+                    if (failed >= 4 && GaveUp.TryGetValue(file, out var gaveUpOn) && ReferenceEquals(gaveUpOn, model))
+                        continue;
+                    NextTry[file] = now + Math.Min(30000L, 2000L << Math.Min(failed, 4));
                     target = Start(person.Address, file, model);
                     if (target == null)
                     {
-                        Fails[file] = Fails.GetValueOrDefault(file) + 1;
+                        Fails[file] = failed + 1;
+                        if (failed + 1 >= 4)
+                            GaveUp[file] = model;
                         continue;
                     }
+                    GaveUp.Remove(file);
                     Targets[file] = target;
                 }
                 var buffer = target.Replacement != 0 ? target.Replacement : target.Found.Buffer;
@@ -1071,6 +1235,7 @@ public static unsafe class LiveRig
             Drop(file);
         NextTry.Clear();
         Fails.Clear();
+        GaveUp.Clear();
         People.Clear();
         VirtualRigs.Clear();
         Status = "";

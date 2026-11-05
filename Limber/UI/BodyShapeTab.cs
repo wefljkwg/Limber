@@ -72,6 +72,16 @@ public sealed class BodyShapeTab
             changed = true;
         }
         Tooltip("Turns the live body shape on or off (off whenever Limber starts). Shapes already built into your models stay.");
+        {
+            bool only = _config.BodyShapeOnlyTicked;
+            if (CharacterFilter.Draw("lmb_bs", "Body shape", ref only, _config.BodyShapeCharacters ??= new(), _selection.ListCharacters(), _selection.Actor))
+            {
+                _config.BodyShapeOnlyTicked = only;
+                changed = true;
+            }
+            if (!CharacterFilter.Allows(_config.BodyShapeOnlyTicked, _config.BodyShapeCharacters, actor.Name))
+                ImGui.TextDisabled($"{actor.Name} isn't ticked: the sliders are kept, but only what's built into the models shows on them.");
+        }
         ImGui.Separator();
 
         DrawPresets(values, ref changed);
@@ -113,7 +123,8 @@ public sealed class BodyShapeTab
                     _config.BodyShapeAutoBuild = auto;
                     changed = true;
                 }
-                Tooltip("Builds (and redraws the character) about a second after you let go of a detail slider.");
+                Tooltip("Builds (and redraws the character) about a second after you let go of a detail slider."
+                    + "\nNot while the live rig is on: it shows the detail sliders as you drag them, with no build or redraw.");
             }
             var sliders = BodySliders.All.Where(s => s.Group == group && Matches(s)).ToList();
             if (sliders.Count == 0)
@@ -277,7 +288,8 @@ public sealed class BodyShapeTab
         if (_buildSoon is { } due && DateTime.UtcNow >= due && _job is not { Done: false })
         {
             _buildSoon = null;
-            if (_config.BodyShapeAutoBuild)
+            // (not with the live rig on: it shows them live already, with no build or redraw)
+            if (_config.BodyShapeAutoBuild && !_config.LiveRig)
                 StartJob(actor, values.Where(kv => BodySliders.ByKey.TryGetValue(kv.Key, out var s) && !s.LiveOnly && kv.Value != 0f)
                     .ToDictionary(kv => kv.Key, kv => kv.Value), build: true);
         }

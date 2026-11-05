@@ -84,6 +84,8 @@ public sealed class Selection
             if(native->DrawObject == null)
                 continue;
 
+            if(ActorSpawner.Current?.IsHelper(gameObject.ObjectIndex) == true)
+                continue; // (an effect's hidden helper)
             list.Add(ActorRef.From(gameObject));
         }
 

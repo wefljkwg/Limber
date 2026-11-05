@@ -315,16 +315,61 @@ public static unsafe class Appearance
         return (c->DrawData.IsHatHidden, c->DrawData.IsWeaponHidden, c->DrawData.IsVisorToggled);
     }
 
-    /// <summary>Draw the character again from its draw data (through Penumbra, so its mods stay on).</summary>
+    /// <summary>
+    /// Draw the character again from its draw data: through Penumbra (its mods stay on), or, for an actor Limber added
+    /// outside GPose (Penumbra only redraws those in GPose) or with no Penumbra, the game's own way: taken out of the
+    /// scene and drawn again once it's ready (Penumbra still puts the mods on as it loads).
+    /// </summary>
     public static void Redraw(ushort index)
     {
-        try
+        // (only an actor Limber added outside GPose, still there: everyone else through Penumbra, as always)
+        bool clientOnly = !Plugin.ClientState.IsGPosing && (ActorSpawner.Current?.StillOurs(index) ?? false);
+        if(!clientOnly)
+            try
+            {
+                Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
+                return;
+            }
+            catch
+            {
+                // no Penumbra: the game's way below
+            }
+        NativeRedraw(index);
+    }
+
+    // Characters taken out of the scene to be drawn again, and how many frames they've waited.
+    private static readonly Dictionary<ushort, (nint Address, int Frames)> Redrawing = new();
+
+    private static void NativeRedraw(ushort index)
+    {
+        var obj = ActorSkeleton.GetObject(index);
+        if(obj == null)
+            return;
+        obj->DisableDraw();
+        Redrawing[index] = ((nint)obj, 0);
+    }
+
+    /// <summary>Framework update: the characters taken out by a redraw drawn again once they're ready.</summary>
+    public static void Tick()
+    {
+        if(Redrawing.Count == 0)
+            return;
+        foreach(var (index, (address, frames)) in Redrawing.ToArray())
         {
-            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
-        }
-        catch
-        {
-            // no Penumbra: the change shows when the game next draws the character
+            var obj = ActorSkeleton.GetObject(index);
+            if(obj == null || (nint)obj != address)
+            {
+                Redrawing.Remove(index);
+                continue;
+            }
+            // (a couple of frames out first, then in as soon as it's ready; after five seconds, in anyway)
+            if(frames >= 2 && (obj->IsReadyToDraw() || frames > 300))
+            {
+                obj->EnableDraw();
+                Redrawing.Remove(index);
+            }
+            else
+                Redrawing[index] = (address, frames + 1);
         }
     }
 

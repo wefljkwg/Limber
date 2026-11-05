@@ -195,7 +195,7 @@ public static class OneClickRig
     {
         await Game(() =>
         {
-            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
+            Limber.Rig.Appearance.Redraw((ushort)(index));
             return true;
         });
         await Task.Delay(1000);
@@ -402,7 +402,7 @@ public static class OneClickRig
         // 4. Redraw.
         await Game(() =>
         {
-            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(index, 0);
+            Limber.Rig.Appearance.Redraw((ushort)(index));
             return true;
         });
 

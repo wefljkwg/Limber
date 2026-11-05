@@ -1258,6 +1258,14 @@ public sealed partial class LimberTab
             _config.Save();
         }
         Tooltip("Turns all body physics on or off: the soft breasts, butt, testicles and belly, and the live mesh (off whenever Limber starts).");
+        {
+            bool only = _config.PhysicsOnlyTicked;
+            if(CharacterFilter.Draw("lmb_physics", "Body physics", ref only, _config.PhysicsCharacters ??= new(), _selection.ListCharacters(), _selection.Actor))
+            {
+                _config.PhysicsOnlyTicked = only;
+                _config.Save();
+            }
+        }
         bool liveRig = _config.LiveRig;
         if(ImGui.Checkbox("Live rig (no rigging, no redraw)###lmb_live_rig", ref liveRig))
         {

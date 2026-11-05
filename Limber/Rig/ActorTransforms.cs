@@ -23,6 +23,9 @@ public sealed unsafe class ActorTransforms : IDisposable
         // the world's.
         public bool Facing;
         public float Scale = 1f;
+        // Height growth / shrinking (Limber Animations): on the model's own size, on top of everything else, whichever
+        // way the offset is kept (so the game sizes what it draws, and what it culls, with it at any size).
+        public float AnimatedScale = 1f;
         // Kept while the character walks or turns: the game rewrites the model's place every frame it moves
         // (wiping an offset on it), so this one goes on the skeleton's root instead, which the game rebuilds from
         // the animation and Limber re-applies after.
@@ -32,7 +35,7 @@ public sealed unsafe class ActorTransforms : IDisposable
         public bool Priority = true;
 
         public bool IsIdentity => Move == Vector3.Zero && Turn == Vector3.Zero && Scale == 1f;
-        internal bool HasState => !IsIdentity || !KeepWhileMoving || !Priority || Facing; // anything but the defaults
+        internal bool HasState => !IsIdentity || !KeepWhileMoving || !Priority || Facing || AnimatedScale != 1f; // anything but the defaults
 
         // Where the game had the model (before the offset), and what was written last frame.
         internal bool HaveBase;
@@ -46,6 +49,7 @@ public sealed unsafe class ActorTransforms : IDisposable
     }
 
     public const float MinScale = 0.0001f, MaxScale = 10f;
+    public const float MinAnimatedScale = 0.0005f, MaxAnimatedScale = 2000f;
 
     private readonly Dictionary<nint, Offset> _offsets = new();
     public readonly object Sync = new();
@@ -64,6 +68,20 @@ public sealed unsafe class ActorTransforms : IDisposable
             if(!_offsets.TryGetValue(address, out var o))
                 _offsets[address] = o = new Offset { Address = address, Index = index };
             return o;
+        }
+    }
+
+    /// <summary>Height growth's size for a character (1 = none).</summary>
+    public void SetAnimatedScale(nint address, ushort index, float scale)
+    {
+        if(!float.IsFinite(scale))
+            scale = 1f;
+        lock(Sync)
+        {
+            if(_offsets.TryGetValue(address, out var o))
+                o.AnimatedScale = scale;
+            else if(scale != 1f)
+                GetOrAdd(address, index).AnimatedScale = scale;
         }
     }
 
@@ -218,6 +236,8 @@ public sealed unsafe class ActorTransforms : IDisposable
         var newPosition = apply ? o.BasePosition + (o.Facing ? Vector3.Transform(o.Move, o.BaseRotation) : o.Move) : o.BasePosition;
         var newRotation = apply ? Quaternion.Normalize(o.Facing ? o.BaseRotation * turn : turn * o.BaseRotation) : o.BaseRotation;
         var newScale = apply ? o.BaseScale * Math.Clamp(o.Scale, MinScale, MaxScale) : o.BaseScale;
+        if(allowed && o.AnimatedScale != 1f)
+            newScale *= Math.Clamp(o.AnimatedScale, MinAnimatedScale, MaxAnimatedScale);
         if(!MathUtil.IsFinite(newPosition) || !MathUtil.IsFinite(newRotation) || !MathUtil.IsFinite(newScale))
             return false;
         *(Vector3*)&draw->Position = newPosition;
@@ -284,7 +304,7 @@ public sealed unsafe class ActorTransforms : IDisposable
                 return;
             lock(Sync)
             {
-                if(_offsets.Count == 0 || !_offsets.TryGetValue((nint)go, out var o) || !o.Priority || o.KeepWhileMoving || o.IsIdentity || !Allowed())
+                if(_offsets.Count == 0 || !_offsets.TryGetValue((nint)go, out var o) || !o.Priority || ((o.KeepWhileMoving || o.IsIdentity) && o.AnimatedScale == 1f) || !Allowed())
                     return;
                 WriteModel(o, (SceneObject*)go->DrawObject, true);
             }

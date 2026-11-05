@@ -751,7 +751,7 @@ public sealed class AppearanceTab
         {
             var (ec, _) = Plugin.PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5")
                 .InvokeFunc(actor.ObjectIndex, id, true, true);
-            Plugin.PluginInterface.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5").InvokeAction(actor.ObjectIndex, 0);
+            Limber.Rig.Appearance.Redraw((ushort)(actor.ObjectIndex));
             _status = ec is 0 or 1 ? (id == null ? "Back to the default (redrawn)." : "Collection set (redrawn).") : $"The mod manager couldn't set it (error {ec}).";
         }
         catch(Exception e)

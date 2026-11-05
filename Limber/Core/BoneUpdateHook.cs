@@ -142,9 +142,11 @@ public sealed class BoneUpdateHook : IDisposable
         var stages = _stages;
         for(int i = 0; i < stages.Length; i++)
         {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 stages[i].Run();
+                Perf.Note("bone update", stages[i].Name, started, System.Diagnostics.Stopwatch.GetTimestamp());
             }
             catch(Exception e)
             {
@@ -173,7 +175,9 @@ public sealed class BoneUpdateHook : IDisposable
         {
             _rehookCount++;
             _log.Information("Limber: another plugin hooked the bone update after Limber; re-hooking so Limber's pose is applied last.");
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             CreateHook();
+            Perf.Note("framework", "hooking the bone update again (another plugin hooked it after Limber)", started, System.Diagnostics.Stopwatch.GetTimestamp());
         }
     }
 
