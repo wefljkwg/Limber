@@ -24,6 +24,7 @@ internal static class KoiPropEditor
             return;
         }
         var rig = inst.Rig;
+        KoiPropNodes.Open(prop);
         ImGui.TextDisabled($"Koikatsu prop: {inst.Note}.");
 
         // Colours: each part (material) with the colours its mask has.
@@ -73,6 +74,19 @@ internal static class KoiPropEditor
                     apply = true;
                 if(ImGui.IsItemHovered())
                     ImGui.SetTooltip(tip + " (Put on when you let go.)");
+            }
+            // Quick looks: the surface's shine set to match what's round it (e.g. "Oiled skin" next to an oiled body).
+            ImGui.TextUnformatted("Surface:");
+            foreach(var (label, shine, rough) in new[] { ("Matte", 0.04f, 0.85f), ("Skin", 0.22f, 0.5f), ("Oiled skin", 0.55f, 0.22f), ("Glossy", 0.8f, 0.12f), ("Metal", 1f, 0.28f) })
+            {
+                ImGui.SameLine();
+                if(ImGui.SmallButton($"{label}###koi_look_{label}"))
+                {
+                    (inst.Shine, inst.Roughness) = (shine, rough);
+                    apply = true;
+                }
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Shine {shine:0.00}, roughness {rough:0.00}. Pick what it sits next to, so it reflects light the same way.");
             }
             Slider("Brightness###koi_bright", ref inst.Brightness, 0.1f, 1.5f, "Darker or lighter: lower it for props that look far too bright.");
             Slider("Contrast###koi_contrast", ref inst.Contrast, 0.3f, 2f, "Flatter or punchier.");
@@ -130,15 +144,19 @@ internal static class KoiPropEditor
             // Every value the game's shader takes for its materials, for anything the sliders above don't cover.
             if(KoiProps.Template() is { } template && ImGui.TreeNodeEx("Material values (advanced)###koi_mat_adv"))
             {
-                ImGui.TextDisabled("The game shader's own settings for this prop. Right-click one: back to the default.");
-                foreach(var (cid, defaults) in MtrlBuilder.Constants(template.Item2))
+                ImGui.TextDisabled("The game shader's own settings for this prop. Hover one for what it does; right-click: default.");
+                if(inst.Constants.Count > 0 && ImGui.SmallButton("All back to default###koi_mat_def"))
                 {
-                    if(cid == MtrlBuilder.EmissiveColor || defaults.Length == 0)
-                        continue;
+                    inst.Constants.Clear();
+                    apply = true;
+                }
+                var all = MtrlBuilder.Constants(template.Mtrl).Where(c => c.Id != MtrlBuilder.EmissiveColor && c.Values.Length > 0).ToList();
+                void Row(uint cid, float[] defaults)
+                {
                     using var cidPush = ImRaii.PushId((int)cid);
                     var values = inst.Constants.TryGetValue(cid, out var set) ? (float[])set.Clone() : (float[])defaults.Clone();
                     bool changed = false;
-                    ImGui.SetNextItemWidth(240 * ImGuiHelpers.GlobalScale);
+                    ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
                     string label = $"{MtrlBuilder.NameOf(cid)}###v";
                     switch(values.Length)
                     {
@@ -173,11 +191,22 @@ internal static class KoiPropEditor
                         apply = true;
                     if(ImGui.IsItemClicked(ImGuiMouseButton.Right) && inst.Constants.Remove(cid))
                         apply = true;
+                    if(ImGui.IsItemHovered())
+                        ImGui.SetTooltip((MtrlBuilder.TipOf(cid) ?? "Limber doesn't know what this one does.")
+                            + "\nDefault: " + string.Join(", ", defaults.Select(d => d.ToString("0.###"))));
                     if(inst.Constants.ContainsKey(cid))
                     {
                         ImGui.SameLine();
                         ImGui.TextDisabled("(changed)");
                     }
+                }
+                foreach(var (cid, defaults) in all.Where(c => MtrlBuilder.IsUseful(c.Id)))
+                    Row(cid, defaults);
+                if(ImGui.TreeNodeEx("Others (mostly unused on imported props)###koi_mat_more"))
+                {
+                    foreach(var (cid, defaults) in all.Where(c => !MtrlBuilder.IsUseful(c.Id)))
+                        Row(cid, defaults);
+                    ImGui.TreePop();
                 }
                 ImGui.TreePop();
             }
@@ -236,19 +265,86 @@ internal static class KoiPropEditor
             ImGui.TreePop();
         }
 
-        // Bones.
-        if(rig.Bones.Count > 1 && ImGui.TreeNodeEx($"Bones ({rig.Bones.Count})###koi_bones"))
+        // Bones: nodes on the prop in the game (click one, then move, turn or size it with the gizmo), and the list.
+        if(rig.Bones.Count > 1 && ImGui.TreeNodeEx($"Bones ({rig.Bones.Count})###koi_bones", ImGuiTreeNodeFlags.DefaultOpen))
         {
+            bool show = KoiPropNodes.Show;
+            if(ImGui.Checkbox("Show nodes###koi_nodes_show", ref show))
+                KoiPropNodes.Show = show;
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Its bones as dots on the prop in the game while this is open. Left-click a dot: choose it (the gizmo goes on it). Right-click a dot: back to how it rests.");
+            ImGui.SameLine();
+            foreach(var (label, tool) in new[] { ("Rotate", KoiPropNodes.Tool.Rotate), ("Move", KoiPropNodes.Tool.Move), ("Scale", KoiPropNodes.Tool.Scale) })
+            {
+                if(ImGui.RadioButton($"{label}###koi_nodes_{label}", KoiPropNodes.Op == tool))
+                    KoiPropNodes.Op = tool;
+                ImGui.SameLine();
+            }
+            bool worldAxes = KoiPropNodes.WorldAxes;
+            if(ImGui.Checkbox("World axes###koi_nodes_world", ref worldAxes))
+                KoiPropNodes.WorldAxes = worldAxes;
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("The gizmo lined up with the world instead of the bone (not for Scale).");
+
+            // The chosen bone: its move, turn and size as numbers.
+            int sel = KoiPropNodes.Selected;
+            if(sel >= 0 && sel < rig.Bones.Count)
+            {
+                ImGui.TextUnformatted($"Chosen: {rig.Bones[sel].Name}");
+                ImGui.SameLine();
+                if(ImGui.SmallButton("Back to rest###koi_node_reset"))
+                    KoiPropNodes.Reset(inst, sel);
+                ImGui.SameLine();
+                if(ImGui.SmallButton("Let go###koi_node_none"))
+                    KoiPropNodes.Selected = -1;
+                var move = inst.Move[sel];
+                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                if(ImGui.DragFloat3("Move###koi_node_move", ref move, 0.001f, -10f, 10f, "%.3f"))
+                {
+                    inst.Move[sel] = move;
+                    inst.Dirty = true;
+                    inst.Settled = false;
+                }
+                var turnSel = inst.Turn[sel];
+                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                if(ImGui.DragFloat3("Turn###koi_node_turn", ref turnSel, 0.5f, -180f, 180f, "%.0f°"))
+                {
+                    inst.Turn[sel] = turnSel;
+                    inst.Dirty = true;
+                    inst.Settled = false;
+                }
+                var size = inst.Size[sel];
+                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                if(ImGui.DragFloat3("Size###koi_node_size", ref size, 0.005f, 0.01f, 20f, "%.2f"))
+                {
+                    inst.Size[sel] = size;
+                    inst.Dirty = true;
+                    inst.Settled = false;
+                }
+                ImGui.SameLine();
+                float even = (size.X + size.Y + size.Z) / 3f;
+                ImGui.SetNextItemWidth(70 * ImGuiHelpers.GlobalScale);
+                if(ImGui.DragFloat("###koi_node_size_all", ref even, 0.005f, 0.01f, 20f, "%.2f"))
+                {
+                    inst.Size[sel] = new Vector3(even);
+                    inst.Dirty = true;
+                    inst.Settled = false;
+                }
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip("All three sizes at once.");
+            }
+            else
+                ImGui.TextDisabled("Click a dot on the prop (or a bone below) to choose it.");
+
             ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
             ImGui.InputTextWithHint("###koi_bone_search", "Search bones", ref _boneSearch, 64);
             ImGui.SameLine();
             if(ImGui.SmallButton("Reset all###koi_bones_reset"))
             {
-                Array.Clear(inst.Turn);
-                inst.Dirty = true;
-                inst.Settled = false;
+                for(int b = 0; b < rig.Bones.Count; b++)
+                    KoiPropNodes.Reset(inst, b);
             }
-            using(var child = ImRaii.Child("###koi_bone_list", new Vector2(-1, 220 * ImGuiHelpers.GlobalScale), true))
+            using(var child = ImRaii.Child("###koi_bone_list", new Vector2(-1, 200 * ImGuiHelpers.GlobalScale), true))
             if(child.Success)
             {
                 for(int b = 0; b < rig.Bones.Count; b++)
@@ -260,25 +356,18 @@ internal static class KoiPropEditor
                     for(int a = bone.Parent; a >= 0 && depth < 12; a = rig.Bones[a].Parent)
                         depth++;
                     using var bid = ImRaii.PushId(b);
-                    if(_boneSearch.Length == 0)
-                        ImGui.Indent(depth * 8f * ImGuiHelpers.GlobalScale);
-                    var turn = inst.Turn[b];
-                    ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
-                    if(ImGui.DragFloat3($"{bone.Name}###turn", ref turn, 0.5f, -180f, 180f, "%.0f°"))
-                    {
-                        inst.Turn[b] = turn;
-                        inst.Dirty = true;
-                        inst.Settled = false;
-                    }
+                    float indent = _boneSearch.Length == 0 ? depth * 8f * ImGuiHelpers.GlobalScale : 0f;
+                    if(indent > 0f)
+                        ImGui.Indent(indent);
+                    bool posed = inst.Turn[b] != Vector3.Zero || inst.Move[b] != Vector3.Zero || inst.Size[b] != Vector3.One;
+                    if(ImGui.Selectable($"{bone.Name}{(posed ? "  (posed)" : "")}###pick", KoiPropNodes.Selected == b))
+                        KoiPropNodes.Selected = b;
                     if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
-                    {
-                        inst.Turn[b] = Vector3.Zero;
-                        inst.Dirty = true;
-                    }
+                        KoiPropNodes.Reset(inst, b);
                     if(ImGui.IsItemHovered())
-                        ImGui.SetTooltip("Turn (yaw, pitch, roll) on top of how it rests. Right-click: back to rest.");
-                    if(_boneSearch.Length == 0)
-                        ImGui.Unindent(depth * 8f * ImGuiHelpers.GlobalScale);
+                        ImGui.SetTooltip("Click: choose it (the gizmo goes on it). Right-click: back to how it rests.");
+                    if(indent > 0f)
+                        ImGui.Unindent(indent);
                 }
             }
             ImGui.TreePop();

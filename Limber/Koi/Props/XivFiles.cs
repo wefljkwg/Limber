@@ -540,16 +540,59 @@ public static class MtrlBuilder
         return list;
     }
 
-    /// <summary>Names for the shader constants Limber knows (others are shown by number).</summary>
-    public static string NameOf(uint id) => id switch
+    // The game's prop shader (bg.shpk) settings: friendly name, what it does, and whether it's one worth changing.
+    // (Their real names, e.g. g_DiffuseColor, are from the community's lists of the game's shader names.)
+    private static readonly Dictionary<uint, (string Name, string Tip, bool Useful)> Known = new()
     {
-        0x38A64362 => "Glow colour (emissive)",
-        0x2C2A34DD => "Diffuse colour",
-        0x141722D5 => "Specular colour",
-        0xD925FF32 => "Shadow alpha threshold",
-        0x29AC0223 => "Alpha threshold",
-        _ => $"0x{id:X8}",
+        [0x2C2A34DD] = ("Colour multiplier", "g_DiffuseColor: multiplies the whole texture's colour (1, 1, 1: as it is). Lower all three to darken it.", true),
+        [0x141722D5] = ("Shine colour", "g_SpecularColor: the colour and strength of its reflections (1, 1, 1: white). Lower for duller, tint for coloured shine.", true),
+        [0xB5545FBB] = ("Bump strength (shader)", "g_NormalScale: how strongly its bump map bends the light (1: as it is, 0: smooth).", true),
+        [0xB7FA33E2] = ("Ambient shadow", "g_SSAOMask: how much the game darkens its creases and where it meets other things (1: full, 0: none). Higher helps it sit in the scene.", true),
+        [0xEEF5665F] = ("Reflection strength", "g_EnvMapPower: how much it mirrors its surroundings.", true),
+        [0x29AC0223] = ("See-through cut-off", "g_AlphaThreshold: parts more see-through than this aren't drawn at all (0: everything drawn).", true),
+        [0xD925FF32] = ("Shadow cut-off", "g_ShadowAlphaThreshold: like the see-through cut-off, for the shadow it casts.", true),
+        [0x8F8B0070] = ("Height depth", "g_HeightScale: how deep its height map makes the surface look (usually unused on imported props).", true),
+        [0xA5D02C52] = ("Colour texture tiling", "g_ColorUVScale: how many times its colour texture repeats (1: once). Leave at 1 for imported props.", false),
+        [0x8D03A782] = ("Shine texture tiling", "g_SpecularUVScale: how many times its shine texture repeats.", false),
+        [0xBB99CF76] = ("Bump texture tiling", "g_NormalUVScale: how many times its bump texture repeats.", false),
+        [0x59BDA0B1] = ("Shader variant (leave alone)", "g_ShaderID: which variant of the shader it uses. Changing it can break how it's drawn.", false),
+        [0x8981D4D9] = ("Detail texture number", "g_DetailID: which of the game's shared detail textures (fine grain) it layers on (0: none).", false),
+        [0xDD93D839] = ("Detail colour", "g_DetailColor: the detail texture's colour.", false),
+        [0x9F42EDA2] = ("Detail bump strength", "g_DetailNormalScale: how strong the detail texture's bumps are.", false),
+        [0x025A9BEE] = ("Detail bump tiling", "g_DetailNormalUvScale: how often the detail bumps repeat.", false),
+        [0xC63D9716] = ("Detail colour tiling", "g_DetailColorUvScale: how often the detail colour repeats.", false),
+        [0xF3F28C58] = ("Detail colour fade distance", "g_DetailColorFadeDistance: how far away the detail colour fades out.", false),
+        [0x236EE793] = ("Detail bump fade distance", "g_DetailNormalFadeDistance: how far away the detail bumps fade out.", false),
+        [0xB10AF2DA] = ("Detail colour sharpness", "g_DetailColorMipBias: blurrier (higher) or sharper detail colour.", false),
+        [0x756DFE22] = ("Detail bump sharpness", "g_DetailNormalMipBias: blurrier (higher) or sharper detail bumps.", false),
+        [0x07EDA444] = ("Second layer blend", "g_AlphaMultiParam: how a second layer is blended in (for the game's layered materials; unused here).", false),
+        [0x30B91319] = ("Second layer weight", "g_AlphaMultiWeight: for the game's layered materials (unused here).", false),
+        [0x3F8AC211] = ("Second layer colour", "g_MultiDiffuseColor: the second layer's colour multiplier (unused here).", false),
+        [0x86D60CB8] = ("Second layer shine", "g_MultiSpecularColor (unused here).", false),
+        [0xAA676D0F] = ("Second layer glow", "g_MultiEmissiveColor (unused here).", false),
+        [0x793AC5A3] = ("Second layer bump strength", "g_MultiNormalScale (unused here).", false),
+        [0x926E860D] = ("Second layer ambient shadow", "g_MultiSSAOMask (unused here).", false),
+        [0x43E59A68] = ("Second layer height depth", "g_MultiHeightScale (unused here).", false),
+        [0x11FD4221] = ("Second layer detail colour", "g_MultiDetailColor (unused here).", false),
+        [0xAC156136] = ("Second layer detail number", "g_MultiDetailID (unused here).", false),
+        [0xA83DBDF1] = ("Second layer detail bumps", "g_MultiDetailNormalScale (unused here).", false),
+        [0x5095E770] = ("Shadows from lamps", "g_EnableLightShadow: whether it casts shadows from placed lights (0: off, 1: on).", false),
+        [0xBCEA8C11] = ("Shadows", "g_EnableShadow: whether it casts shadows (0: off, 1: on).", false),
+        [0x5106E045] = ("Sphere map number", "g_SphereMapID: which of the game's reflection maps it uses.", false),
+        [0x9A696A17] = ("Scroll speed", "g_UVScrollTime: for the game's scrolling textures (unused here).", false),
+        [0xBCA22FD4] = ("Inclusion aperture", "g_InclusionAperture: for the game's crystal materials (unused here).", false),
+        [0xB500BB24] = ("Scattering", "g_ScatteringLevel: light scattering, for the game's own materials (unused here).", false),
+        [0x38A64362] = ("Glow colour", "g_EmissiveColor: light it gives off on its own.", true),
     };
+
+    /// <summary>A shader constant's friendly name (unknown ones by number).</summary>
+    public static string NameOf(uint id) => Known.TryGetValue(id, out var k) ? k.Name : $"Unknown (0x{id:X8})";
+
+    /// <summary>What a shader constant does (and its real name), or null if Limber doesn't know.</summary>
+    public static string? TipOf(uint id) => Known.TryGetValue(id, out var k) ? k.Tip : null;
+
+    /// <summary>Whether it's one worth changing on an imported prop.</summary>
+    public static bool IsUseful(uint id) => Known.TryGetValue(id, out var k) && k.Useful;
 
     /// <summary>The material's emissive colour (how much it glows on its own), as the game's shaders call it.</summary>
     public const uint EmissiveColor = 0x38A64362;

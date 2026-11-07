@@ -26,6 +26,9 @@ public static unsafe class KoiPropRuntime
         public Vector4[][] Colours = [];
         public readonly Dictionary<string, float> Shapes = new();
         public Vector3[] Turn = [];          // each bone, degrees (yaw, pitch, roll) on top of how it rests
+        public Vector3[] Move = [];          // each bone, moved from where it rests (its parent's space, metres)
+        public Vector3[] Size = [];          // each bone, sized along its own axes (1: as it rests)
+        public Matrix4x4[] Posed = [];       // each bone as last posed (prefab space), for its nodes
         public bool Dynamics = true;
         // How it's shaded (made into its textures): brightness, contrast, colour strength, and its shine.
         public float Brightness = 1f, Contrast = 1f, Saturation = 1f, Shine = 0.16f, Roughness = 0.5f;
@@ -112,6 +115,8 @@ public static unsafe class KoiPropRuntime
             Key = imported.Key, Rig = rig, Number = _next++, Prop = prop.Id,
             Colours = rig.Materials.Select(m => (Vector4[])m.Colours.Clone()).ToArray(),
             Turn = new Vector3[rig.Bones.Count],
+            Move = new Vector3[rig.Bones.Count],
+            Size = Enumerable.Repeat(Vector3.One, rig.Bones.Count).ToArray(),
         };
         try
         {
@@ -376,19 +381,40 @@ public static unsafe class KoiPropRuntime
         return Matrix4x4.CreateFromYawPitchRoll(r.X, r.Y, r.Z);
     }
 
+    /// <summary>A bone's place relative to its parent: sized, turned, then moved, on top of how it rests.</summary>
+    internal static Matrix4x4 LocalOf(Instance inst, int b)
+    {
+        var bone = inst.Rig.Bones[b];
+        var size = b < inst.Size.Length ? inst.Size[b] : Vector3.One;
+        var move = b < inst.Move.Length ? inst.Move[b] : Vector3.Zero;
+        if(inst.Turn[b] == Vector3.Zero && size == Vector3.One && move == Vector3.Zero)
+            return bone.RestLocal;
+        var local = Matrix4x4.CreateScale(size) * TurnOf(inst.Turn[b]) * bone.RestLocal;
+        local.Translation += move;
+        return local;
+    }
+
+    /// <summary>Bones as they rest with the hand-set turns, moves and sizes (no swinging), prefab space.</summary>
+    internal static Matrix4x4[] HeldPose(Instance inst)
+    {
+        var rig = inst.Rig;
+        var world = new Matrix4x4[rig.Bones.Count];
+        for(int b = 0; b < world.Length; b++)
+        {
+            int parent = rig.Bones[b].Parent;
+            world[b] = parent >= 0 && parent < b ? LocalOf(inst, b) * world[parent] : LocalOf(inst, b);
+        }
+        return world;
+    }
+
     private static void Pose(Instance inst, SpawnedProp prop)
     {
         var rig = inst.Rig;
         int n = rig.Bones.Count;
-        var world = new Matrix4x4[n];
-        for(int b = 0; b < n; b++)
-        {
-            var bone = rig.Bones[b];
-            var local = inst.Turn[b] == Vector3.Zero ? bone.RestLocal : TurnOf(inst.Turn[b]) * bone.RestLocal;
-            world[b] = bone.Parent >= 0 && bone.Parent < b ? local * world[bone.Parent] : bone.Parent < 0 ? local : local * world[bone.Parent];
-        }
+        var world = HeldPose(inst);
         if(inst.Dynamics && rig.Chains.Count > 0)
             Swing(inst, prop, world);
+        inst.Posed = (Matrix4x4[])world.Clone();
         var skin = new Matrix4x4[n];
         for(int b = 0; b < n; b++)
             skin[b] = Matrix4x4.Invert(rig.Bones[b].Rest, out var inv) ? inv * world[b] : Matrix4x4.Identity;
@@ -555,8 +581,7 @@ public static unsafe class KoiPropRuntime
             int parent = rig.Bones[b].Parent;
             if(parent >= 0)
             {
-                var local = inst.Turn[b] == Vector3.Zero ? rig.Bones[b].RestLocal : TurnOf(inst.Turn[b]) * rig.Bones[b].RestLocal;
-                world[b] = local * world[parent];
+                world[b] = LocalOf(inst, b) * world[parent];
             }
             if(inChain[b] < 0 && !rig.Chains.Any(c => c.Root == b))
                 continue;

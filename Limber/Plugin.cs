@@ -327,8 +327,8 @@ public sealed class Plugin : IDalamudPlugin
             _softBodyButt.BoneStrength = () => _config.Ik.PropBoneStrength;
             _softBodyBelly.BoneStrength = () => _config.Ik.PropBoneStrength;
             _propOverlay = new PropOverlay(_props, _config.Ik, GameGui) { BodyColliders = [_softBody, _softBodyTesticles, _softBodyButt, _softBodyBelly] };
-            _overlay.SuppressGizmo = () => _propOverlay.GizmoWanted;
-            _overlay.MouseTakenElsewhere = () => _propOverlay.OwnsMouse || _motions.OwnsMouse;
+            _overlay.SuppressGizmo = () => _propOverlay.GizmoWanted || Limber.Koi.Props.KoiPropNodes.GizmoWanted;
+            _overlay.MouseTakenElsewhere = () => _propOverlay.OwnsMouse || _motions.OwnsMouse || Limber.Koi.Props.KoiPropNodes.OwnsMouse;
             _motions.Changed = () => _config.Ik.Save();
             _overlay.Motions = _motions;
             _hook.Running = () => _config.PluginEnabled;
@@ -879,6 +879,7 @@ public sealed class Plugin : IDalamudPlugin
                 _overlay.Draw();
                 _faceTab?.DrawScene();
                 _propOverlay.Draw();
+                Limber.Koi.Props.KoiPropNodes.Draw(GameGui);
                 _motions.Draw();
                 _oral.DrawGuide(GameGui);
                 _mainWindow?.ClimaxTab?.DrawOverlay(GameGui);
