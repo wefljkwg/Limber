@@ -54,7 +54,7 @@ public sealed unsafe class ActorSpawner : IDisposable
     /// A hidden helper: a copy of <paramref name="source"/> (same body, so the same bones), not in any list, not named
     /// after anyone (so no per-character setting reaches it). Returns its slot, or -1 (see LastError).
     /// </summary>
-    public int SpawnHelper(ICharacter source) => Spawn(source, true, null, helper: true);
+    public int SpawnHelper(ICharacter source) => Spawn(source, true, null, helper: true, null);
 
     public string? LastError { get; private set; }
 
@@ -66,9 +66,12 @@ public sealed unsafe class ActorSpawner : IDisposable
     /// or a pasted one), standing where <paramref name="source"/> does (or in front of it). GPose only. Returns its
     /// object table slot, or -1.
     /// </summary>
-    public int Spawn(ICharacter source, bool samePlace, AppearanceData? look = null) => Spawn(source, samePlace, look, helper: false);
+    public int Spawn(ICharacter source, bool samePlace, AppearanceData? look = null) => Spawn(source, samePlace, look, helper: false, null);
 
-    private int Spawn(ICharacter source, bool samePlace, AppearanceData? look, bool helper)
+    /// <summary>A new actor (listed with the others) under this name (made unique if it's taken).</summary>
+    public int SpawnNamed(ICharacter source, bool samePlace, string name) => Spawn(source, samePlace, null, helper: false, name);
+
+    private int Spawn(ICharacter source, bool samePlace, AppearanceData? look, bool helper, string? name)
     {
         if(look != null && (look.Customize.Length < 26 || look.Customize[2] == 4))
         {
@@ -157,7 +160,7 @@ public sealed unsafe class ActorSpawner : IDisposable
         _number[index] = number;
         // (a look with its own actor name: that name, made unique if it's in use already)
         string actorName = $"Limber {number}";
-        string wanted = (look?.ActorName ?? "").Trim();
+        string wanted = (name ?? look?.ActorName ?? "").Trim();
         if(wanted.Length > 0)
         {
             actorName = wanted;

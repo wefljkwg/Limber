@@ -307,7 +307,8 @@ public sealed unsafe class Followers
                     Status = "Outside GPose, followers need \"Also run outside GPose\" on (Advanced).";
                     break;
                 }
-                int index = _spawner.SpawnHelper(me);
+                // (a listed actor, named after the creature: posable and selectable like any other)
+                int index = _spawner.SpawnNamed(me, true, wanted[slot].Name.Length > 0 ? wanted[slot].Name : "Minion");
                 if(index < 0)
                 {
                     Status = _spawner.LastError ?? "The game wouldn't add another one.";

@@ -246,7 +246,9 @@ public sealed class EntitiesTab
         }
         if(go && _spawnPick.Chosen != 0 && Source() is { } source)
         {
-            int index = _spawner.Spawn(source, false);
+            var chosenEntry = Entities.All.FirstOrDefault(e => e.Id == _spawnPick.Chosen);
+            string entityName = chosenEntry != null ? chosenEntry.Name.Split("  (")[0].Split(" (")[0] : $"Creature {_spawnPick.Chosen}";
+            int index = _spawner.SpawnNamed(source, false, entityName);
             if(index < 0)
                 _status = _spawner.LastError ?? "The game wouldn't add another actor.";
             else
