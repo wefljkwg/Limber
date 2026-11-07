@@ -24,6 +24,15 @@ public sealed class MdlTemplate
     public required string Material;             // its first material's path
     public required byte[][] Vertex0;            // mesh 0's first vertex, per stream (defaults for what's not set)
     public uint Version;
+    public int Winding = 1; // +1: its triangles turn the same way as their normals' right-hand rule; -1 the other way
+
+    internal static Vector3 ReadVec(byte[] b, int at, byte type, bool unit) => type switch
+    {
+        2 or 3 => new Vector3(BitConverter.ToSingle(b, at), BitConverter.ToSingle(b, at + 4), BitConverter.ToSingle(b, at + 8)),
+        14 => new Vector3((float)BitConverter.ToHalf(b, at), (float)BitConverter.ToHalf(b, at + 2), (float)BitConverter.ToHalf(b, at + 4)),
+        5 or 8 => unit ? new Vector3(b[at] / 255f * 2f - 1f, b[at + 1] / 255f * 2f - 1f, b[at + 2] / 255f * 2f - 1f) : new Vector3(b[at], b[at + 1], b[at + 2]),
+        _ => Vector3.Zero,
+    };
 
     public static int SizeOf(byte type) => type switch
     {
@@ -93,14 +102,38 @@ public sealed class MdlTemplate
         var vertex0 = new byte[3][];
         for(int s = 0; s < 3; s++)
         {
-            uint off = BitConverter.ToUInt32(mesh0, 12 + 4 * s);
+            // (the mesh's vertex buffer offsets are at 20, 24 and 28)
+            uint off = BitConverter.ToUInt32(mesh0, 20 + 4 * s);
             long at = vertexData + off;
             vertex0[s] = strides[s] > 0 && at + strides[s] <= b.Length ? b.AsSpan((int)at, strides[s]).ToArray() : new byte[strides[s]];
+        }
+        // Which way its triangles turn against its normals (+1 / -1): the props' are turned the same way, so the game
+        // draws their outsides (the other way round it draws their insides, lit from behind: a shine round the edges).
+        float winding = 0f;
+        try
+        {
+            var pos = elements.First(e => e.Item4 == 0);
+            var nrm = elements.First(e => e.Item4 == 3);
+            uint indexData = BitConverter.ToUInt32(lod0, 56);
+            uint start = BitConverter.ToUInt32(mesh0, 16), count = BitConverter.ToUInt32(mesh0, 4);
+            Vector3 P(int v) => ReadVec(b, (int)(vertexData + BitConverter.ToUInt32(mesh0, 20 + 4 * pos.Item1)) + v * strides[pos.Item1] + pos.Item2, pos.Item3, false);
+            Vector3 N(int v) => ReadVec(b, (int)(vertexData + BitConverter.ToUInt32(mesh0, 20 + 4 * nrm.Item1)) + v * strides[nrm.Item1] + nrm.Item2, nrm.Item3, true);
+            for(uint i = 0; i + 2 < count && i < 900; i += 3)
+            {
+                int at = (int)(indexData + (start + i) * 2);
+                int a = BitConverter.ToUInt16(b, at), c1 = BitConverter.ToUInt16(b, at + 2), c2 = BitConverter.ToUInt16(b, at + 4);
+                var face = Vector3.Cross(P(c1) - P(a), P(c2) - P(a));
+                winding += MathF.Sign(Vector3.Dot(face, N(a) + N(c1) + N(c2)));
+            }
+        }
+        catch
+        {
         }
         return new MdlTemplate
         {
             File = b, Path = path, Declaration = decl, Elements = elements, Strides = strides, ModelHeader = modelHeader, Lod0 = lod0,
             BoneTable = BitConverter.ToUInt16(mesh0, 14), Material = material, Vertex0 = vertex0, Version = version,
+            Winding = winding < 0f ? -1 : 1,
         };
     }
 }
@@ -133,6 +166,11 @@ public static class MdlBuilder
 {
     public static byte[] Build(MdlTemplate t, IReadOnlyList<PropMesh> meshesIn, IReadOnlyList<string> materials)
         => Build(t, meshesIn, materials, out _);
+
+    /// <summary>Turns every triangle round (on top of matching the template's way), as a fix to try.</summary>
+    [ThreadStatic] public static bool FlipFaces;
+    /// <summary>Normals pointing the other way, as a fix to try.</summary>
+    [ThreadStatic] public static bool FlipNormals;
 
     /// <summary>The same, and where each vertex ended up (meshes with more than 65535 vertices aren't split here: those
     /// models can't be moved live, and <paramref name="layout"/> is null).</summary>
@@ -181,8 +219,13 @@ public static class MdlBuilder
                 max = Vector3.Max(max, p);
             }
             int start = (int)(index.Length / 2);
-            foreach(var i in m.I)
-                index.Write(BitConverter.GetBytes((ushort)i));
+            bool turn = (Winding(m) * t.Winding < 0) ^ FlipFaces;
+            for(int i = 0; i + 2 < m.I.Count; i += 3)
+            {
+                index.Write(BitConverter.GetBytes((ushort)m.I[i]));
+                index.Write(BitConverter.GetBytes((ushort)m.I[turn ? i + 2 : i + 1]));
+                index.Write(BitConverter.GetBytes((ushort)m.I[turn ? i + 1 : i + 2]));
+            }
             while(index.Length % 16 != 0)
                 index.WriteByte(0);
             meshInfo.Add((m.P.Count, m.I.Count, start, offsets));
@@ -335,6 +378,21 @@ public static class MdlBuilder
         return file;
     }
 
+    // Which way a mesh's triangles turn against its normals, as the template's is told (+1 / -1).
+    private static int Winding(PropMesh m)
+    {
+        float sum = 0f;
+        for(int i = 0; i + 2 < m.I.Count && i < 3000; i += 3)
+        {
+            int a = m.I[i], b = m.I[i + 1], c = m.I[i + 2];
+            if(a >= m.P.Count || b >= m.P.Count || c >= m.P.Count || a >= m.N.Count || b >= m.N.Count || c >= m.N.Count)
+                continue;
+            var face = Vector3.Cross(m.P[b] - m.P[a], m.P[c] - m.P[a]);
+            sum += MathF.Sign(Vector3.Dot(face, m.N[a] + m.N[b] + m.N[c]));
+        }
+        return sum < 0f ? -1 : 1;
+    }
+
     private static IEnumerable<PropMesh> Split(PropMesh m)
     {
         if(m.P.Count <= 65535)
@@ -379,7 +437,7 @@ public static class MdlBuilder
                 value = new Vector4(m.P[v], 1f);
                 break;
             case 3: // normal
-                value = new Vector4(v < m.N.Count ? m.N[v] : Vector3.UnitY, 0f);
+                value = new Vector4((v < m.N.Count ? m.N[v] : Vector3.UnitY) * (FlipNormals ? -1f : 1f), 0f);
                 if(type == 8)
                     value = value * 0.5f + new Vector4(0.5f);
                 break;

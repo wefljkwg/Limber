@@ -29,6 +29,7 @@ public static unsafe class KoiPropRuntime
         public bool Dynamics = true;
         // How it's shaded (made into its textures): brightness, contrast, colour strength, and its shine.
         public float Brightness = 1f, Contrast = 1f, Saturation = 1f, Shine = 0.16f, Roughness = 0.5f;
+        public bool FlipFaces, FlipNormals; // fixes to try when it's lit wrongly
         public float DynamicsStrength = 1f;
         public string Path = "";
         public List<string> Files = new();
@@ -150,7 +151,17 @@ public static unsafe class KoiPropRuntime
             materials.Add(mat);
         }
         string model = $"{folder}/bgparts/koi_{inst.Key}_{tag}.mdl";
-        files[model] = MdlBuilder.Build(mdl, inst.Rig.Meshes, materials, out var layout);
+        MdlBuilder.FlipFaces = inst.FlipFaces;
+        MdlBuilder.FlipNormals = inst.FlipNormals;
+        MdlLayout? layout;
+        try
+        {
+            files[model] = MdlBuilder.Build(mdl, inst.Rig.Meshes, materials, out layout);
+        }
+        finally
+        {
+            MdlBuilder.FlipFaces = MdlBuilder.FlipNormals = false;
+        }
         // (the old version's files dropped)
         foreach(var old in inst.Files)
             KoiProps.Extra.Remove(old);
@@ -414,6 +425,8 @@ public static unsafe class KoiPropRuntime
                 }
                 var outP = new Vector3(-q.X, q.Y, q.Z);
                 var outN = qn.LengthSquared() > 1e-12f ? Vector3.Normalize(new Vector3(-qn.X, qn.Y, qn.Z)) : nrm;
+                if(inst.FlipNormals)
+                    outN = -outN;
                 foreach(var (s, o, type, usage) in t.Elements)
                 {
                     if(s > 2 || t.Strides[s] == 0)
