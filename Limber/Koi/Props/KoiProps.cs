@@ -839,9 +839,29 @@ public static class KoiProps
                 }
             slots = b ? 3 : g ? 2 : 1;
         }
+        // Its normal map (bumps), at the texture's size: Unity's packed ones keep x in alpha and y in green.
+        byte[]? normal = null;
+        var bump = Tex("_NormalMap") ?? Tex("_BumpMap");
+        if(bump != null)
+        {
+            normal = new byte[w * h * 4];
+            long redSum = 0;
+            for(int i = 0; i < bump.W * bump.H; i++)
+                redSum += bump.Rgba[i * 4];
+            bool packed = redSum / Math.Max(1, bump.W * bump.H) > 240; // (red all but white: x is in alpha)
+            for(int y = 0; y < h; y++)
+                for(int x = 0; x < w; x++)
+                {
+                    int bi = ((y * bump.H / h) * bump.W + x * bump.W / w) * 4, o = (y * w + x) * 4;
+                    normal[o] = packed ? bump.Rgba[bi + 3] : bump.Rgba[bi];
+                    normal[o + 1] = bump.Rgba[bi + 1];
+                    normal[o + 2] = 255;
+                    normal[o + 3] = 255;
+                }
+        }
         return new KoiRig.Material
         {
-            Name = mat.S("m_Name"), W = w, H = h, Main = px, Mask = m, Slots = slots,
+            Name = mat.S("m_Name"), W = w, H = h, Main = px, Mask = m, Slots = slots, Normal = normal,
             Colours = [Col("_Color") ?? Vector4.One, Col("_Color2") ?? Vector4.One, Col("_Color3") ?? Vector4.One],
         };
     }

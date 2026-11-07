@@ -86,6 +86,21 @@ internal static class KoiPropEditor
                 apply = true;
             if(ImGui.IsItemHovered())
                 ImGui.SetTooltip("Light it gives off on its own (black: none, so the scene lights it). Put on when you let go.");
+            if(rig.Materials.Any(m => m.Normal != null))
+            {
+                Slider("Bumps###koi_bumps", ref inst.Bumps, 0f, 2f, "How much of its own surface detail (its normal map) catches the light (0: smooth).");
+                ImGui.SameLine();
+                bool flipGreen = inst.BumpsFlipGreen;
+                if(ImGui.Checkbox("Flip bumps###koi_bumps_flip", ref flipGreen))
+                {
+                    inst.BumpsFlipGreen = flipGreen;
+                    apply = true;
+                }
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Try this if its bumps look dented in where they should stick out (lit from the wrong side).");
+            }
+            else
+                ImGui.TextDisabled("(no bump map in this prop: Bumps not offered)");
             bool faces = inst.FlipFaces, normals = inst.FlipNormals;
             if(ImGui.Checkbox("Turn faces round###koi_flip_faces", ref faces))
             {
@@ -106,7 +121,65 @@ internal static class KoiPropEditor
             {
                 (inst.Brightness, inst.Contrast, inst.Saturation, inst.Shine, inst.Roughness) = (1f, 1f, 1f, 0.16f, 0.5f);
                 inst.Glow = Vector3.Zero;
+                (inst.Bumps, inst.BumpsFlipGreen) = (1f, true);
+                inst.Constants.Clear();
                 apply = true;
+            }
+            ImGui.TextDisabled("(No rim light or toon outline: the game's own shader for props has neither.)");
+
+            // Every value the game's shader takes for its materials, for anything the sliders above don't cover.
+            if(KoiProps.Template() is { } template && ImGui.TreeNodeEx("Material values (advanced)###koi_mat_adv"))
+            {
+                ImGui.TextDisabled("The game shader's own settings for this prop. Right-click one: back to the default.");
+                foreach(var (cid, defaults) in MtrlBuilder.Constants(template.Item2))
+                {
+                    if(cid == MtrlBuilder.EmissiveColor || defaults.Length == 0)
+                        continue;
+                    using var cidPush = ImRaii.PushId((int)cid);
+                    var values = inst.Constants.TryGetValue(cid, out var set) ? (float[])set.Clone() : (float[])defaults.Clone();
+                    bool changed = false;
+                    ImGui.SetNextItemWidth(240 * ImGuiHelpers.GlobalScale);
+                    string label = $"{MtrlBuilder.NameOf(cid)}###v";
+                    switch(values.Length)
+                    {
+                        case 1:
+                            changed = ImGui.DragFloat(label, ref values[0], 0.01f);
+                            break;
+                        case 2:
+                        {
+                            var v = new Vector2(values[0], values[1]);
+                            if(changed = ImGui.DragFloat2(label, ref v, 0.01f))
+                                (values[0], values[1]) = (v.X, v.Y);
+                            break;
+                        }
+                        case 3:
+                        {
+                            var v = new Vector3(values[0], values[1], values[2]);
+                            if(changed = ImGui.DragFloat3(label, ref v, 0.01f))
+                                (values[0], values[1], values[2]) = (v.X, v.Y, v.Z);
+                            break;
+                        }
+                        default:
+                        {
+                            var v = new Vector4(values[0], values[1], values[2], values[3]);
+                            if(changed = ImGui.DragFloat4(label, ref v, 0.01f))
+                                (values[0], values[1], values[2], values[3]) = (v.X, v.Y, v.Z, v.W);
+                            break;
+                        }
+                    }
+                    if(changed)
+                        inst.Constants[cid] = values;
+                    if(ImGui.IsItemDeactivatedAfterEdit())
+                        apply = true;
+                    if(ImGui.IsItemClicked(ImGuiMouseButton.Right) && inst.Constants.Remove(cid))
+                        apply = true;
+                    if(inst.Constants.ContainsKey(cid))
+                    {
+                        ImGui.SameLine();
+                        ImGui.TextDisabled("(changed)");
+                    }
+                }
+                ImGui.TreePop();
             }
             if(apply)
                 KoiPropRuntime.Recolour(inst);

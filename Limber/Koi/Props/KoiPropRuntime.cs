@@ -31,6 +31,9 @@ public static unsafe class KoiPropRuntime
         public float Brightness = 1f, Contrast = 1f, Saturation = 1f, Shine = 0.16f, Roughness = 0.5f;
         public bool FlipFaces, FlipNormals; // fixes to try when it's lit wrongly
         public Vector3 Glow;                // how much it lights itself (0: not at all)
+        public float Bumps = 1f;            // how much of its own normal map (bumps) shows (0: smooth)
+        public bool BumpsFlipGreen = true;  // Unity's normal maps have green the other way up from the game's
+        public readonly Dictionary<uint, float[]> Constants = new(); // its materials' shader values, changed by hand
         public float DynamicsStrength = 1f;
         public string Path = "";
         public List<string> Files = new();
@@ -148,8 +151,19 @@ public static unsafe class KoiPropRuntime
             var px = KoiRig.Tint(material, inst.Colours[m]);
             Shade(px, inst.Brightness, inst.Contrast, inst.Saturation);
             files[tex] = TexWriter.Bgra(px, material.W, material.H);
-            files[mat] = MtrlBuilder.SetConstant(MtrlBuilder.With(mtrl, slots.Select(s => s == "d" ? tex : s == "n" ? KoiProps.FlatNormal : spec).ToList()),
+            // (its bumps: its own normal map, as strong as asked, else flat)
+            string normal = KoiProps.FlatNormal;
+            if(inst.Bumps > 0.001f && KoiRig.NormalMap(material, inst.Bumps, inst.BumpsFlipGreen) is { } bumps)
+            {
+                normal = $"{folder}/texture/koi_{inst.Key}_{m}_{tag}_n.tex";
+                files[normal] = TexWriter.Bgra(bumps, material.W, material.H);
+            }
+            var bytes = MtrlBuilder.SetConstant(MtrlBuilder.With(mtrl, slots.Select(s => s == "d" ? tex : s == "n" ? normal : spec).ToList()),
                 MtrlBuilder.EmissiveColor, [inst.Glow.X, inst.Glow.Y, inst.Glow.Z]);
+            foreach(var (id, values) in inst.Constants)
+                if(id != MtrlBuilder.EmissiveColor)
+                    bytes = MtrlBuilder.SetConstant(bytes, id, values);
+            files[mat] = bytes;
             materials.Add(mat);
         }
         string model = $"{folder}/bgparts/koi_{inst.Key}_{tag}.mdl";

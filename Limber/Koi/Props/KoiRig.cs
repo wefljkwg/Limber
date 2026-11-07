@@ -35,6 +35,7 @@ public sealed class KoiRig
         public byte[] Main = [];      // RGBA
         public byte[]? Mask;          // RGBA (same size): red, green, blue say where each colour goes
         public Vector4[] Colours = [Vector4.One, Vector4.One, Vector4.One];
+        public byte[]? Normal;        // RGB normal map (same size), from the item's own (null: none)
         public int Slots;             // how many colours it has (1 to 3)
     }
 
@@ -58,7 +59,7 @@ public sealed class KoiRig
 
     // ---- Saving (deflated binary)
 
-    private const int Version = 1;
+    private const int Version = 2;
 
     public void Save(string path)
     {
@@ -129,6 +130,9 @@ public sealed class KoiRig
             w.Write(m.Slots);
             foreach(var c in m.Colours)
                 W4(w, c);
+            w.Write(m.Normal?.Length ?? 0);
+            if(m.Normal != null)
+                w.Write(m.Normal);
         }
     }
 
@@ -139,7 +143,8 @@ public sealed class KoiRig
         using var file = File.OpenRead(path);
         using var z = new DeflateStream(file, CompressionMode.Decompress);
         using var r = new BinaryReader(z);
-        if(r.ReadInt32() != Version)
+        int version = r.ReadInt32();
+        if(version is < 1 or > Version)
             return null;
         var rig = new KoiRig();
         int meshes = r.ReadInt32();
@@ -190,6 +195,11 @@ public sealed class KoiRig
             m.Mask = mask > 0 ? r.ReadBytes(mask) : null;
             m.Slots = r.ReadInt32();
             m.Colours = [R4(r), R4(r), R4(r)];
+            if(version >= 2)
+            {
+                int normal = r.ReadInt32();
+                m.Normal = normal > 0 ? r.ReadBytes(normal) : null;
+            }
             rig.Materials.Add(m);
         }
         return rig;
@@ -221,6 +231,29 @@ public sealed class KoiRig
         r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle(),
         r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle(),
         r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+
+    /// <summary>
+    /// The material's normal map for the game, <paramref name="strength"/> of the way from flat to the item's own
+    /// (green flipped if <paramref name="flipGreen"/>), or null if it has none.
+    /// </summary>
+    public static byte[]? NormalMap(Material m, float strength, bool flipGreen)
+    {
+        if(m.Normal == null)
+            return null;
+        var px = new byte[m.W * m.H * 4];
+        for(int i = 0; i < m.W * m.H; i++)
+        {
+            float x = (m.Normal[i * 4] / 255f * 2f - 1f) * strength, y = (m.Normal[i * 4 + 1] / 255f * 2f - 1f) * strength;
+            if(flipGreen)
+                y = -y;
+            float z = MathF.Sqrt(MathF.Max(0f, 1f - x * x - y * y));
+            px[i * 4] = (byte)Math.Clamp((x * 0.5f + 0.5f) * 255f, 0f, 255f);
+            px[i * 4 + 1] = (byte)Math.Clamp((y * 0.5f + 0.5f) * 255f, 0f, 255f);
+            px[i * 4 + 2] = (byte)Math.Clamp((z * 0.5f + 0.5f) * 255f, 0f, 255f);
+            px[i * 4 + 3] = 255;
+        }
+        return px;
+    }
 
     // ---- Colours
 

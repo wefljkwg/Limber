@@ -513,6 +513,44 @@ public static class MtrlBuilder
         return Encoding.UTF8.GetString(b, at, (end < 0 ? b.Length : end) - at);
     }
 
+    /// <summary>Its shader constants: id and values (floats).</summary>
+    public static List<(uint Id, float[] Values)> Constants(byte[] b)
+    {
+        var list = new List<(uint, float[])>();
+        int texCount = b[12], uv = b[13], cs = b[14];
+        int dataSet = BitConverter.ToUInt16(b, 6), stringSize = BitConverter.ToUInt16(b, 8), additional = b[15];
+        int at = 16 + 4 * (texCount + uv + cs) + stringSize + additional + dataSet;
+        if(at + 12 > b.Length)
+            return list;
+        int valueSize = BitConverter.ToUInt16(b, at), keys = BitConverter.ToUInt16(b, at + 2), constants = BitConverter.ToUInt16(b, at + 4), samplers = BitConverter.ToUInt16(b, at + 6);
+        int constantsAt = at + 12 + keys * 8, valuesAt = constantsAt + constants * 8 + samplers * 12;
+        for(int c = 0; c < constants; c++)
+        {
+            int e = constantsAt + c * 8;
+            if(e + 8 > b.Length)
+                break;
+            uint id = BitConverter.ToUInt32(b, e);
+            int offset = BitConverter.ToUInt16(b, e + 4), size = BitConverter.ToUInt16(b, e + 6);
+            var values = new float[Math.Min(size / 4, 16)];
+            for(int k = 0; k < values.Length; k++)
+                if(valuesAt + offset + k * 4 + 4 <= b.Length && offset + k * 4 + 4 <= valueSize)
+                    values[k] = BitConverter.ToSingle(b, valuesAt + offset + k * 4);
+            list.Add((id, values));
+        }
+        return list;
+    }
+
+    /// <summary>Names for the shader constants Limber knows (others are shown by number).</summary>
+    public static string NameOf(uint id) => id switch
+    {
+        0x38A64362 => "Glow colour (emissive)",
+        0x2C2A34DD => "Diffuse colour",
+        0x141722D5 => "Specular colour",
+        0xD925FF32 => "Shadow alpha threshold",
+        0x29AC0223 => "Alpha threshold",
+        _ => $"0x{id:X8}",
+    };
+
     /// <summary>The material's emissive colour (how much it glows on its own), as the game's shaders call it.</summary>
     public const uint EmissiveColor = 0x38A64362;
 
