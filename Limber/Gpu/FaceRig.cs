@@ -62,7 +62,12 @@ public static unsafe class FaceRig
         public Pose? Last;
         public bool Clean = true;
         public float Scale = 1f;
+        public string File = "";
+        public int ByteWidth;
+        public int MorphVersion = -1;   // the face morphs' weights last written
     }
+
+    private static readonly Pose Rest = new(); // no offsets (for the face morphs on their own)
 
     private static State? _state;
     private static volatile Pose? _pose;
@@ -167,6 +172,14 @@ public static unsafe class FaceRig
         }
         var original = data.AsSpan((int)offset[lod], (int)size[lod]).ToArray();
         var skins = MdlRigger.Skin(data, lod);
+        try
+        {
+            FaceMorphs.Prepare(target.File, data, lod);
+        }
+        catch
+        {
+            // (no morphs on this face)
+        }
 
         // Every vertex of the face's meshes, with how much of it is each feature (from the face bones' weights).
         var all = new List<(int Mesh, int V, Vector3 P, float Up, float Down, float Corner, float Brow, float ULid, float DLid, float Cheek, float Skip)>();
@@ -371,7 +384,7 @@ public static unsafe class FaceRig
         }
         int found = (browL.Ok ? 1 : 0) + (browR.Ok ? 1 : 0) + (ulidL.Ok ? 1 : 0) + (ulidR.Ok ? 1 : 0) + (dlidL.Ok ? 1 : 0) + (dlidR.Ok ? 1 : 0) + (cheekL.Ok ? 1 : 0) + (cheekR.Ok ? 1 : 0);
         report = $"on, {moved} vertices rigged (lips {half * 200f:0.0} cm across; brows, lids and cheeks: {found} of 8 found).";
-        return new State { Target = target, Original = original, Work = (byte[])original.Clone(), Meshes = list, Scale = scale };
+        return new State { Target = target, Original = original, Work = (byte[])original.Clone(), Meshes = list, Scale = scale, File = target.File, ByteWidth = (int)size[lod] };
     }
 
     // ---- Every frame (render thread)
@@ -391,8 +404,12 @@ public static unsafe class FaceRig
                 return;
             }
             var pose = _pose;
+            bool morphs = FaceMorphs.Active && FaceMorphs.Wanted == state.Address;
+            if(pose == null && morphs)
+                pose = Rest;
             if(pose == null)
             {
+                state.MorphVersion = -1;
                 if(!state.Clean)
                 {
                     LiveMesh.Upload(buffer, state.Target.Desc, state.Original);
@@ -401,10 +418,14 @@ public static unsafe class FaceRig
                 }
                 return;
             }
-            if(ReferenceEquals(pose, state.Last))
+            int morphVersion = morphs ? FaceMorphs.Version : -1;
+            if(ReferenceEquals(pose, state.Last) && morphVersion == state.MorphVersion)
                 return;
             state.Last = pose;
+            state.MorphVersion = morphVersion;
             Buffer.BlockCopy(state.Original, 0, state.Work, 0, state.Original.Length);
+            if(morphs)
+                morphs = FaceMorphs.ApplyTo(state.Work, state.File, state.ByteWidth);
             var off = pose.Offsets;
             foreach(var mesh in state.Meshes)
             {
@@ -416,6 +437,8 @@ public static unsafe class FaceRig
                         move += off[c] * w;
                     if(move.LengthSquared() < 1e-14f)
                         continue;
+                    if(morphs)
+                        move += FaceMorphs.Delta(state.File, state.ByteWidth, layout.Mesh, mesh.Vertices[i]);
                     int pa = layout.PositionAt + mesh.Vertices[i] * layout.PositionStride;
                     if(pa + 12 <= state.Work.Length)
                         MdlRigger.WriteVector(state.Work, pa, layout.PositionType, mesh.Rest[i] + move);

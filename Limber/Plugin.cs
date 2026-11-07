@@ -77,6 +77,7 @@ public sealed class Plugin : IDalamudPlugin
     private GlobalPresetService? _globalPresets;
     private FacePosingTab? _faceTab;
     private readonly AhegaoService _ahegao;
+    private readonly FaceMorphService _faceMorphs;
     private TimelineService? _timeline;
     private FkPosingTab? _fkTab;
     private readonly Limber.BodyRig.HousingProps _housing;
@@ -139,6 +140,7 @@ public sealed class Plugin : IDalamudPlugin
             _ballThrob = new BallThrobService(ObjectTable, () => _config.Ik.BallThrob ??= new()) { PenisBeat = a => _throb.LevelOf(a) };
             // (Oral's mouth rig has the face while it's on; with it off, Ahegao shapes the face during Oral too)
             _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 && (_config.Ik.Oral?.MouthRig ?? true) };
+            _faceMorphs = new FaceMorphService(ObjectTable, () => _config.Ik.FaceMorphs ??= new(), _oral, _ahegao, () => _config.Ik.Ahegao ??= new());
             _lookAt = new LookAtService(ObjectTable, () => _config.Ik.LookAt ??= new()) { Skip = a => _oral.Follows(a) != 0 };
             _dynamicBones = new DynamicBoneService(ObjectTable, () => _config.Ik.DynamicBones ??= new()) { Skip = a => _oral.IsPartner(a) };
             _oral.Allowed = () => _config.PluginEnabled && _config.ShowOralTab && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);
@@ -338,7 +340,7 @@ public sealed class Plugin : IDalamudPlugin
             _freeze.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             Limber.BodyShape.BodyShapeBuild.SetWorkDir(PluginInterface.ConfigDirectory.FullName);
             _bodyShape.KeepFeet = () => _config.Ik.BodyShapeKeepFeet;
-            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
@@ -358,6 +360,7 @@ public sealed class Plugin : IDalamudPlugin
                 new HousingPropsTab(_housing, _selection));
             _mainWindow.BodyShapeTab = new BodyShapeTab(_selection, _config.Ik) { RigEverything = limberTab.RigEverything };
             _mainWindow.OralTab = new OralTab(_oral, _selection, _config.Ik);
+            _mainWindow.FaceMorphsTab = new FaceMorphsTab(_faceMorphs, _selection, _config.Ik);
             _mainWindow.AnimationsTab = new AnimationsTab(_selection);
             Favorites.Settings = _config.Ik;
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
@@ -597,6 +600,7 @@ public sealed class Plugin : IDalamudPlugin
                 _motions.Update(framework.UpdateDelta.TotalSeconds);
             perf.Mark("motions");
             _oral.Update(framework.UpdateDelta.TotalSeconds);
+            _faceMorphs.Update(framework.UpdateDelta.TotalSeconds);
             perf.Mark("oral");
             // Placed housing props: only while Limber runs here (removed when you leave GPose or turn it off).
             _housing.Update(here);
@@ -958,6 +962,7 @@ public sealed class Plugin : IDalamudPlugin
                 Limber.Gpu.LiveMesh.StopWobble();
                 Limber.Gpu.LipMesh.Stop();
                 Limber.Gpu.FaceRig.Stop();
+                Limber.Gpu.FaceMorphs.Clear();
                 Limber.Gpu.BustShapes.Stop();
             }
             _typing = ImGui.GetIO().WantTextInput;
@@ -1152,6 +1157,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Gpu.LiveRigInstances.Dispose();
         Limber.Gpu.LipMesh.Stop();
         Limber.Gpu.FaceRig.Stop();
+        Limber.Gpu.FaceMorphs.Clear();
         Limber.Gpu.BustShapes.Stop();
         Limber.Gpu.SkinCapture.Dispose();
         // Unhook first so nothing runs against the parts being torn down.

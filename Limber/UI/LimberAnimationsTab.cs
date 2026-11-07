@@ -48,6 +48,7 @@ public sealed class LimberAnimationsTab
         (AhegaoType.Exhausted, "Exhausted", "Heavy lids, slack jaw, the tongue hanging, the head drooping to one side, slow breaths."),
         (AhegaoType.Happy, "Happy", "Smiling eyes (lower lids up), corners well up, cheeks lifted."),
         (AhegaoType.Excited, "Excited", "Eyes wide and rolled up, brows high, mouth wide with a grin, fast breaths."),
+        (AhegaoType.Ohogao, "Ohogao (experimental)", "Eyes rolled up under knitted brows, the lips pushed out in a long tube, the face and nose drawn down, cheeks hollow. The lips, nose and cheeks are face morphs (the Face morphs page's shapes, shown with the face rig)."),
     ];
 
     private static readonly (TwerkStyle Style, string Name, string Tip)[] TwerkStyles =

@@ -347,6 +347,11 @@ public sealed unsafe class OralService
     /// <summary>The partner the mouth follows, for posing them first (so a posed shaft is where the head goes).</summary>
     public nint Follows(nint actor) => _running && actor == _giver ? _receiver : 0;
 
+    /// <summary>The mouth's stroke right now (for the face morphs): depth 0 (at the tip) to 1 (all the way), its speed
+    /// per second (+ going deeper), how big the shaft is for the mouth (0..1), and how far Oral has taken over (0..1).</summary>
+    public readonly record struct Mouth(nint Giver, float Depth, float Speed, float Big, float Blend);
+    public Mouth? MouthState => _running && _giver != 0 ? new Mouth(_giver, _depth, _depthSpeed, _bigness, _blend) : null;
+
     /// <summary>Whether this character is Oral's partner right now (its shaft is read as posed).</summary>
     public bool IsPartner(nint actor) => _running && actor == _receiver;
 

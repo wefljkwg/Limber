@@ -30,6 +30,7 @@ public sealed class MainWindow : Window
     public BodyShapeTab? BodyShapeTab { get; set; }
     /// <summary>The Oral page (set by the plugin).</summary>
     public OralTab? OralTab { get; set; }
+    public FaceMorphsTab? FaceMorphsTab { get; set; }
     public AnimationsTab? AnimationsTab { get; set; }
     public DynamicBonesTab? DynamicBonesTab { get; set; }
 
@@ -123,6 +124,7 @@ public sealed class MainWindow : Window
         new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
         new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis, a pregnant belly), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null && Cfg.ShowOralTab),
+        new("facemorphs", "Scene", "Face morphs", "Experimental: blend shapes on the face (lips stretched or in a tube, vacuum cheeks, nose, jaw, eyes), from Limber or imported from Virt-a-Mate and Koikatsu, driven by Oral (adult characters).", () => FaceMorphsTab?.Draw(), () => FaceMorphsTab != null && Cfg.ShowOralTab),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
         new("props", "Scene", "Housing props", "Place housing furniture around you in GPose, in sections by type.", () => _housingTab.Draw()),
         new("worldprops", "Scene", "World props", "Every prop the game world is built from (event objects, field objects, each region's props), in sections, to place around you.", () => WorldPropsTab?.Draw(), () => WorldPropsTab != null),

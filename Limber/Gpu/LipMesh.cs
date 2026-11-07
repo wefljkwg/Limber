@@ -94,6 +94,8 @@ public static unsafe class LipMesh
         public nint Replacement;
         public object? LastFrame;
         public long LastTicks;
+        public string File = "";
+        public int ByteWidth;
         public bool Clean = true; // the buffer holds the model's own vertices
     }
 
@@ -195,6 +197,14 @@ public static unsafe class LipMesh
             return null;
         var original = data.AsSpan((int)offset[lod], (int)size[lod]).ToArray();
         var skins = MdlRigger.Skin(data, lod);
+        try
+        {
+            FaceMorphs.Prepare(target.File, data, lod);
+        }
+        catch
+        {
+            // (no morphs on this face)
+        }
         var bones = new List<string>();
         int Slot(string name)
         {
@@ -406,7 +416,7 @@ public static unsafe class LipMesh
         }
         if(meshes.Count == 0)
             return null;
-        return new State { Target = target, Original = original, Work = (byte[])original.Clone(), Meshes = meshes, Bones = bones.ToArray(), FileData = data };
+        return new State { Target = target, Original = original, Work = (byte[])original.Clone(), Meshes = meshes, Bones = bones.ToArray(), FileData = data, File = target.File, ByteWidth = (int)size[lod] };
     }
 
     private static ushort[] WithShapes(ushort[] triangles, byte[] data, int lod, int mesh)
@@ -1134,6 +1144,8 @@ public static unsafe class LipMesh
         if(frame == null)
             return;
         Buffer.BlockCopy(state.Original, 0, state.Work, 0, state.Original.Length);
+        // (the face morphs first: the lips' own moves go on top of them)
+        bool morphs = FaceMorphs.Active && FaceMorphs.Wanted == state.Address && FaceMorphs.ApplyTo(state.Work, state.File, state.ByteWidth);
         foreach(var mesh in state.Meshes)
         {
             var layout = mesh.Layout;
@@ -1162,7 +1174,8 @@ public static unsafe class LipMesh
                 {
                     int pa = layout.PositionAt + v * layout.PositionStride;
                     if(pa + 12 <= state.Work.Length)
-                        MdlRigger.WriteVector(state.Work, pa, layout.PositionType, at);
+                        MdlRigger.WriteVector(state.Work, pa, layout.PositionType,
+                            morphs ? at + FaceMorphs.Delta(state.File, state.ByteWidth, layout.Mesh, v) : at);
                 }
             }
             if(!any || layout.NormalAt < 0 || layout.NormalType is not (2 or 3 or 14))

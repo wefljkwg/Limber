@@ -21,6 +21,7 @@ public enum AhegaoType
     Exhausted,
     Happy,
     Excited,
+    Ohogao,
 }
 
 /// <summary>One character's ahegao face (kept by name).</summary>
@@ -126,6 +127,8 @@ public sealed class AhegaoSettings
             AhegaoType.Exhausted =>   (16f, 2f, 0.75f, 0f, -0.15f, 0.3f, 0f, 16f, 0.5f, 0.3f, 45f, 0.05f, -0.15f, -4f, 8f, 0.5f, 0.05f),
             AhegaoType.Happy =>       (22f, 3f, 0.35f, 0.6f, 0.3f, 0.2f, 0f, 20f, 0.7f, 0.3f, 22f, 0.25f, 1f, 6f, 3f, 0.2f, 0.1f),
             AhegaoType.Excited =>     (30f, 5f, -0.4f, 0f, 0.9f, 0.3f, 0f, 28f, 0.85f, 0.4f, 20f, 0.45f, 0.7f, 10f, 0f, 0.6f, 0.3f),
+            // (the lips, nose and cheeks: the face morphs, see FaceMorphService.Ohogao)
+            AhegaoType.Ohogao =>      (34f, 4f, 0.35f, 0.3f, -0.2f, 0.1f, 0.9f, 7f, 0f, 0f, 0f, 0f, -0.3f, 7f, 0f, 0.35f, 0.4f),
             _ =>                      (28f, 4f, 0.3f, 0.1f, 0.4f, 0.5f, 0f, 22f, 0.7f, 0.3f, 25f, 0.2f, 0.3f, 8f, 0f, 0.3f, 0.2f),
         };
         (EyesUp, CrossEyes, Lids, LowerLids, Brows, BrowTilt, Furrow, MouthOpen) = (v.Item1, v.Item2, v.Item3, v.Item4, v.Item5, v.Item6, v.Item7, v.Item8);
@@ -224,6 +227,11 @@ public sealed unsafe class AhegaoService
                 want = address;
                 break;
             }
+        // (the face morphs show through the face rig too: it's started for them when nothing else has the face)
+        var morphOwner = Limber.Gpu.FaceMorphs.Wanted;
+        if(want == 0 && morphOwner != 0 && Limber.Gpu.FaceMorphs.Active
+           && !(Limber.Gpu.LipMesh.Running && Limber.Gpu.LipMesh.Owner == morphOwner))
+            want = morphOwner;
         if(want == 0)
         {
             if(Limber.Gpu.FaceRig.Running)

@@ -132,6 +132,11 @@ public sealed class RigSettings
     /// <summary>Ahegao face (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.AhegaoSettings> Ahegao { get; set; } = new();
 
+    /// <summary>Face morphs (experimental, Face morphs page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.FaceMorphSettings> FaceMorphs { get; set; } = new();
+    /// <summary>Virt-a-Mate's folder (the one with VaM.exe), for importing its morphs.</summary>
+    public string? VamFolder { get; set; }
+
     /// <summary>Expansion (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.ExpansionSettings> Expansion { get; set; } = new();
 
