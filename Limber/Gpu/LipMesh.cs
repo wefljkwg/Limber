@@ -170,6 +170,18 @@ public static unsafe class LipMesh
     /// The face model's vertex buffers in the order to try them: its closest-up level of detail first (the one drawn
     /// near the camera). Each level has its own buffer; writing a far one shows nothing up close.
     /// </summary>
+    /// <summary>
+    /// Which of a model's levels of detail a vertex buffer of this size holds (-1: none). The game rounds a buffer up
+    /// to whole 128 bytes, so a model whose block isn't (a modded one, written exactly) is matched that way too.
+    /// </summary>
+    internal static int LodOf(uint[] size, uint byteWidth)
+    {
+        int lod = Array.FindIndex(size, x => x == byteWidth);
+        if(lod < 0)
+            lod = Array.FindIndex(size, x => x > 0 && (x + 127) / 128 * 128 == byteWidth);
+        return lod;
+    }
+
     internal static List<LiveMesh.Found> NearestFirst(IEnumerable<LiveMesh.Found> found, Func<string, byte[]?> readFile)
     {
         var sizes = new Dictionary<string, uint[]>();
@@ -188,7 +200,7 @@ public static unsafe class LipMesh
                 }
                 sizes[f.File] = size;
             }
-            int lod = Array.FindIndex(size, x => x == f.Desc.ByteWidth);
+            int lod = LodOf(size, f.Desc.ByteWidth);
             return lod < 0 ? 99 : lod;
         }
         return found.OrderBy(Lod).ToList();
@@ -220,10 +232,12 @@ public static unsafe class LipMesh
         if(data == null)
             return null;
         var (offset, size, layouts) = MdlRigger.Layout(data);
-        int lod = Array.FindIndex(size, s => s == target.Desc.ByteWidth);
+        int lod = LodOf(size, target.Desc.ByteWidth);
         if(lod < 0)
             return null;
         var original = data.AsSpan((int)offset[lod], (int)size[lod]).ToArray();
+        if(original.Length < target.Desc.ByteWidth)
+            Array.Resize(ref original, (int)target.Desc.ByteWidth); // (the game's buffer is rounded up)
         var skins = MdlRigger.Skin(data, lod);
         try
         {

@@ -174,13 +174,15 @@ public static unsafe class FaceRig
             return null;
         }
         var (offset, size, layouts) = MdlRigger.Layout(data);
-        int lod = Array.FindIndex(size, s => s == target.Desc.ByteWidth);
+        int lod = LipMesh.LodOf(size, target.Desc.ByteWidth);
         if(lod < 0)
         {
             report = $"the face model drawn isn't the one on file (its levels of detail: {string.Join(", ", size)} bytes).";
             return null;
         }
         var original = data.AsSpan((int)offset[lod], (int)size[lod]).ToArray();
+        if(original.Length < target.Desc.ByteWidth)
+            Array.Resize(ref original, (int)target.Desc.ByteWidth); // (the game's buffer is rounded up)
         var skins = MdlRigger.Skin(data, lod);
         try
         {
