@@ -299,6 +299,22 @@ public sealed partial class LimberTab
             _config.ShowHandles = showHandles;
             _config.Save();
         }
+        ImGui.SameLine();
+        int mode = Math.Clamp(_config.HandleMode, 0, 2);
+        string[] modes = ["Auto", "IK", "FK"];
+        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        if(ImGui.BeginCombo("Handles###limber_handle_mode", modes[mode]))
+        {
+            for(int i = 0; i < modes.Length; i++)
+                if(ImGui.Selectable($"{modes[i]}###limber_handle_mode_{i}", i == mode))
+                {
+                    _config.HandleMode = i;
+                    _config.Save();
+                }
+            ImGui.EndCombo();
+        }
+        Tooltip("What dragging a handle does.\nIK: moves the bone and bends the limb to follow (IK posing).\n"
+            + "FK: turns that bone itself, with a turning gizmo (FK posing).\nAuto: FK while the FK Posing page is open, IK otherwise.");
     }
 
     // ---- Hotkeys tab (main tab bar)

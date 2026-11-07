@@ -14,6 +14,8 @@ public sealed class RigSettings
     public bool WorkOutsideGPose { get; set; } = true;
 
     public bool ShowHandles { get; set; } = true;
+    /// <summary>What the handles do: 0 = as the open page says (FK on the FK Posing page, IK otherwise), 1 = IK, 2 = FK.</summary>
+    public int HandleMode { get; set; }
     public bool ShowAllBones { get; set; } = false;
     public bool ShowFaceBones { get; set; } = false;
     /// <summary>Dots / list entries for the physics rig's bones (breast, butt, testicle lattices); off by default.</summary>

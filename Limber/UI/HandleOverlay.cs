@@ -64,7 +64,8 @@ public sealed class HandleOverlay
     /// <summary>The FK Posing page: while it's showing, dots only pick bones and the gizmo turns them with FK.</summary>
     public FkPosingTab? FkEditor { get; set; }
 
-    private bool FkMode => FkEditor?.Showing == true;
+    // FK handles: when chosen (Handles: FK), or on the FK Posing page when left to the page (Handles: Auto).
+    private bool FkMode => FkEditor != null && (_config.HandleMode == 2 || (_config.HandleMode == 0 && FkEditor.Showing));
 
     private bool Posing => _config.Enabled && _config.ShowHandles && _rigs.IsActive;
 
