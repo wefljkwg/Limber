@@ -241,13 +241,16 @@ public static unsafe class Animations
     private static readonly List<Pending> Restarts = new();
 
     /// <summary>The characters Limber has played something on (still there).</summary>
-    public static IEnumerable<(nint Address, ushort Index)> PlayedOn()
+    public static List<(nint Address, ushort Index)> PlayedOn()
     {
+        // (a list, not an iterator: iterators can't look at the game's objects)
+        var list = new List<(nint, ushort)>();
         foreach(var (address, (index, _)) in Played.ToArray())
             if(Get(address, index) != null)
-                yield return (address, index);
+                list.Add((address, index));
             else
                 Played.Remove(address);
+        return list;
     }
 
     public static ushort PlayedId(nint address) => Played.TryGetValue(address, out var p) ? p.Id : (ushort)0;
