@@ -218,7 +218,98 @@ public static unsafe class Animations
             Before[address] = c->Timeline.TimelineSequencer.TimelineIds[0];
         c->Timeline.BaseOverride = id;
         c->Timeline.TimelineSequencer.PlayTimeline(id);
+        Played[address] = (index, id);
         return $"Playing {KeyOf(id)}.";
+    }
+
+    // ---- Playing again, pausing, resuming (Animations page)
+
+    /// <summary>What Limber last played on each character (to play again from the start).</summary>
+    private static readonly Dictionary<nint, (ushort Index, ushort Id)> Played = new();
+    private static readonly Dictionary<nint, ushort> Paused = new();
+
+    /// <summary>Characters paused or frozen here.</summary>
+    public static IEnumerable<(nint Address, ushort Index)> PausedOn() => Paused.Select(p => (p.Key, p.Value)).ToList();
+    private sealed class Pending
+    {
+        public nint Address;
+        public ushort Index, Id;
+        public int Frames;
+        public bool Frozen;
+        public float Speed;
+    }
+    private static readonly List<Pending> Restarts = new();
+
+    /// <summary>The characters Limber has played something on (still there).</summary>
+    public static IEnumerable<(nint Address, ushort Index)> PlayedOn()
+    {
+        foreach(var (address, (index, _)) in Played.ToArray())
+            if(Get(address, index) != null)
+                yield return (address, index);
+            else
+                Played.Remove(address);
+    }
+
+    public static ushort PlayedId(nint address) => Played.TryGetValue(address, out var p) ? p.Id : (ushort)0;
+
+    public static bool IsPaused(nint address) => Paused.ContainsKey(address);
+
+    /// <summary>
+    /// From the beginning: back to the plain standing idle for a couple of frames (so it starts fresh, not blended
+    /// from where it was), then the animation played from its first frame (and held there if <paramref name="frozen"/>).
+    /// </summary>
+    public static string Restart(nint address, ushort index, ushort id, bool frozen, float speed)
+    {
+        var c = Get(address, index);
+        if(c == null)
+            return "The character isn't there.";
+        if(!Before.ContainsKey(address))
+            Before[address] = c->Timeline.TimelineSequencer.TimelineIds[0];
+        c->Timeline.BaseOverride = 0;
+        c->Timeline.TimelineSequencer.SetSlotSpeed(0, 1f);
+        c->Timeline.TimelineSequencer.SetSlotSpeed(1, 1f);
+        c->Timeline.TimelineSequencer.PlayTimeline(3);
+        Restarts.RemoveAll(r => r.Address == address);
+        Restarts.Add(new Pending { Address = address, Index = index, Id = id, Frames = 2, Frozen = frozen, Speed = speed });
+        Played[address] = (index, id);
+        return frozen ? $"Starting {KeyOf(id)} (held on its first frame)." : $"Playing {KeyOf(id)} from the start.";
+    }
+
+    public static void Pause(nint address, ushort index)
+    {
+        SetSpeed(address, index, 0f);
+        Paused[address] = index;
+    }
+
+    public static void Resume(nint address, ushort index, float speed)
+    {
+        SetSpeed(address, index, speed <= 0f ? 1f : speed);
+        Paused.Remove(address);
+    }
+
+    /// <summary>Framework update: the restarts waiting their frames.</summary>
+    public static void Tick()
+    {
+        for(int i = Restarts.Count - 1; i >= 0; i--)
+        {
+            var p = Restarts[i];
+            if(--p.Frames > 0)
+                continue;
+            Restarts.RemoveAt(i);
+            var c = Get(p.Address, p.Index);
+            if(c == null)
+                continue;
+            c->Timeline.BaseOverride = p.Id;
+            c->Timeline.TimelineSequencer.PlayTimeline(p.Id);
+            Seek(p.Address, p.Index, 0f);
+            if(p.Frozen)
+                Pause(p.Address, p.Index);
+            else
+            {
+                SetSpeed(p.Address, p.Index, p.Speed <= 0f ? 1f : p.Speed);
+                Paused.Remove(p.Address);
+            }
+        }
     }
 
     /// <summary>Back to what the character was doing before Limber played anything.</summary>
@@ -230,6 +321,9 @@ public static unsafe class Animations
         c->Timeline.BaseOverride = 0;
         ushort back = Before.GetValueOrDefault(address, (ushort)3);
         Before.Remove(address);
+        Played.Remove(address);
+        Paused.Remove(address);
+        Restarts.RemoveAll(r => r.Address == address);
         c->Timeline.TimelineSequencer.PlayTimeline(back == 0 ? (ushort)3 : back);
         SetSpeed(address, index, 1f);
         return "Back to its own animation.";

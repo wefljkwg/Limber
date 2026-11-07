@@ -575,6 +575,7 @@ public sealed class Plugin : IDalamudPlugin
             var perf = new Limber.Core.Perf.Clock("framework");
             lock(FaceDriver.PresetLock)
                 _config.SaveIfDue();
+            Limber.Rig.Animations.Tick();
             _props.ApplyResults();
             perf.Mark("prop results");
             _actors.CheckPriorityHook();

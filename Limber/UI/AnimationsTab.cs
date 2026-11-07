@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
 using Limber.Rig;
 
 namespace Limber.UI;
@@ -17,6 +18,7 @@ public sealed class AnimationsTab
     private string _kind = "";
     private int _race = -1; // index into Animations.Races; -1 = the character's own
     private float _speed = 1f;
+    private bool _startFrozen;
     private string _status = "";
 
     public AnimationsTab(Selection selection) => _selection = selection;
@@ -54,6 +56,62 @@ public sealed class AnimationsTab
             Animations.SetSpeed(actor.Address, actor.ObjectIndex, _speed);
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("How fast it plays (0 = paused on this frame).");
+
+        // Start frozen; play again from the start, pause, resume: this character or every one Limber played on.
+        ImGui.Checkbox("Start frozen###anim_start_frozen", ref _startFrozen);
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Animations picked below (and Play / Play all) start held on their first frame. Resume to set them going.");
+        ImGui.SameLine();
+        ushort mine = Animations.PlayedId(actor.Address);
+        using(ImRaii.Disabled(mine == 0))
+        {
+            if(ImGui.Button("Play###anim_play"))
+                _status = Animations.Restart(actor.Address, actor.ObjectIndex, mine, _startFrozen, _speed);
+            if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(mine == 0 ? "Pick an animation below first." : $"{Animations.KeyOf(mine)} from the start: back to standing, then played fresh.");
+        }
+        ImGui.SameLine();
+        if(ImGui.Button("Play all###anim_play_all"))
+        {
+            int n = 0;
+            foreach(var (address, index) in Animations.PlayedOn().ToList())
+            {
+                Animations.Restart(address, index, Animations.PlayedId(address), _startFrozen, _speed);
+                n++;
+            }
+            _status = n == 0 ? "Nothing played on anyone yet." : $"{n} character(s) playing from the start, together.";
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Every character Limber played an animation on: all from the start at once (in sync).");
+        ImGui.SameLine();
+        if(ImGui.Button("Pause###anim_pause"))
+            Animations.Pause(actor.Address, actor.ObjectIndex);
+        ImGui.SameLine();
+        if(ImGui.Button("Pause all###anim_pause_all"))
+        {
+            Animations.Pause(actor.Address, actor.ObjectIndex);
+            foreach(var (address, index) in Animations.PlayedOn().ToList())
+                Animations.Pause(address, index);
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("This character and every one Limber played an animation on.");
+        ImGui.SameLine();
+        if(ImGui.Button("Resume###anim_resume"))
+            Animations.Resume(actor.Address, actor.ObjectIndex, _speed);
+        ImGui.SameLine();
+        if(ImGui.Button("Resume all###anim_resume_all"))
+        {
+            Animations.Resume(actor.Address, actor.ObjectIndex, _speed);
+            foreach(var (address, index) in Animations.PlayedOn().Concat(Animations.PausedOn()).ToList())
+                Animations.Resume(address, index, _speed);
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Every paused or frozen one carries on from where it is.");
+        if(Animations.IsPaused(actor.Address))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("(paused)");
+        }
 
         // Which race's version.
         ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
@@ -161,8 +219,15 @@ public sealed class AnimationsTab
                     _status = _race < 0
                         ? Animations.Play(actor.Address, actor.ObjectIndex, e.Id)
                         : Animations.PlayAsRace(actor.Address, actor.ObjectIndex, e.Id, Animations.Races[_race].Body);
-                    if(_speed != 1f)
-                        Animations.SetSpeed(actor.Address, actor.ObjectIndex, _speed);
+                    if(_startFrozen)
+                    {
+                        Animations.Seek(actor.Address, actor.ObjectIndex, 0f);
+                        Animations.Pause(actor.Address, actor.ObjectIndex);
+                    }
+                    else
+                    {
+                        Animations.Resume(actor.Address, actor.ObjectIndex, _speed);
+                    }
                 }
                 // The icon, or a plain tile for animations that aren't an emote.
                 var iconMin = start + new System.Numerics.Vector2(4f * scale, 4f * scale);
