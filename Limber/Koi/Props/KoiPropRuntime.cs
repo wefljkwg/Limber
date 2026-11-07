@@ -78,8 +78,16 @@ public static unsafe class KoiPropRuntime
 
     public static Instance? For(Guid prop) => Instances.TryGetValue(prop, out var i) ? i : null;
 
+    private static readonly Dictionary<string, DateTime> RigTimes = new();
+
     private static KoiRig? RigOf(string key)
     {
+        // (read again when its file has changed since, e.g. re-converted or edited by hand)
+        var path = KoiProps.RigPath(key);
+        var time = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+        if(RigTimes.TryGetValue(key, out var seen) && seen != time)
+            Rigs.Remove(key);
+        RigTimes[key] = time;
         if(!Rigs.TryGetValue(key, out var rig))
         {
             try
