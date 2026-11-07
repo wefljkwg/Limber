@@ -30,6 +30,7 @@ public static unsafe class KoiPropRuntime
         // How it's shaded (made into its textures): brightness, contrast, colour strength, and its shine.
         public float Brightness = 1f, Contrast = 1f, Saturation = 1f, Shine = 0.16f, Roughness = 0.5f;
         public bool FlipFaces, FlipNormals; // fixes to try when it's lit wrongly
+        public Vector3 Glow;                // how much it lights itself (0: not at all)
         public float DynamicsStrength = 1f;
         public string Path = "";
         public List<string> Files = new();
@@ -147,7 +148,8 @@ public static unsafe class KoiPropRuntime
             var px = KoiRig.Tint(material, inst.Colours[m]);
             Shade(px, inst.Brightness, inst.Contrast, inst.Saturation);
             files[tex] = TexWriter.Bgra(px, material.W, material.H);
-            files[mat] = MtrlBuilder.With(mtrl, slots.Select(s => s == "d" ? tex : s == "n" ? KoiProps.FlatNormal : spec).ToList());
+            files[mat] = MtrlBuilder.SetConstant(MtrlBuilder.With(mtrl, slots.Select(s => s == "d" ? tex : s == "n" ? KoiProps.FlatNormal : spec).ToList()),
+                MtrlBuilder.EmissiveColor, [inst.Glow.X, inst.Glow.Y, inst.Glow.Z]);
             materials.Add(mat);
         }
         string model = $"{folder}/bgparts/koi_{inst.Key}_{tag}.mdl";

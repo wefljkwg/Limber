@@ -513,6 +513,62 @@ public static class MtrlBuilder
         return Encoding.UTF8.GetString(b, at, (end < 0 ? b.Length : end) - at);
     }
 
+    /// <summary>The material's emissive colour (how much it glows on its own), as the game's shaders call it.</summary>
+    public const uint EmissiveColor = 0x38A64362;
+
+    /// <summary>
+    /// A shader constant set (added if the material hasn't got it): after the strings, extra data and colour table come
+    /// the shader settings (sizes and counts, 12 bytes), its keys (8 bytes each), constants (id, offset, size: 8 bytes
+    /// each), samplers (12 bytes each), and the constants' values.
+    /// </summary>
+    public static byte[] SetConstant(byte[] b, uint id, float[] values)
+    {
+        int texCount = b[12], uv = b[13], cs = b[14];
+        int dataSet = BitConverter.ToUInt16(b, 6), stringSize = BitConverter.ToUInt16(b, 8), additional = b[15];
+        int at = 16 + 4 * (texCount + uv + cs) + stringSize + additional + dataSet;
+        if(at + 12 > b.Length)
+            return b;
+        int valueSize = BitConverter.ToUInt16(b, at), keys = BitConverter.ToUInt16(b, at + 2), constants = BitConverter.ToUInt16(b, at + 4), samplers = BitConverter.ToUInt16(b, at + 6);
+        int keysAt = at + 12, constantsAt = keysAt + keys * 8, samplersAt = constantsAt + constants * 8, valuesAt = samplersAt + samplers * 12;
+        if(valuesAt + valueSize > b.Length)
+            return b;
+        for(int c = 0; c < constants; c++)
+        {
+            int e = constantsAt + c * 8;
+            if(BitConverter.ToUInt32(b, e) != id)
+                continue;
+            int offset = BitConverter.ToUInt16(b, e + 4), size = BitConverter.ToUInt16(b, e + 6);
+            var copy = (byte[])b.Clone();
+            for(int k = 0; k < values.Length && k * 4 + 4 <= size; k++)
+                BitConverter.TryWriteBytes(copy.AsSpan(valuesAt + offset + k * 4), values[k]);
+            return copy;
+        }
+        // (not there: added, its values at the end of the others)
+        var o = new MemoryStream();
+        o.Write(b, 0, at);
+        var w = new BinaryWriter(o);
+        w.Write((ushort)(valueSize + values.Length * 4));
+        w.Write((ushort)keys);
+        w.Write((ushort)(constants + 1));
+        w.Write((ushort)samplers);
+        o.Write(b, at + 8, 4);
+        o.Write(b, keysAt, keys * 8);
+        o.Write(b, constantsAt, constants * 8);
+        w.Write(id);
+        w.Write((ushort)valueSize);
+        w.Write((ushort)(values.Length * 4));
+        o.Write(b, samplersAt, samplers * 12);
+        o.Write(b, valuesAt, valueSize);
+        foreach(var v in values)
+            w.Write(v);
+        int rest = valuesAt + valueSize;
+        if(rest < b.Length)
+            o.Write(b, rest, b.Length - rest);
+        var file = o.ToArray();
+        BitConverter.TryWriteBytes(file.AsSpan(4), (ushort)Math.Min(file.Length, 0xFFFF));
+        return file;
+    }
+
     /// <summary>The template with its textures swapped (same number, same order).</summary>
     public static byte[] With(byte[] b, IReadOnlyList<string> textures)
     {

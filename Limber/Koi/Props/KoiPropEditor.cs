@@ -79,6 +79,13 @@ internal static class KoiPropEditor
             Slider("Colour strength###koi_sat", ref inst.Saturation, 0f, 2f, "Greyer (0) to more vivid.");
             Slider("Shine###koi_shine", ref inst.Shine, 0f, 1f, "How much light it reflects (0: matte).");
             Slider("Roughness###koi_rough", ref inst.Roughness, 0f, 1f, "Sharp highlights (low) or soft, spread ones (high).");
+            var glow = inst.Glow;
+            if(ImGui.ColorEdit3("Glow###koi_glow", ref glow, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.HDR | ImGuiColorEditFlags.Float))
+                inst.Glow = glow;
+            if(ImGui.IsItemDeactivatedAfterEdit())
+                apply = true;
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Light it gives off on its own (black: none, so the scene lights it). Put on when you let go.");
             bool faces = inst.FlipFaces, normals = inst.FlipNormals;
             if(ImGui.Checkbox("Turn faces round###koi_flip_faces", ref faces))
             {
@@ -98,6 +105,7 @@ internal static class KoiPropEditor
             if(ImGui.SmallButton("Default shading###koi_shading_def"))
             {
                 (inst.Brightness, inst.Contrast, inst.Saturation, inst.Shine, inst.Roughness) = (1f, 1f, 1f, 0.16f, 0.5f);
+                inst.Glow = Vector3.Zero;
                 apply = true;
             }
             if(apply)

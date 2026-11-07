@@ -749,7 +749,8 @@ public static class KoiProps
             rig.Materials.Add(material);
             files[tex] = TexWriter.Bgra(KoiRig.Tint(material, material.Colours), material.W, material.H);
             var textures = slots.Select(s => s == "d" ? tex : s == "n" ? flatNormal : plainSpec).ToList();
-            files[mat] = MtrlBuilder.With(mtrl, textures);
+            // (no glow of its own: the game's furnishing it's made like may light itself)
+            files[mat] = MtrlBuilder.SetConstant(MtrlBuilder.With(mtrl, textures), MtrlBuilder.EmissiveColor, [0f, 0f, 0f]);
             materialPaths.Add(mat);
         }
         rig.Meshes = order.Select(o => byMaterial[o]).ToList();
