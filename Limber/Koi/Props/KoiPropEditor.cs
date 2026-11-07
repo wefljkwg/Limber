@@ -60,6 +60,35 @@ internal static class KoiPropEditor
             ImGui.TreePop();
         }
 
+        // Shading (Koikatsu's are drawn toon-shaded; the game lights them as it does everything, so some come out too
+        // bright or flat): put into its textures, like the colours.
+        if(ImGui.TreeNodeEx("Shading###koi_shading", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            bool apply = false;
+            void Slider(string label, ref float value, float min, float max, string tip)
+            {
+                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                ImGui.SliderFloat(label, ref value, min, max, "%.2f");
+                if(ImGui.IsItemDeactivatedAfterEdit())
+                    apply = true;
+                if(ImGui.IsItemHovered())
+                    ImGui.SetTooltip(tip + " (Put on when you let go.)");
+            }
+            Slider("Brightness###koi_bright", ref inst.Brightness, 0.1f, 1.5f, "Darker or lighter: lower it for props that look far too bright.");
+            Slider("Contrast###koi_contrast", ref inst.Contrast, 0.3f, 2f, "Flatter or punchier.");
+            Slider("Colour strength###koi_sat", ref inst.Saturation, 0f, 2f, "Greyer (0) to more vivid.");
+            Slider("Shine###koi_shine", ref inst.Shine, 0f, 1f, "How much light it reflects (0: matte).");
+            Slider("Roughness###koi_rough", ref inst.Roughness, 0f, 1f, "Sharp highlights (low) or soft, spread ones (high).");
+            if(ImGui.SmallButton("Default shading###koi_shading_def"))
+            {
+                (inst.Brightness, inst.Contrast, inst.Saturation, inst.Shine, inst.Roughness) = (1f, 1f, 1f, 0.16f, 0.5f);
+                apply = true;
+            }
+            if(apply)
+                KoiPropRuntime.Recolour(inst);
+            ImGui.TreePop();
+        }
+
         // Blend shapes.
         var shapes = rig.ShapeNames.ToList();
         if(shapes.Count > 0 && ImGui.TreeNodeEx($"Shapes ({shapes.Count})###koi_shapes", ImGuiTreeNodeFlags.DefaultOpen))

@@ -27,6 +27,8 @@ public static unsafe class KoiPropRuntime
         public readonly Dictionary<string, float> Shapes = new();
         public Vector3[] Turn = [];          // each bone, degrees (yaw, pitch, roll) on top of how it rests
         public bool Dynamics = true;
+        // How it's shaded (made into its textures): brightness, contrast, colour strength, and its shine.
+        public float Brightness = 1f, Contrast = 1f, Saturation = 1f, Shine = 0.16f, Roughness = 0.5f;
         public float DynamicsStrength = 1f;
         public string Path = "";
         public List<string> Files = new();
@@ -132,13 +134,19 @@ public static unsafe class KoiPropRuntime
         Directory.CreateDirectory(dir);
         var files = new Dictionary<string, byte[]>();
         var materials = new List<string>();
+        // (its own shine: the specular texture's strength, and how rough the surface is)
+        string spec = $"{folder}/texture/koi_{inst.Key}_{tag}_s.tex";
+        byte shine = (byte)Math.Clamp(inst.Shine * 255f, 0f, 255f), rough = (byte)Math.Clamp(inst.Roughness * 255f, 0f, 255f);
+        files[spec] = TexWriter.Solid(shine, rough, shine, 255);
         for(int m = 0; m < inst.Rig.Materials.Count; m++)
         {
             var material = inst.Rig.Materials[m];
             string tex = $"{folder}/texture/koi_{inst.Key}_{m}_{tag}_d.tex";
             string mat = $"{folder}/material/koi_{inst.Key}_{m}_{tag}.mtrl";
-            files[tex] = TexWriter.Bgra(KoiRig.Tint(material, inst.Colours[m]), material.W, material.H);
-            files[mat] = MtrlBuilder.With(mtrl, slots.Select(s => s == "d" ? tex : s == "n" ? KoiProps.FlatNormal : KoiProps.PlainSpecular).ToList());
+            var px = KoiRig.Tint(material, inst.Colours[m]);
+            Shade(px, inst.Brightness, inst.Contrast, inst.Saturation);
+            files[tex] = TexWriter.Bgra(px, material.W, material.H);
+            files[mat] = MtrlBuilder.With(mtrl, slots.Select(s => s == "d" ? tex : s == "n" ? KoiProps.FlatNormal : spec).ToList());
             materials.Add(mat);
         }
         string model = $"{folder}/bgparts/koi_{inst.Key}_{tag}.mdl";
@@ -167,6 +175,24 @@ public static unsafe class KoiPropRuntime
         inst.Dirty = true;
         inst.Settled = false;
         return true;
+    }
+
+    // Brightness, contrast and colour strength into a texture's pixels (RGBA).
+    private static void Shade(byte[] px, float brightness, float contrast, float saturation)
+    {
+        if(brightness == 1f && contrast == 1f && saturation == 1f)
+            return;
+        for(int i = 0; i + 3 < px.Length; i += 4)
+        {
+            var c = new Vector3(px[i], px[i + 1], px[i + 2]) / 255f;
+            float grey = Vector3.Dot(c, new Vector3(0.299f, 0.587f, 0.114f));
+            c = Vector3.Lerp(new Vector3(grey), c, saturation);
+            c = (c - new Vector3(0.5f)) * contrast + new Vector3(0.5f);
+            c *= brightness;
+            px[i] = (byte)Math.Clamp(c.X * 255f + 0.5f, 0f, 255f);
+            px[i + 1] = (byte)Math.Clamp(c.Y * 255f + 0.5f, 0f, 255f);
+            px[i + 2] = (byte)Math.Clamp(c.Z * 255f + 0.5f, 0f, 255f);
+        }
     }
 
     /// <summary>Its colours changed: made again with them (framework thread).</summary>
