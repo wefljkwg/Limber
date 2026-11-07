@@ -17,6 +17,9 @@ public sealed class CameraTab
     private readonly RigSettings _config;
     private string _shotName = "";
 
+    /// <summary>The chosen character's facing (radians), for "Look from" (null: none).</summary>
+    public Func<float?>? CharacterYaw { get; set; }
+
     public CameraTab(RigSettings config)
     {
         _config = config;
@@ -33,23 +36,57 @@ public sealed class CameraTab
             return;
         }
 
+        // Everything back as the game has it.
+        if(ImGui.Button("Reset camera###cam_reset_all"))
+        {
+            _config.CameraOffset = Vector3.Zero;
+            _config.Save();
+            CameraControl.Reset();
+        }
+        Tooltip("Back to the game's usual distance, field of view, height and angle, and Limber's move off its place undone.\n"
+            + "(The limits stay as they are: turn Unlock off for the game's own.)");
+
         bool unlock = _config.CameraUnlock;
         if(ImGui.Checkbox("Unlock the camera's limits###cam_unlock", ref unlock))
         {
             _config.CameraUnlock = unlock;
             _config.Save();
         }
-        Tooltip("Closer and further than the game allows, looking straight up or down, and a wider / narrower field of view.");
-        if(_config.CameraUnlock)
+        Tooltip("Closer and further than the game allows, looking straight up or down, and a wider / narrower field of view.\n"
+            + "Off: the camera's own limits come back exactly as the game had them (and the zoom is brought back inside them).");
+        if(_config.CameraUnlock && ImGui.TreeNode("Unlocked limits###cam_limits"))
         {
-            ImGui.SameLine();
-            float far = _config.CameraMaxDistance;
-            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
-            if(ImGui.SliderFloat("Furthest###cam_far", ref far, 5f, 200f, "%.0f"))
+            bool edit = false;
+            float near = _config.CameraMinDistance, far = _config.CameraMaxDistance;
+            float fMin = _config.CameraMinFoV, fMax = _config.CameraMaxFoV, pMin = _config.CameraMinPitch, pMax = _config.CameraMaxPitch;
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            edit |= ImGui.SliderFloat("Closest###cam_near", ref near, 0.05f, 5f, "%.2f");
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            edit |= ImGui.SliderFloat("Furthest###cam_far", ref far, 5f, 500f, "%.0f", ImGuiSliderFlags.Logarithmic);
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            edit |= ImGui.SliderFloat("Narrowest view###cam_fmin", ref fMin, 0.01f, 0.69f, "%.2f");
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            edit |= ImGui.SliderFloat("Widest view###cam_fmax", ref fMax, 0.78f, 3f, "%.2f");
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            edit |= ImGui.SliderFloat("Furthest down###cam_pmin", ref pMin, -89.5f, 0f, "%.0f°");
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            edit |= ImGui.SliderFloat("Furthest up###cam_pmax", ref pMax, 0f, 89.5f, "%.0f°");
+            if(edit)
             {
-                _config.CameraMaxDistance = far;
+                (_config.CameraMinDistance, _config.CameraMaxDistance) = (near, far);
+                (_config.CameraMinFoV, _config.CameraMaxFoV, _config.CameraMinPitch, _config.CameraMaxPitch) = (fMin, fMax, pMin, pMax);
                 _config.Save();
             }
+            if(ImGui.SmallButton("Default unlocked limits###cam_limits_def"))
+            {
+                (_config.CameraMinDistance, _config.CameraMaxDistance) = (0.1f, 60f);
+                (_config.CameraMinFoV, _config.CameraMaxFoV, _config.CameraMinPitch, _config.CameraMaxPitch) = (0.05f, 1.6f, -89f, 89f);
+                _config.Save();
+            }
+            var own = CameraControl.Own();
+            ImGui.TextDisabled($"The game's own: {own.MinDistance:0.0} to {own.MaxDistance:0} away, view {own.MinFoV:0.00} to {own.MaxFoV:0.00}, "
+                + $"{own.MinPitch * Deg:0}° to {own.MaxPitch * Deg:0}°.");
+            ImGui.TreePop();
         }
 
         bool through = _config.CameraNoCollide;
@@ -88,7 +125,9 @@ public sealed class CameraTab
             shot.Distance = distance;
             changed = true;
         }
-        Tooltip("How far the camera is from what it looks at (zoom). Ctrl+click to type.");
+        Tooltip("How far the camera is from what it looks at (zoom). Ctrl+click to type. Right-click: the game's usual distance.");
+        if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+            CameraControl.Reset(distance: true, fov: false, tilt: false, pitch: false);
 
         float fov = shot.FoV;
         ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
@@ -97,7 +136,9 @@ public sealed class CameraTab
             shot.FoV = fov;
             changed = true;
         }
-        Tooltip("Narrower (telephoto, flatter) or wider (more perspective).");
+        Tooltip("Narrower (telephoto, flatter) or wider (more perspective). Right-click: the game's usual view.");
+        if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+            CameraControl.Reset(distance: false, fov: true, tilt: false, pitch: false);
 
         float yaw = shot.Yaw * Deg;
         ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
@@ -124,25 +165,29 @@ public sealed class CameraTab
             shot.Tilt = tilt;
             changed = true;
         }
-        Tooltip("The camera's tilt offset (what the game's camera height setting moves).");
+        Tooltip("The camera's tilt offset (what the game's camera height setting moves). Right-click: none.");
+        if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+            CameraControl.Reset(distance: false, fov: false, tilt: true, pitch: false);
 
         if(changed)
             CameraControl.Write(shot);
 
         // Quick angles.
         ImGui.Text("Look from:");
+        float facing = CharacterYaw?.Invoke() ?? 0f;
         foreach(var (label, yawDeg, pitchDeg) in new[] { ("Front", 180f, 0f), ("Back", 0f, 0f), ("Left", -90f, 0f), ("Right", 90f, 0f), ("Above", float.NaN, -80f), ("Below", float.NaN, 60f) })
         {
             ImGui.SameLine();
             if(ImGui.SmallButton($"{label}###cam_q_{label}"))
             {
-                // (round the character: from its facing, when there's one chosen)
+                // (round the chosen character, from the way it faces)
                 if(!float.IsNaN(yawDeg))
-                    shot.Yaw = yawDeg / Deg;
+                    shot.Yaw = facing + yawDeg / Deg;
                 shot.Pitch = pitchDeg / Deg;
                 CameraControl.Write(shot);
             }
         }
+        Tooltip("Round the chosen character, from the way it faces.");
 
         // Saved shots.
         ImGui.Spacing();

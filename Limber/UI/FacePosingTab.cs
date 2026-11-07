@@ -110,6 +110,46 @@ public sealed class FacePosingTab
             _config.Save();
         }
         Tooltip("Changing a left or right bone changes the one on the other side the mirrored way.");
+        // At the top: whether this face pose wins over Limber Animations, its directions, and the face's curve.
+        bool after = pose?.RunAfter ?? false;
+        if(ImGui.Checkbox("Run after Limber Animations###face_after", ref after))
+        {
+            Pose(name).RunAfter = after;
+            _config.Save();
+        }
+        Tooltip("On: this face pose is put on after Limber Animations (the ahegao, the throbbing...), so it wins over them.\n"
+            + "Off: it goes first, and Limber Animations go on top of it.");
+        ImGui.SameLine();
+        var spaceNow = pose?.Space ?? FaceSpace.Face;
+        ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("Directions###face_space", spaceNow switch { FaceSpace.Character => "Character", FaceSpace.Bone => "Bone", _ => "Face" }))
+        {
+            if(combo)
+                foreach(var (sp, label, tip) in new[]
+                {
+                    (FaceSpace.Face, "Face", "Across, up and out of the face (from its eyes and mouth): turned with the head, the same on every face."),
+                    (FaceSpace.Character, "Character", "Across, up and forward of the character as it stands."),
+                    (FaceSpace.Bone, "Bone", "The bone's own directions (turned with the bone)."),
+                })
+                {
+                    if(ImGui.Selectable($"{label}###face_space_{sp}", spaceNow == sp))
+                    {
+                        Pose(name).Space = sp;
+                        _config.Save();
+                    }
+                    Tooltip(tip);
+                }
+        }
+        Tooltip("Which directions the moves and turns are in. Changing it keeps the numbers (so they then mean the new directions).");
+        ImGui.SameLine();
+        bool hug = pose?.Hug ?? false;
+        if(ImGui.Checkbox("Stay on the face###face_hug", ref hug))
+        {
+            Pose(name).Hug = hug;
+            _config.Save();
+        }
+        Tooltip("Moved bones slide over the face's curve (round the forehead, the cheeks) and turn with it, so a brow moved\n"
+            + "out to the side stays on the face and lined up with it, instead of moving in a straight line off it.");
         ImGui.SameLine();
         bool dots = _config.ShowFaceBones;
         if(ImGui.Checkbox("Face dots in the scene###face_dots", ref dots))
@@ -281,10 +321,9 @@ public sealed class FacePosingTab
         {
             var delta = (mouse - _mapDragStart) / pixels * 1000f; // mm
             bool depth = ImGui.GetIO().KeyAlt;
-            var move = depth
-                ? _mapDragMove + new Vector3(0f, 0f, -delta.Y)
-                : _mapDragMove + new Vector3(-delta.X, -delta.Y, 0f);
             string bone = _mapDragging;
+            var space = pose?.Space ?? FaceSpace.Face;
+            var move = _mapDragMove + FacePosingService.FromFace(view, bone, space, depth ? new Vector3(0f, 0f, -delta.Y) : new Vector3(-delta.X, -delta.Y, 0f));
             Change(name, bone, o => { var c = o.Copy(); c.Move = move; return c; });
         }
         if(_mapDragging != null && ImGui.IsItemDeactivated())
@@ -468,7 +507,7 @@ public sealed class FacePosingTab
                 {
                     var d = mouse - drag.StartMouse;
                     float mx = drag.InvA * d.X + drag.InvB * d.Y, my = drag.InvC * d.X + drag.InvD * d.Y;
-                    var move = drag.StartMove + new Vector3(mx, my, 0f);
+                    var move = drag.StartMove + FacePosingService.FromFace(view, drag.Bone, pose?.Space ?? FaceSpace.Face, new Vector3(mx, my, 0f));
                     Change(name, drag.Bone, o => { var c = o.Copy(); c.Move = move; return c; });
                 }
                 else

@@ -82,7 +82,7 @@ public static class MdlRigger
 
     private sealed class Mesh
     {
-        public int VertexCount, BoneTable;
+        public int VertexCount, BoneTable, Material;
         public uint IndexCount, StartIndex;
         public uint[] BufferOffset = new uint[3];
         public byte[] Stride = new byte[3];
@@ -98,6 +98,7 @@ public static class MdlRigger
         public int StringsPos, StringCount, StringsUsed;
         public ushort StringPad;
         public Dictionary<uint, string> Strings = new();
+        public List<string> MaterialNames = new();
         public int ModelHeaderPos, LodPos, BoneNamesPos, BoneTablesEnd, PaddingPos, BoxesPos, BoneBoxesPos, DataStart;
         public int BoneCount, NeckMorphs;
         public (int MeshIndex, int MeshCount)[] Lods = new (int, int)[3];
@@ -288,7 +289,10 @@ public static class MdlRigger
 
                     // The middle between the two sides: vertices there are shared between both boxes (more the
                     // closer they are to the middle), so the two halves move and grow as one, with no cleft opening.
-                    var partner = side.Fill > 0f && side.PartKey.Length > 0
+                    // (the butt always shares a narrow band down its cleft, weights only, nothing baked: two cheeks
+                    // jiggling on their own would otherwise pull the skin in the cleft apart)
+                    float shareFill = side.Fill > 0f ? side.Fill : side.PartKey == RigParts.Butt.Key ? 0.3f : 0f;
+                    var partner = shareFill > 0f && side.PartKey.Length > 0
                         ? sides.FirstOrDefault(o => !ReferenceEquals(o, side) && o.PartKey == side.PartKey) : null;
                     int[]? partnerLattice = null;
                     Vector3 partnerOrigin = default;
@@ -319,7 +323,7 @@ public static class MdlRigger
                             var ca = Average(side.Positions);
                             var cb = Average(partner.Positions);
                             midX = (ca.X + cb.X) * 0.5f;
-                            band = MathF.Abs(ca.X - cb.X) * 0.5f * (0.5f + side.Fill);
+                            band = MathF.Abs(ca.X - cb.X) * 0.5f * (0.5f + shareFill);
                         }
                     }
 
@@ -372,6 +376,12 @@ public static class MdlRigger
                             share = 1f;
                         }
 
+                        // The butt's crease (where it meets the thigh, under the box): skin there is held more to the
+                        // body (the part's own bone) the further below the box it is, so the fold stays a fold while
+                        // the cheek above it moves and grows, instead of being dragged and stretched with it.
+                        if (side.PartKey == RigParts.Butt.Key && c.Y > side.Rows - 1)
+                            share *= 1f - 0.65f * SmoothStep(Math.Clamp((c.Y - (side.Rows - 1)) / 0.75f, 0f, 1f));
+
                         var wanted = new Dictionary<int, float>();
                         float onParent = weight * (1f - share);
                         foreach (var (col, row, layer, x) in Corners(cu, ct, cd, side.Columns, side.Rows, side.Steps))
@@ -392,7 +402,7 @@ public static class MdlRigger
 
                         if (partnerLattice != null && band > 1e-5f)
                         {
-                            float shared = 0.5f * side.Fill * (1f - SmoothStep(MathF.Abs(position.X - midX) / band));
+                            float shared = 0.5f * shareFill * (1f - SmoothStep(MathF.Abs(position.X - midX) / band));
                             if (shared > 1e-3f)
                             {
                                 foreach (var key in wanted.Keys.ToList())
@@ -959,6 +969,18 @@ public static class MdlRigger
     }
 
     /// <summary>Where one mesh's positions and normals sit inside its LoD's vertex block (for the live mesh).</summary>
+    /// <summary>Each mesh's material (its path as the model names it).</summary>
+    public static string[] MeshMaterials(byte[] file)
+    {
+        var m = Parse(file);
+        return m.Meshes.Select(x => x.Material < m.MaterialNames.Count ? m.MaterialNames[x.Material] : "").ToArray();
+    }
+
+    /// <summary>A skin material (the body's own: "mt_c0201b0001_a.mtrl" and the like), not clothing.</summary>
+    public static bool IsSkinMaterial(string material)
+        => System.Text.RegularExpressions.Regex.IsMatch(material, @"mt_c\d{4}b\d{4}", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+           || material.Contains("skin", StringComparison.OrdinalIgnoreCase);
+
     public sealed record MeshLayout(int Lod, int Mesh, int VertexCount, int PositionAt, int PositionStride, byte PositionType,
         int NormalAt, int NormalStride, byte NormalType);
 
@@ -993,6 +1015,38 @@ public static class MdlRigger
             }
         }
         return (offset, size, meshes);
+    }
+
+    /// <summary>What a model offers as a carrier for geometry written at run time (the Climax liquid drawn by the game).</summary>
+    public sealed record CarrierInfo(int Lod0Meshes, int Vertices, uint Indices, uint StartIndex, uint VertexBlock, uint IndexBlock,
+        string[] Materials, Vector3 BoxMin, Vector3 BoxMax, (int Usage, int At, int Stride, byte Type)[] Elements, CarrierMesh[] Meshes);
+
+    /// <summary>One mesh of a carrier's LoD 0: its own vertices (each element: where in the LoD's vertex block, stride, type) and
+    /// its stretch of the LoD's indices.</summary>
+    public sealed record CarrierMesh(int Vertices, uint Indices, uint StartIndex, (int Usage, int At, int Stride, byte Type)[] Elements);
+
+    public static CarrierInfo? CarrierInfoOf(byte[] file)
+    {
+        var m = Parse(file);
+        if (m.LodCount < 1)
+            return null;
+        var (first, count) = m.Lods[0];
+        if (count < 1 || first >= m.Meshes.Count || first >= m.Declarations.Count)
+            return null;
+        var mesh = m.Meshes[first];
+        var elements = m.Declarations[first].Select(e => ((int)e.Usage, (int)(mesh.BufferOffset[e.Stream] + e.Offset), (int)mesh.Stride[e.Stream], e.Type)).ToArray();
+        var meshes = new List<CarrierMesh>();
+        for(int mi = first; mi < first + count && mi < m.Meshes.Count && mi < m.Declarations.Count; mi++)
+        {
+            var me = m.Meshes[mi];
+            meshes.Add(new CarrierMesh(me.VertexCount, me.IndexCount, me.StartIndex,
+                m.Declarations[mi].Select(e => ((int)e.Usage, (int)(me.BufferOffset[e.Stream] + e.Offset), (int)me.Stride[e.Stream], e.Type)).ToArray()));
+        }
+        var materials = m.Strings.Values.Where(x => x.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var min = new Vector3(BitConverter.ToSingle(file, m.BoxesPos), BitConverter.ToSingle(file, m.BoxesPos + 4), BitConverter.ToSingle(file, m.BoxesPos + 8));
+        var max = new Vector3(BitConverter.ToSingle(file, m.BoxesPos + 16), BitConverter.ToSingle(file, m.BoxesPos + 20), BitConverter.ToSingle(file, m.BoxesPos + 24));
+        return new CarrierInfo(count, mesh.VertexCount, mesh.IndexCount, mesh.StartIndex, BitConverter.ToUInt32(file, 0x28), BitConverter.ToUInt32(file, 0x34),
+            materials, min, max, elements, meshes.ToArray());
     }
 
     /// <summary>Where one vertex element (by usage: 0 position, 3 normal, 6 tangent...) of one mesh sits in its LoD's vertex
@@ -1745,7 +1799,7 @@ public static class MdlRigger
             var mesh = new Mesh { VertexCount = r.ReadUInt16() };
             r.ReadUInt16();
             mesh.IndexCount = r.ReadUInt32();
-            r.ReadUInt16(); // material
+            mesh.Material = r.ReadUInt16();
             r.ReadUInt16(); // submesh index
             r.ReadUInt16(); // submesh count
             mesh.BoneTable = r.ReadUInt16();
@@ -1760,7 +1814,9 @@ public static class MdlRigger
         }
 
         r.BaseStream.Position += attributeCount * 4 + terrainShadowMeshCount * 20 + submeshCount * 16
-                                 + terrainShadowSubmeshCount * 12 + materialCount * 4;
+                                 + terrainShadowSubmeshCount * 12;
+        for (int i = 0; i < materialCount; i++)
+            m.MaterialNames.Add(m.Strings.TryGetValue(r.ReadUInt32(), out var mat) ? mat : "");
         m.BoneNamesPos = (int)r.BaseStream.Position;
         for (int i = 0; i < m.BoneCount; i++)
             m.Bones.Add(m.Strings.TryGetValue(r.ReadUInt32(), out var name) ? name : "");

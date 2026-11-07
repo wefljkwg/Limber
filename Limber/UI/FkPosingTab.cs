@@ -152,7 +152,7 @@ public sealed class FkPosingTab
             return entry;
         if(!create)
             return null;
-        entry = new FkBoneSettings();
+        entry = new FkBoneSettings { KeepChildren = _config.FkOnlyThisBone };
         int i = snapshot?.IndexOf(bone) ?? -1;
         if(snapshot != null && i >= 0 && !pose.Layered)
         {
@@ -690,18 +690,18 @@ public sealed class FkPosingTab
             ImGui.NewLine();
         }
 
-        // Position (optional).
-        bool move = entry?.Move ?? false;
-        if(ImGui.Checkbox("Also move it###fk_move", ref move))
+        // Only this bone: every bone adjusted on its own (the page-wide setting), or this bone's own choice below.
+        bool only = _config.FkOnlyThisBone;
+        if(ImGui.Checkbox("Only this bone (don't move any others)###fk_only_this", ref only))
         {
-            Checkpoint(name);
-            entry ??= Entry(name, bone, snapshot, create: true)!;
-            entry.Move = move;
-            if(move)
-                entry.Position = layered ? Vector3.Zero : LocalPosNow(snapshot, i);
+            _config.FkOnlyThisBone = only;
+            if(only && entry != null)
+                entry.KeepChildren = true;
             _config.Save();
         }
-        Tooltip("Holds the bone at a place relative to its parent too (stretches the joint). The gizmo's move mode sets it.");
+        Tooltip("On: turning or moving a bone leaves every other bone where it is, so each bone of the skeleton can be\n"
+            + "adjusted on its own (for every bone you change from now on; bones you've posed with FK yourself keep their own\n"
+            + "turn relative to it). Off: the bones under it go with it (usual FK).");
         ImGui.SameLine();
         bool children = !(entry?.KeepChildren ?? false);
         if(ImGui.Checkbox("Move children###fk_move_children", ref children))
@@ -713,17 +713,24 @@ public sealed class FkPosingTab
         }
         Tooltip("On: the bones under this one go with it when you turn or move it (usual FK).\n"
             + "Off: they stay where they are; only this bone turns / moves (bones under it that you posed with FK still follow it).");
-        if(entry is { Move: true })
+        // Its place relative to its parent: there to move straight away (moved, it holds that place; "Rest" lets go).
         {
-            var cm = entry.Position * 100f;
+            var at = entry is { Move: true } ? entry.Position : layered ? Vector3.Zero : LocalPosNow(snapshot, i);
+            var cm = at * 100f;
             ImGui.SetNextItemWidth(-1);
             if(ImGui.DragFloat3("###fk_pos", ref cm, 0.05f, -500f, 500f, "%.2f cm"))
             {
+                entry ??= Entry(name, bone, snapshot, create: true)!;
+                if(!entry.Move && _config.FkOnlyThisBone)
+                    entry.KeepChildren = true;
                 entry.Position = cm / 100f;
+                entry.Move = true;
+                entry.Enabled = true;
                 _config.Save();
             }
             if(ImGui.IsItemActivated())
                 Checkpoint(name);
+            Tooltip("Where the bone sits relative to its parent (centimetres). Drag to move it (stretches the joint); \"Rest\" puts it back.");
         }
 
         ImGui.Spacing();

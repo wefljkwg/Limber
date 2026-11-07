@@ -469,6 +469,9 @@ public sealed class TimelineService
         (nameof(RigSettings.DynamicBones), "Dynamic bones", 2),
         (nameof(RigSettings.FkPoses), "FK pose (switches)", 0),
         (nameof(RigSettings.BoneScales), "Bone scale (options)", 2),
+        (nameof(RigSettings.FacePoses), "Face posing", 2),
+        (nameof(RigSettings.SizeChange), "Height growth", 0),
+        (nameof(RigSettings.Symmetry), "Symmetry", 0),
     ];
 
     /// <summary>Scene-wide settings (property, label, how deep to list); "" = Limber's own settings.</summary>
@@ -482,6 +485,8 @@ public sealed class TimelineService
         (nameof(RigSettings.LiveMesh), "Live mesh", 1),
         (nameof(RigSettings.Props), "Props and colliders", 2),
         (nameof(RigSettings.Motions), "Motion devices", 2),
+        (nameof(RigSettings.ClimaxEmitters), "Climax emitters", 2),
+        (nameof(RigSettings.ClimaxLook), "Climax look", 0),
         ("", "Limber's settings", 0),
     ];
 
@@ -656,7 +661,7 @@ public sealed class TimelineService
     /// <summary>Switches, choices and text jump from key to key instead of blending.</summary>
     public bool IsStep(TimelineTrack track)
     {
-        if(track.Kind == "anim")
+        if(track.Kind is "anim" or "look" or "model")
             return true;
         if(track.Kind != "path")
             return false;
@@ -828,6 +833,18 @@ public sealed class TimelineService
                 value = [v];
                 return true;
             }
+            case "model":
+            {
+                // the creature it's drawn as (0: its own body)
+                if(!Find(name, out var address, out var index))
+                    return false;
+                value = [MathF.Max(Entities.ModelOf(address, index), 0)];
+                return true;
+            }
+            case "look":
+                // (a saved look: keyed "on" where it goes on)
+                value = [1f];
+                return true;
             case "path":
             {
                 // (set up with its defaults if this character has none yet, so it can be keyed straight away)
@@ -843,6 +860,9 @@ public sealed class TimelineService
         }
         return false;
     }
+
+    // Look tracks: whether each was "on" last time it was written (a look goes on once, as its key is reached).
+    private readonly Dictionary<string, bool> _lookOn = new();
 
     private void Write(TimelineTrack track, float[] value)
     {
@@ -926,6 +946,28 @@ public sealed class TimelineService
                 shape[track.Target] = value[0];
                 return;
             }
+            case "model" when value.Length >= 1:
+            {
+                if(!Find(name, out var address, out var index))
+                    return;
+                int model = (int)MathF.Round(value[0]);
+                if(Entities.ModelOf(address, index) != model)
+                    Entities.Become(address, index, model);
+                return;
+            }
+            case "look" when value.Length >= 1:
+            {
+                // put on once each time the key is reached (not every frame), from the saved looks by name
+                bool on = value[0] >= 0.5f;
+                bool was = _lookOn.TryGetValue(track.Id, out var w) && w;
+                _lookOn[track.Id] = on;
+                if(!on || was || !Find(name, out var address, out var index))
+                    return;
+                var look = (_config.AppearancePresets ?? new()).FirstOrDefault(l => l.Name == track.Target);
+                if(look != null)
+                    Appearance.Apply(address, index, look.Copy());
+                return;
+            }
             case "path" when value.Length >= 1:
             {
                 var leaf = Resolve(track, create: true);
@@ -987,6 +1029,8 @@ public sealed class TimelineService
         "ik" => $"IK: {HandleCatalog.Label(track.Target)}{(track.Extra == nameof(GoalSpace.Pinned) ? " (pinned)" : "")}",
         "move" => "Move / turn / size",
         "anim" => "Game animation",
+        "model" => "Costume (creature)",
+        "look" => $"Look: {track.Target}",
         "camera" => "Camera (distance, field of view, angles, tilt)",
         "scale" => $"Scale: {HandleCatalog.Label(track.Target)}",
         "shape" => $"Body: {(Limber.BodyShape.BodySliders.ByKey.TryGetValue(track.Target, out var s) ? s.Name : track.Target)}",

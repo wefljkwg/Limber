@@ -21,6 +21,7 @@ public sealed class GlobalPresetsTab
     private string _status = "";
     private string? _renaming;
     private string _rename = "";
+    private readonly System.Collections.Generic.HashSet<string> _skip = new();   // parts left out of the next save
 
     public GlobalPresetsTab(Selection selection, RigSettings config, GlobalPresetService presets)
     {
@@ -42,15 +43,36 @@ public sealed class GlobalPresetsTab
         else
         {
             var parts = _presets.PartsOf(chosen);
-            ImGui.TextUnformatted($"{chosen} has: " + (parts.Count == 0 ? "nothing set yet" : string.Join(", ", parts)));
+            if(parts.Count == 0)
+                ImGui.TextUnformatted($"{chosen} has nothing set yet.");
+            else
+            {
+                // What goes in: each page the character has settings for, ticked (untick to leave it out).
+                ImGui.TextUnformatted($"Save from {chosen}:");
+                foreach(var part in parts)
+                {
+                    ImGui.SameLine();
+                    bool take = !_skip.Contains(part);
+                    if(ImGui.Checkbox($"{part}###gp_take_{part}", ref take))
+                    {
+                        if(take)
+                            _skip.Remove(part);
+                        else
+                            _skip.Add(part);
+                    }
+                    if(ImGui.GetContentRegionAvail().X < 140 * ImGuiHelpers.GlobalScale)
+                        ImGui.NewLine();
+                }
+            }
+            var taking = parts.Where(p => !_skip.Contains(p)).ToList();
             ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
             ImGui.InputTextWithHint("###gp_name", "Name for the preset", ref _name, 48);
             ImGui.SameLine();
-            using(ImRaii.Disabled(_name.Trim().Length == 0 || parts.Count == 0))
+            using(ImRaii.Disabled(_name.Trim().Length == 0 || taking.Count == 0))
             {
                 if(ImGui.Button("Save###gp_save"))
                 {
-                    _presets.Save(chosen, _name.Trim());
+                    _presets.Save(chosen, _name.Trim(), taking);
                     _status = $"Saved \"{_name.Trim()}\" from {chosen}.";
                     _name = "";
                 }
@@ -90,13 +112,14 @@ public sealed class GlobalPresetsTab
             }
             else
             {
-                bool open = ImGui.TreeNode($"{preset.Name}  ({preset.Parts.Count} part{(preset.Parts.Count == 1 ? "" : "s")})###gp_node");
+                int on = preset.Parts.Keys.Count(k => !(preset.Off?.Contains(k) ?? false));
+                bool open = ImGui.TreeNode($"{preset.Name}  ({on} of {preset.Parts.Count} part{(preset.Parts.Count == 1 ? "" : "s")} on)###gp_node");
                 ImGui.SameLine();
                 using(ImRaii.Disabled(chosen.Length == 0))
                 {
                     if(ImGui.SmallButton("Put on the chosen character###gp_apply") && _presets.Apply(preset.Name, chosen))
                         _status = $"Put \"{preset.Name}\" on {chosen}.";
-                    Tooltip("Every page's settings in this preset replace the chosen character's.");
+                    Tooltip("Every page that's on in this preset replaces the chosen character's settings for it.");
                     ImGui.SameLine();
                     if(ImGui.SmallButton("Overwrite with the chosen character###gp_overwrite"))
                     {
@@ -117,18 +140,47 @@ public sealed class GlobalPresetsTab
                 Tooltip("Hold Ctrl and click to delete this preset.");
                 if(open)
                 {
-                    // What's in it; any part can be taken out.
+                    // Every part it can hold: on / off, taken again from the chosen character, or taken out.
+                    preset.Off ??= new();
                     string? drop = null;
-                    foreach(var part in preset.Parts.Keys.OrderBy(k => k))
+                    foreach(var part in _presets.AllParts())
                     {
-                        ImGui.BulletText(part);
-                        ImGui.SameLine();
-                        if(ImGui.SmallButton($"take out###gp_drop_{part}"))
-                            drop = part;
+                        using var pid = ImRaii.PushId(part);
+                        bool has = preset.Parts.ContainsKey(part);
+                        if(has)
+                        {
+                            bool partOn = !preset.Off.Contains(part);
+                            if(ImGui.Checkbox($"{part}###gp_part_on", ref partOn))
+                            {
+                                if(partOn)
+                                    preset.Off.Remove(part);
+                                else
+                                    preset.Off.Add(part);
+                                _config.Save();
+                            }
+                            Tooltip("On: put on with the preset. Off: kept in it, but left alone when it's put on.");
+                        }
+                        else
+                            ImGui.TextDisabled($"   {part} (not in it)");
+                        bool can = chosen.Length > 0 && _presets.PartsOf(chosen).Contains(part);
+                        ImGui.SameLine(240 * ImGuiHelpers.GlobalScale);
+                        using(ImRaii.Disabled(!can))
+                        {
+                            if(ImGui.SmallButton((has ? "take again from " : "add from ") + (chosen.Length > 0 ? chosen : "the chosen character") + "###gp_take")
+                               && _presets.TakePart(preset, part, chosen))
+                                _status = $"\"{preset.Name}\": {part} taken from {chosen}.";
+                        }
+                        if(has)
+                        {
+                            ImGui.SameLine();
+                            if(ImGui.SmallButton("take out###gp_drop"))
+                                drop = part;
+                        }
                     }
                     if(drop != null)
                     {
                         preset.Parts.Remove(drop);
+                        preset.Off.Remove(drop);
                         _config.Save();
                     }
                     ImGui.TreePop();

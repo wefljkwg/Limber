@@ -118,6 +118,7 @@ public sealed unsafe class ActorSpawner : IDisposable
         _clientSlot[index] = clientSlot;
         _parent[index] = (ushort)source.ObjectIndex;
         _parentSet.Remove(index);
+        _own.Remove(index);
 
         var target = (NativeCharacter*)obj;
         var from = (NativeCharacter*)source.Address;
@@ -196,6 +197,7 @@ public sealed unsafe class ActorSpawner : IDisposable
         _parent.Remove(index);
         _number.Remove(index);
         _parentSet.Remove(index);
+        _own.Remove(index);
         _inGPose.Remove(index);
         _helpers.Remove(index);
         if(_clientSlot.Remove(index, out var clientSlot))
@@ -230,9 +232,38 @@ public sealed unsafe class ActorSpawner : IDisposable
             obj->Name[i] = i < n ? bytes[i] : (byte)0;
     }
 
+    /// <summary>
+    /// Penumbra told this actor is no one's copy (it's itself, by its own name), so it can have a mod collection of its
+    /// own: as a copy it's drawn with its source's, shared with every other copy of the same source. Or (false) told it's
+    /// a copy again. Returns Penumbra's answer (0: done).
+    /// </summary>
+    public int SetOwnIdentity(ushort index, bool own)
+    {
+        if(!_parent.TryGetValue(index, out var parent))
+            return -1;
+        try
+        {
+            int ec = Plugin.PluginInterface.GetIpcSubscriber<int, int, int>("Penumbra.SetCutsceneParentIndex.V5").InvokeFunc(index, own ? -1 : parent);
+            if(own)
+                _own.Add(index);
+            else
+                _own.Remove(index);
+            _parentSet.Add(index);
+            return ec;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    public bool HasOwnIdentity(ushort index) => _own.Contains(index);
+
+    private readonly HashSet<ushort> _own = new();
+
     private void TellPenumbra(ushort index)
     {
-        if(_parentSet.Contains(index) || !_parent.TryGetValue(index, out var parent))
+        if(_parentSet.Contains(index) || _own.Contains(index) || !_parent.TryGetValue(index, out var parent))
             return;
         try
         {
@@ -330,6 +361,7 @@ public sealed unsafe class ActorSpawner : IDisposable
                     _parent.Remove(_made[k]);
                     _number.Remove(_made[k]);
                     _parentSet.Remove(_made[k]);
+                    _own.Remove(_made[k]);
                     _helpers.Remove(_made[k]);
                     _made.RemoveAt(k);
                 }
@@ -343,6 +375,7 @@ public sealed unsafe class ActorSpawner : IDisposable
         _parent.Remove(index);
         _number.Remove(index);
         _parentSet.Remove(index);
+        _own.Remove(index);
         _inGPose.Remove(index);
         _helpers.Remove(index);
         _names.Remove(index);
@@ -360,6 +393,7 @@ public sealed unsafe class ActorSpawner : IDisposable
         _parent.Clear();
         _number.Clear();
         _parentSet.Clear();
+        _own.Clear();
     }
 
     public void Dispose()

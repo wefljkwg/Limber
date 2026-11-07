@@ -15,6 +15,8 @@ public sealed class GlobalPreset
     public string Name { get; set; } = "";
     /// <summary>Part (which page's settings) -> those settings, as saved.</summary>
     public Dictionary<string, string> Parts { get; set; } = new();
+    /// <summary>Parts kept in it but switched off: not put on a character.</summary>
+    public HashSet<string> Off { get; set; } = new();
 }
 
 /// <summary>When a character with this name comes into the scene: a global preset (and a saved look) goes on them.</summary>
@@ -68,19 +70,25 @@ public sealed class GlobalPresetService
         yield return P("Bone scale", c.BoneScales ??= new());
         yield return P("Body shape", c.BodyShapes ??= new());
         yield return P("Symmetry", c.Symmetry ??= new());
+        yield return P("Height growth", c.SizeChange ??= new());
+        yield return P("Breast size", c.BustShapes ??= new());
     }
 
     /// <summary>What a character has that a preset would hold (the pages with settings for them).</summary>
     public List<string> PartsOf(string character)
         => PerCharacter().Where(p => p.Settings.Contains(character)).Select(p => p.Part).ToList();
 
-    /// <summary>Saves everything Limber keeps for this character as a global preset (over one with the same name).</summary>
-    public GlobalPreset Save(string character, string name)
+    /// <summary>Every part a global preset can hold.</summary>
+    public List<string> AllParts() => PerCharacter().Select(p => p.Part).ToList();
+
+    /// <summary>Saves what Limber keeps for this character as a global preset (over one with the same name): every part,
+    /// or only <paramref name="only"/>.</summary>
+    public GlobalPreset Save(string character, string name, ICollection<string>? only = null)
     {
         var preset = new GlobalPreset { Name = name };
         var serializer = JsonSerializer.Create(Json);
         foreach(var (part, settings, _) in PerCharacter())
-            if(settings.Contains(character) && settings[character] is { } value)
+            if((only == null || only.Contains(part)) && settings.Contains(character) && settings[character] is { } value)
                 preset.Parts[part] = JToken.FromObject(value, serializer).ToString(Formatting.None);
         var all = _config.GlobalPresets ??= new();
         all.RemoveAll(p => p.Name == name);
@@ -97,7 +105,7 @@ public sealed class GlobalPresetService
             return false;
         foreach(var (part, settings, type) in PerCharacter())
         {
-            if(!preset.Parts.TryGetValue(part, out var json))
+            if(!preset.Parts.TryGetValue(part, out var json) || (preset.Off?.Contains(part) ?? false))
                 continue;
             try
             {
@@ -109,6 +117,18 @@ public sealed class GlobalPresetService
                 Plugin.Log.Debug(e, $"Limber: couldn't put the {part} part of a global preset on");
             }
         }
+        _config.Save();
+        return true;
+    }
+
+    /// <summary>One part of a preset taken (again) from a character: what they have for that page now.</summary>
+    public bool TakePart(GlobalPreset preset, string part, string character)
+    {
+        var p = PerCharacter().FirstOrDefault(x => x.Part == part);
+        if(p.Settings == null || !p.Settings.Contains(character) || p.Settings[character] is not { } value)
+            return false;
+        preset.Parts[part] = JToken.FromObject(value, JsonSerializer.Create(Json)).ToString(Formatting.None);
+        preset.Off?.Remove(part);
         _config.Save();
         return true;
     }

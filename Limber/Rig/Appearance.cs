@@ -124,9 +124,125 @@ public static unsafe class Appearance
                 slot.ModelId = new WeaponModelId { Value = look.Weapons[w] };
                 redraw = true; // (weapons go on reliably with a redraw)
             }
+        // (your own character: its model built with the look's own values, NPC-only ones included; see PlayerLook)
+        if(index == 0 && customize && look.Customize.Length >= 26)
+        {
+            var now = new byte[26];
+            var own = (byte*)&c->DrawData.CustomizeData;
+            for(int i = 0; i < 26; i++)
+                now[i] = own[i];
+            PlayerLook.Wanted(now);
+        }
         if(redraw)
             Redraw(index);
+        // (kept through later redraws: body physics, rigging, a collection change... see Tick)
+        if(!_reapplying && Read(address, index) is { } put)
+            Keep(address, index, put);
         return redraw ? "Applied (redrawn)." : "Applied.";
+    }
+
+    // ---- Keeping a look through redraws
+    //
+    // A redraw (rigging for body physics, a body shape build, a new collection) builds the character again, and other
+    // plugins that keep their own record of how a character should look put that back as it's built: a look put on
+    // here (an NPC's, say) would be lost. So the look last put on each character is kept, and for a little while
+    // after each time the character is drawn anew, it's put back on if it was replaced.
+
+    private sealed class KeptLook
+    {
+        public required nint Address;
+        public required AppearanceData Look;
+        public nint Draw;
+        public int Watch, Tries;
+    }
+
+    private static readonly Dictionary<ushort, KeptLook> Kept = new();
+    private static bool _reapplying;
+
+    /// <summary>Keep looks on through redraws (Appearance & gear).</summary>
+    public static bool KeepThroughRedraws { get; set; } = true;
+
+    private static void Keep(nint address, ushort index, AppearanceData look)
+    {
+        var obj = ActorSkeleton.GetObject(index);
+        Kept[index] = new KeptLook { Address = address, Look = look.Copy(), Draw = obj != null ? (nint)obj->DrawObject : 0 };
+        if(index == 0)
+            PlayerLook.Wanted(look.Customize);
+    }
+
+    // A kept look changed here bit by bit (one gear slot, a weapon): what's kept follows.
+    private static void Refresh(nint address, ushort index)
+    {
+        if(Kept.TryGetValue(index, out var k) && k.Address == address && Read(address, index) is { } now)
+            k.Look = now;
+    }
+
+    /// <summary>Stop keeping the look put on this character (it's left as it is).</summary>
+    public static void Forget(ushort index) => Kept.Remove(index);
+
+    /// <summary>Whether Limber is keeping a look on this character through redraws.</summary>
+    public static bool IsKept(nint address, ushort index) => Kept.TryGetValue(index, out var k) && k.Address == address;
+
+    private static void KeepLooks()
+    {
+        if(Kept.Count == 0)
+            return;
+        foreach(var (index, k) in Kept.ToArray())
+        {
+            var obj = ActorSkeleton.GetObject(index);
+            if(obj == null || (nint)obj != k.Address || !obj->IsCharacter())
+            {
+                Kept.Remove(index);
+                continue;
+            }
+            if(!KeepThroughRedraws)
+                continue;
+            nint draw = (nint)obj->DrawObject;
+            if(draw != k.Draw)
+            {
+                // drawn anew: watched for a few seconds (others put their looks on as it's built, or just after)
+                k.Draw = draw;
+                k.Watch = 240;
+                k.Tries = 0;
+            }
+            if(k.Watch <= 0 || draw == 0 || Redrawing.ContainsKey(index))
+                continue;
+            k.Watch--;
+            var now = Read(k.Address, index);
+            if(now == null || Same(now, k.Look))
+                continue;
+            if(k.Tries >= 2)
+            {
+                // (put back twice and replaced again: something else wants it that way now; it's left to it)
+                Kept.Remove(index);
+                continue;
+            }
+            k.Tries++;
+            _reapplying = true;
+            try
+            {
+                Apply(k.Address, index, k.Look.Copy());
+            }
+            finally
+            {
+                _reapplying = false;
+            }
+            k.Draw = (nint)obj->DrawObject;
+        }
+    }
+
+    private static bool Same(AppearanceData a, AppearanceData b)
+    {
+        for(int i = 0; i < 26 && i < a.Customize.Length && i < b.Customize.Length; i++)
+            if(a.Customize[i] != b.Customize[i])
+                return false;
+        for(int s = 0; s < 10 && s < a.Gear.Length && s < b.Gear.Length; s++)
+            if(a.Gear[s] != b.Gear[s])
+                return false;
+        for(int w = 0; w < 2 && w < a.Weapons.Length && w < b.Weapons.Length; w++)
+            if(a.Weapons[w] != b.Weapons[w])
+                return false;
+        return true;
     }
 
     /// <summary>
@@ -267,6 +383,7 @@ public static unsafe class Appearance
             return;
         var id = new EquipmentModelId { Id = model, Variant = variant, Stain0 = stain0, Stain1 = stain1 };
         c->DrawData.LoadEquipment((EquipSlot)slot, &id, true);
+        Refresh(address, index);
     }
 
     public static void SetWeapon(nint address, ushort index, int slot, ushort set, ushort type, ushort variant, byte stain0, byte stain1)
@@ -276,6 +393,7 @@ public static unsafe class Appearance
             return;
         ref var data = ref c->DrawData.Weapon((WeaponSlot)slot);
         data.ModelId = new WeaponModelId { Id = set, Type = type, Variant = variant, Stain0 = stain0, Stain1 = stain1 };
+        Refresh(address, index);
         Redraw(index);
     }
 
@@ -352,6 +470,7 @@ public static unsafe class Appearance
     /// <summary>Framework update: the characters taken out by a redraw drawn again once they're ready.</summary>
     public static void Tick()
     {
+        KeepLooks();
         if(Redrawing.Count == 0)
             return;
         foreach(var (index, (address, frames)) in Redrawing.ToArray())

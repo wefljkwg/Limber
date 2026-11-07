@@ -11,6 +11,8 @@ public sealed class ExtrasTab
     private readonly Selection _selection;
     private readonly RagdollService _ragdoll;
     private readonly RigSettings? _config;
+    /// <summary>For the extra minions.</summary>
+    public EntitiesTab? Entities { get; set; }
 
     public ExtrasTab(Selection selection, RagdollService ragdoll, RigSettings? config = null)
     {
@@ -54,6 +56,12 @@ public sealed class ExtrasTab
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("How far they slide along the floor (high: like ice).");
 
+        if(Entities != null)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            Entities.DrawMinions();
+        }
         DrawHideMounts();
     }
 

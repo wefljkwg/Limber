@@ -19,6 +19,12 @@ public sealed class SoftBodySettings
     public float KeepShape { get; set; } = 1f;
     public float MaxStretch { get; set; } = 0.55f; // furthest any point may move from rest, in breast-bone separations
     public bool Collisions { get; set; } = true;   // arms, hands, thighs, the floor, and other characters' hands
+    // What it collides with and how (the Physics collisions page).
+    public CollisionSettings Collide { get; set; } = new();
+    // Testicles: how much they hang with real gravity (0 = held to the modelled shape, 1 = hang fully the way down
+    // is, in any pose), and how much both sides move as one sac (0 = each on its own).
+    public float Hang { get; set; } = 0.6f;
+    public float Together { get; set; } = 0.6f;
 
     // Shape: scales and moves all rig bones together (works with or without the physics). 1 / 0 = unchanged.
     public float Size { get; set; } = 1f;          // overall
@@ -40,6 +46,7 @@ public sealed class SoftBodySettings
     {
         var copy = (SoftBodySettings)MemberwiseClone();
         copy.Shapes = new Dictionary<string, float>(Shapes ?? new());
+        copy.Collide = (Collide ?? new()).Clone();
         return copy;
     }
 
@@ -47,6 +54,7 @@ public sealed class SoftBodySettings
     public static SoftBodySettings ButtDefaults() => new()
     {
         Firmness = 0.45f, Bounce = 0.7f, Weight = 0.4f, Jiggle = 1.6f, Cohesion = 0.75f, MaxStretch = 0.45f,
+        Collide = CollisionSettings.ButtDefaults(),
     };
 
     /// <summary>Starting values for the belly rig: soft and heavy, slow to settle, held to the body at its rim; off
@@ -55,11 +63,52 @@ public sealed class SoftBodySettings
     {
         Enabled = false, Firmness = 0.35f, Bounce = 0.65f, Weight = 0.35f, Jiggle = 1.4f, Cohesion = 0.85f, MaxStretch = 0.35f,
         KeepShape = 1f, // (it wobbles, but doesn't sag at rest: it hangs from the spine, so a sag would tip the whole belly)
+        Collide = CollisionSettings.BellyDefaults(),
     };
 
     /// <summary>Starting values for the testicle rig: heavier and swingier.</summary>
     public static SoftBodySettings TesticleDefaults() => new()
     {
-        Firmness = 0.3f, Bounce = 0.7f, Weight = 0.75f, Jiggle = 1.8f, Cohesion = 0.9f, MaxStretch = 0.9f,
+        Firmness = 0.3f, Bounce = 0.7f, Weight = 0.75f, Jiggle = 1.3f, Cohesion = 0.9f, MaxStretch = 0.9f, Hang = 0.6f, Together = 0.6f,
+        Collide = CollisionSettings.TesticleDefaults(),
     };
+}
+
+/// <summary>
+/// What one soft part collides with, and how (Body > Physics collisions). Sizes are scales of Limber's own
+/// estimate for the body (1 = as is); the margin is in centimetres.
+/// </summary>
+[Serializable]
+public sealed class CollisionSettings
+{
+    // What pushes it.
+    public bool OwnArms { get; set; } = true;       // the character's own upper arms
+    public bool OwnHands { get; set; } = true;      // its own forearms and hands
+    public bool OthersHands { get; set; } = true;   // other characters' forearms and hands
+    public bool Thighs { get; set; }                // its own thighs
+    public bool Floor { get; set; } = true;         // the ground under the character
+    public bool GrownBelly { get; set; } = true;    // a grown (pregnant) belly pushes it out of the way
+    public bool Props { get; set; } = true;         // collider props with Bone collision on
+
+    // Sizes of the body's colliders.
+    public float ArmSize { get; set; } = 1f;
+    public float HandSize { get; set; } = 1f;
+    public float ThighSize { get; set; } = 1f;
+    public float FloorHeight { get; set; }          // cm, up (+) / down (-) from the character's feet
+
+    // How it reacts.
+    public float Strength { get; set; } = 1f;       // 1 = pushed fully out; less: it sinks into what touches it
+    public float Margin { get; set; }               // cm kept between it and the colliders
+    public float Friction { get; set; } = 0.3f;     // how much sliding along a collider is held back
+    public float Rebound { get; set; }              // how much it bounces back off (0: stops dead against it)
+    public float Softness { get; set; }             // 0 = hard edge; higher eases into contact over a little depth
+
+    // Testicles: how far squeezing (thighs, hands, props from both sides) slides the whole sac out of the way.
+    public float SacSlide { get; set; } = 1f;
+
+    public CollisionSettings Clone() => (CollisionSettings)MemberwiseClone();
+
+    public static CollisionSettings TesticleDefaults() => new() { OwnArms = false, Thighs = true, ThighSize = 1f, Friction = 0.15f, Softness = 0.3f };
+    public static CollisionSettings ButtDefaults() => new() { OwnArms = false, Thighs = false, Friction = 0.4f, Softness = 0.2f };
+    public static CollisionSettings BellyDefaults() => new() { OwnArms = false, GrownBelly = false, Friction = 0.4f, Softness = 0.3f };
 }

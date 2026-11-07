@@ -130,27 +130,6 @@ public sealed class LimberAnimationsTab
         DrawSelected(name, actor);
         ImGui.Separator();
         ImGui.Spacing();
-        // Both throbbings at once, in time with each other.
-        if(BallThrob != null)
-        {
-            var penis = (_config.Throb ??= new()).TryGetValue(name, out var p) ? p : null;
-            var balls = (_config.BallThrob ??= new()).TryGetValue(name, out var b) ? b : null;
-            bool bothOn = penis is { Enabled: true } && balls is { Enabled: true };
-            if(ImGui.Button(bothOn ? "Stop both throbbings###lanim_both" : "Start both throbbings (in sync)###lanim_both"))
-            {
-                penis ??= _config.Throb[name] = new ThrobSettings();
-                balls ??= _config.BallThrob[name] = new BallThrobSettings();
-                penis.Enabled = balls.Enabled = !bothOn;
-                if(!bothOn)
-                {
-                    _throb.Sync(actor.Address);
-                    BallThrob.Sync(actor.Address);
-                }
-                _config.Save();
-            }
-            if(ImGui.IsItemHovered())
-                ImGui.SetTooltip("Starts (or stops) penis and testicle throbbing together, their beats starting at the same moment.");
-        }
         if(ImGui.CollapsingHeader("Throbbing###lanim_throb"))
             DrawThrob(name, actor);
         if(BallThrob != null && ImGui.CollapsingHeader("Testicle throbbing###lanim_balls"))
@@ -170,7 +149,7 @@ public sealed class LimberAnimationsTab
     private static readonly (SizeChangePattern Pattern, string Name, string Tip)[] SizePatterns =
     [
         (SizeChangePattern.Smooth, "Smooth", "Eases into it and eases out at the end size."),
-        (SizeChangePattern.Steady, "Steady", "The same factor every second (looks even at any size: 1x to 10x takes as long as 10x to 100x)."),
+        (SizeChangePattern.Steady, "Steady", "At the same pace from start to end (Rate below: the same amount, or the same factor, every second)."),
         (SizeChangePattern.Surge, "Surge", "Fast at first, slowing toward the end size."),
         (SizeChangePattern.Accelerating, "Accelerating", "Slow at first, then faster and faster."),
         (SizeChangePattern.Pulses, "Pulses", "In pulses, swelling a little past where it's heading on each (Speed, Strength)."),
@@ -180,16 +159,16 @@ public sealed class LimberAnimationsTab
 
     private static readonly (string Name, Action<SizeChangeSettings> Apply)[] SizePresets =
     [
-        ("Taller", h => { h.From = 1f; h.To = 1.5f; h.Duration = 8f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Giantess", h => { h.From = 1f; h.To = 10f; h.Duration = 20f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Macro", h => { h.From = 1f; h.To = 100f; h.Duration = 40f; h.Pattern = SizeChangePattern.Accelerating; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Mega macro", h => { h.From = 1f; h.To = 1000f; h.Duration = 60f; h.Pattern = SizeChangePattern.Steady; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Growth spurts", h => { h.From = 1f; h.To = 30f; h.Duration = 30f; h.Pattern = SizeChangePattern.Spurts; h.Speed = 15f; h.Strength = 0.7f; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Pulsing growth", h => { h.From = 1f; h.To = 20f; h.Duration = 30f; h.Pattern = SizeChangePattern.Pulses; h.Speed = 40f; h.Strength = 0.7f; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Shrink", h => { h.From = 1f; h.To = 0.3f; h.Duration = 10f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Tiny", h => { h.From = 1f; h.To = 0.05f; h.Duration = 20f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Ant-sized", h => { h.From = 1f; h.To = 0.002f; h.Duration = 30f; h.Pattern = SizeChangePattern.Steady; h.Repeat = ExpansionRepeat.Hold; }),
-        ("Grow and shrink", h => { h.From = 0.5f; h.To = 5f; h.Duration = 10f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Reverse; }),
+        ("Taller", h => { h.Exponential = false; h.From = 1f; h.To = 1.5f; h.Duration = 8f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Giantess", h => { h.Exponential = false; h.From = 1f; h.To = 10f; h.Duration = 20f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Macro", h => { h.Exponential = true; h.From = 1f; h.To = 100f; h.Duration = 40f; h.Pattern = SizeChangePattern.Accelerating; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Mega macro", h => { h.Exponential = true; h.From = 1f; h.To = 1000f; h.Duration = 60f; h.Pattern = SizeChangePattern.Steady; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Growth spurts", h => { h.Exponential = false; h.From = 1f; h.To = 30f; h.Duration = 30f; h.Pattern = SizeChangePattern.Spurts; h.Speed = 15f; h.Strength = 0.7f; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Pulsing growth", h => { h.Exponential = false; h.From = 1f; h.To = 20f; h.Duration = 30f; h.Pattern = SizeChangePattern.Pulses; h.Speed = 40f; h.Strength = 0.7f; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Shrink", h => { h.Exponential = false; h.From = 1f; h.To = 0.3f; h.Duration = 10f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Tiny", h => { h.Exponential = true; h.From = 1f; h.To = 0.05f; h.Duration = 20f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Ant-sized", h => { h.Exponential = true; h.From = 1f; h.To = 0.002f; h.Duration = 30f; h.Pattern = SizeChangePattern.Steady; h.Repeat = ExpansionRepeat.Hold; }),
+        ("Grow and shrink", h => { h.Exponential = false; h.From = 0.5f; h.To = 5f; h.Duration = 10f; h.Pattern = SizeChangePattern.Smooth; h.Repeat = ExpansionRepeat.Reverse; }),
     ];
 
     // A rough word for a size (1 = its own).
@@ -287,6 +266,22 @@ public sealed class LimberAnimationsTab
                 }
         }
         ImGui.TextDisabled(Array.Find(SizePatterns, x => x.Pattern == h.Pattern).Tip ?? "");
+        int rate = h.Exponential ? 1 : 0;
+        ImGui.TextUnformatted("Rate:");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Even###lanim_h_even", ref rate, 0))
+        {
+            h.Exponential = false;
+            changed = true;
+        }
+        Tooltip("The height changes by the same amount every second: from 1x to 2x as fast as from 9x to 10x.");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Exponential###lanim_h_exp", ref rate, 1))
+        {
+            h.Exponential = true;
+            changed = true;
+        }
+        Tooltip("The height changes by the same factor every second: slow while small, faster and faster as it gets bigger (shrinking: fast at first, slowing).");
         if(h.Pattern is SizeChangePattern.Pulses or SizeChangePattern.Steps or SizeChangePattern.Spurts)
             changed |= SliderEx("Speed", h.Speed, v => h.Speed = v, 2f, 200f, "%.0f a minute", "How many pulses, steps or spurts a minute.");
         if(h.Pattern is SizeChangePattern.Pulses or SizeChangePattern.Spurts)
@@ -773,12 +768,17 @@ public sealed class LimberAnimationsTab
         changed |= SliderAh("Cross-eyed", s.CrossEyes, v => s.CrossEyes = v, 0f, 50f, "%.0f°", "How far the eyes turn in toward each other.");
         changed |= SliderAh("Upper lids", s.Lids * 100f, v => s.Lids = v / 100f, -200f, 200f, "%.0f%%", "How far the upper eyelids droop (+) or open wide (-).");
         changed |= SliderAh("Lower lids", s.LowerLids * 100f, v => s.LowerLids = v / 100f, 0f, 200f, "%.0f%%", "The lower eyelids pushed up: smiling eyes, or a wince.");
+        changed |= SliderAh("Eyes wide", s.EyesWide * 100f, v => s.EyesWide = v / 100f, 0f, 200f, "%.0f%%", "The eyes opened wide: the upper lids up and the lower lids down.");
+        changed |= SliderAh("Pupil size", s.PupilSize * 100f, v => s.PupilSize = v / 100f, -60f, 150f, "%+.0f%%", "The pupils (the irises) bigger (+) or smaller (-).");
         changed |= SliderAh("Brows", s.Brows * 100f, v => s.Brows = v / 100f, -200f, 200f, "%.0f%%", "Eyebrows raised (+) or lowered (-).");
         changed |= SliderAh("Brow tilt", s.BrowTilt * 100f, v => s.BrowTilt = v / 100f, -200f, 200f, "%.0f%%", "The inner ends of the brows up (+, worried / helpless) or down (-, cross).");
+        changed |= SliderAh("Worried", s.Worried * 100f, v => s.Worried = v / 100f, -100f, 200f, "%.0f%%", "Worried brows: the inner ends curving up and the outer ends curving down.");
         changed |= SliderAh("Furrow", s.Furrow * 100f, v => s.Furrow = v / 100f, 0f, 200f, "%.0f%%", "The brows pulled together and down in the middle (pain, strain).");
         changed |= SliderAh("Tremble", s.Tremble * 100f, v => s.Tremble = v / 100f, 0f, 200f, "%.0f%%", "The eyes trembling.");
         ImGui.TextDisabled("Mouth");
         changed |= SliderAh("Mouth open", s.MouthOpen, v => s.MouthOpen = v, 0f, 70f, "%.0f°", "How far the jaw opens.");
+        changed |= SliderAh("Jaw down", s.JawDown, v => s.JawDown = v, -3f, 5f, "%.2f cm", "The jaw moved straight down (+) or up (-), without turning.");
+        changed |= SliderAh("Jaw forward", s.JawForward, v => s.JawForward = v, -3f, 5f, "%.2f cm", "The jaw moved straight forward (+) or back (-), without turning.");
         changed |= SliderAh("Upper corners up / down", s.Smile * 100f, v => s.Smile = v / 100f, -500f, 500f, "%.0f%%", "The upper lip's corners up (+, a smile, lifting the cheeks) or down (-), the lip near them following.");
         changed |= SliderAh("Lower corners up / down", s.SmileLower * 100f, v => s.SmileLower = v / 100f, -500f, 500f, "%.0f%%", "The lower lip's corners up (+) or down (-), the lip near them following.");
         changed |= SliderAh("Upper corners wider", s.CornerWide * 100f, v => s.CornerWide = v / 100f, -500f, 500f, "%.0f%%", "The upper lip's corners further apart (+) or closer together (-).");

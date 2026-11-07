@@ -40,6 +40,11 @@ public sealed class MainWindow : Window
     public BustShapeTab? BustShapeTab { get; set; }
     public HousingPropsTab? WorldPropsTab { get; set; }
     public EffectsTab? EffectsTab { get; set; }
+    public ClimaxTab? ClimaxTab { get; set; }
+    public LimberPosesTab? LimberPosesTab { get; set; }
+    public EntitiesTab? EntitiesTab { get; set; }
+    public KoiImportTab? KoiImportTab { get; set; }
+    public HousingPropsTab? KoiPropsTab { get; set; }
     public LookAtTab? LookAtTab { get; set; }
     public TimelineTab? TimelineTab { get; set; }
     public AppearanceTab? AppearanceTab { get; set; }
@@ -90,12 +95,13 @@ public sealed class MainWindow : Window
     [
         new("start", "", "Getting started", "What Limber does and where to begin.", DrawStartPage),
         new("globalpresets", "", "Global presets", "Everything a character has, saved as one preset: put it on anyone, edit it, and have it go on by itself when a player or actor comes into the scene.", () => GlobalPresetsTab?.Draw(), () => GlobalPresetsTab != null),
-        new("extras", "", "Extras", "One-press fun: Ragdoll mode (the chosen character goes limp and falls where they stand).", () => ExtrasTab?.Draw(), () => ExtrasTab != null),
+        new("extras", "", "Extras", "One-press fun: Ragdoll mode (the chosen character goes limp and falls where they stand), extra minions that follow you, hidden mounts.", () => ExtrasTab?.Draw(), () => ExtrasTab != null),
 
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
         new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
         new("face", "Posing", "Face Posing", "Move, turn and scale each face bone (brows, eyelids, eyes, cheeks, lips, jaw, tongue) on a face map or right on the face.", () => FacePosingTab?.Draw(), () => FacePosingTab != null),
         new("lookat", "Posing", "Look at", "The head and eyes follow another character (their face or any bone), one of their own bones, or the camera.", () => LookAtTab?.Draw(), () => LookAtTab != null),
+        new("limberposes", "Posing", "Limber Poses", "Ready-made whole-body poses: A-pose, T-pose, the splits and the Jack-O pose, made to fit the character and fine-tuned on the FK page.", () => LimberPosesTab?.Draw(), () => LimberPosesTab != null),
         new("hands", "Posing", "Hands", "Preset finger poses (fist, open, point...) for one hand or both.", () => _limberTab.DrawHandsPage()),
         new("scale", "Posing", "Bone scale", "Make any bone bigger or smaller, with control over the bones around it.", () => _limberTab.DrawBoneScalePage()),
         new("attach", "Posing", "Attach", "Hold a bone on to another character (hands on shoulders, holding hands...).", () => _limberTab.DrawAttachPage()),
@@ -104,23 +110,29 @@ public sealed class MainWindow : Window
         new("actors", "Posing", "Actors", "Add GPose actors (copies of a character) and remove them again.", () => _limberTab.DrawActorsPage()),
 
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
+        new("collide", "Body", "Physics collisions", "What pushes the soft breasts, butt, testicles and belly (arms, hands, thighs, the floor, props) and how they give way.", () => _limberTab.DrawCollisionsTab()),
         new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between.", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
         new("bust", "Body", "Breast size", "Breast size for tops made with size shapes: flat at 0 to huge at 100, from the Bust slider or set here.", () => BustShapeTab?.Draw(), () => BustShapeTab != null && Cfg.ShowBustTab),
         new("shape", "Body", "Body shape", "Sliders for the body's shape, live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
         new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes.", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
+        new("entities", "Scene", "Entity spawning", "Any creature from the game as an actor: minions, mounts, monsters, beast tribes. Pose it with FK / IK and key it on the Timeline.", () => EntitiesTab?.DrawSpawn(), () => EntitiesTab != null),
+        new("costume", "Scene", "Costume", "The chosen character is drawn as any creature instead of itself, until you take the costume off.", () => EntitiesTab?.DrawCostume(), () => EntitiesTab != null),
         new("voice", "Scene", "Voice Switcher", "Give any character, each actor on its own, any player voice: from the game's list, another character's, or by number.", () => VoiceTab?.Draw(), () => VoiceTab != null),
         new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
         new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
         new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis, a pregnant belly), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
-        new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null),
+        new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null && Cfg.ShowOralTab),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
         new("props", "Scene", "Housing props", "Place housing furniture around you in GPose, in sections by type.", () => _housingTab.Draw()),
         new("worldprops", "Scene", "World props", "Every prop the game world is built from (event objects, field objects, each region's props), in sections, to place around you.", () => WorldPropsTab?.Draw(), () => WorldPropsTab != null),
         new("effects", "Scene", "Effects", "Every visual effect in the game (spells, auras, markers, tethers, sparkles...), in groups by type, to place around you or put on a character's bone.", () => EffectsTab?.Draw(), () => EffectsTab != null),
+        new("climax", "Scene", "Climax", "Invisible emitters that shoot a thick, sticky liquid in spurts, from a character's bone or anywhere: it sticks to bodies, runs, drips and pools (adult characters).", () => ClimaxTab?.Draw(), () => ClimaxTab != null && Cfg.ShowClimaxTab),
         new("renderer", "Scene", "Renderer", "Extra models and bones drawn on the character.", () => _rendererTab.Draw()),
 
         new("link", "Koikatsu", "Koikatsu link", "Pose FFXIV characters live from Koikatsu / KoiPose.", DrawKoikatsuPage),
+        new("koiimport", "Koikatsu", "Import props", "Koikatsu's studio items converted into game models in a mod, to place in the scene.", () => KoiImportTab?.Draw(), () => KoiImportTab != null),
+        new("koiprops", "Koikatsu", "Props", "Place the Koikatsu props you converted: move, turn, size, or attach them to a bone.", () => KoiPropsTab?.Draw(), () => KoiPropsTab != null),
 
         new("settings", "Settings", "Posing settings", "How the dots look and behave; resetting things.", () => _limberTab.DrawPosingSettingsPage()),
         new("hotkeys", "Settings", "Hotkeys", "Undo / redo keys.", () => _limberTab.DrawHotkeysTab()),
@@ -189,6 +201,13 @@ public sealed class MainWindow : Window
                 ["Butt"] = ik.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults(),
                 ["Belly"] = ik.SoftBodyBelly ??= Limber.BodyRig.SoftBodySettings.BellyDefaults(),
                 ["LiveMesh"] = ik.LiveMesh ??= new(),
+            },
+            "collide" => () => new()
+            {
+                ["Breasts"] = (ik.SoftBody ??= new()).Collide ??= new(),
+                ["Testicles"] = (ik.SoftBodyTesticles ??= Limber.BodyRig.SoftBodySettings.TesticleDefaults()).Collide ??= Limber.BodyRig.CollisionSettings.TesticleDefaults(),
+                ["Butt"] = (ik.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults()).Collide ??= Limber.BodyRig.CollisionSettings.ButtDefaults(),
+                ["Belly"] = (ik.SoftBodyBelly ??= Limber.BodyRig.SoftBodySettings.BellyDefaults()).Collide ??= Limber.BodyRig.CollisionSettings.BellyDefaults(),
             },
             "oral" => () => new() { ["Oral"] = ik.Oral ??= new() },
             _ => null,
@@ -1087,6 +1106,22 @@ public sealed class MainWindow : Window
             Cfg.ShowVideoTab = video;
             SaveLocked();
         }
+        var oral = Cfg.ShowOralTab;
+        if (ImGui.Checkbox("Show the Oral page (still being made)###limber_show_oral", ref oral))
+        {
+            Cfg.ShowOralTab = oral;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scene > Oral. Off: the page is hidden and nothing on it runs.");
+        var climax = Cfg.ShowClimaxTab;
+        if (ImGui.Checkbox("Show the Climax page (still being made)###limber_show_climax", ref climax))
+        {
+            Cfg.ShowClimaxTab = climax;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scene > Climax. Off: the page is hidden and nothing on it runs.");
         var vlc = Cfg.ShowVlcTab;
         if (ImGui.Checkbox("Show the VLC Live page (experimental)###limber_show_vlc", ref vlc))
         {

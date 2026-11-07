@@ -27,6 +27,9 @@ public sealed class SizeChangeSettings
     /// <summary>Seconds from the start size to the end size.</summary>
     public float Duration { get; set; } = 20f;
     public SizeChangePattern Pattern { get; set; } = SizeChangePattern.Smooth;
+    /// <summary>Even: the height changes by the same amount every second (1x to 2x as fast as 9x to 10x).
+    /// Exponential: by the same factor every second (slow while small, faster and faster as it gets bigger).</summary>
+    public bool Exponential { get; set; }
     public ExpansionRepeat Repeat { get; set; } = ExpansionRepeat.Hold;
     /// <summary>Beats a minute (Pulses, Steps, Spurts).</summary>
     public float Speed { get; set; } = 30f;
@@ -200,6 +203,12 @@ public sealed class SizeChangeService
                 break;
         }
         float f = Fraction(s, (float)x, d, (long)(t / (2 * d)));
+        if(!s.Exponential)
+        {
+            // (the height itself eased from the start size to the end size, not its logarithm)
+            float a = Math.Clamp(s.From, MinSize, MaxSize), b = Math.Clamp(s.To, MinSize, MaxSize);
+            return Ln(MathF.Max(a + (b - a) * f, MinSize));
+        }
         return from + (to - from) * f;
     }
 

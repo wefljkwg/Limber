@@ -418,6 +418,53 @@ public static unsafe class LiveMesh
         return found;
     }
 
+    /// <summary>
+    /// The Direct3D buffers reachable from any objects (a placed prop, its model resource...), found the same way as a
+    /// character's: by following pointers a few steps and recognising buffers by their class.
+    /// </summary>
+    public static List<Found> ProbeFrom(nint[] roots, string file)
+    {
+        var found = new List<Found>();
+        var cls = BufferClass();
+        if (cls == 0)
+            return found;
+        var regions = new Regions();
+        var seen = new HashSet<nint>();
+        var queue = new Queue<(nint Address, string Path, int Depth)>();
+        foreach (var root in roots)
+            if (root != 0)
+                queue.Enqueue((root, "Root", 0));
+        int nodes = 0;
+        while (queue.Count > 0 && nodes++ < MaxNodes)
+        {
+            var (at, path, depth) = queue.Dequeue();
+            if (!seen.Add(at) || !regions.Readable(at, ScanBytes))
+                continue;
+            for (int off = 0; off < ScanBytes; off += 8)
+            {
+                nint value = *(nint*)(at + off);
+                if (value == 0 || seen.Contains(value) || !regions.Readable(value, 16))
+                    continue;
+                if (*(nint*)value == cls)
+                {
+                    var known = found.FirstOrDefault(f => f.Buffer == value);
+                    if (known != null)
+                    {
+                        if (!known.Holders.Contains(at + off))
+                            known.Holders.Add(at + off);
+                        continue;
+                    }
+                    var entry = new Found(0, file, $"{path}+0x{off:X}", at + off, value, GetDesc(value));
+                    entry.Holders.Add(at + off);
+                    found.Add(entry);
+                }
+                else if (depth < MaxDepth)
+                    queue.Enqueue((value, $"{path}+0x{off:X}", depth + 1));
+            }
+        }
+        return found;
+    }
+
     // ---- Shared by the wobble test and the live soft body
 
     /// <summary>The pointer the game reads is still <paramref name="buffer"/> (not freed or replaced by a reload).</summary>

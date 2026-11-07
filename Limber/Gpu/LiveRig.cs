@@ -81,6 +81,7 @@ public static unsafe class LiveRig
         public float[] SculptMin = [], SculptMax = [];
         public float[] SculptValues = [];
         public Plan? From;                         // (resculpted: the plan it was made from)
+        public SkinSurface? Surface;               // the skin the clothing is wrapped onto (null: none)
     }
 
     // The detail sliders' sculpts on one model: every vertex they move, and its terms (see BodyShapeBuild.SculptTerm).
@@ -103,7 +104,8 @@ public static unsafe class LiveRig
         public (int From, int To)[] Ranges = []; // the bytes those vertices' positions and normals span (written each frame)
         public bool Changed;               // Base differs from Original
         public SculptPlan? Sculpting;      // (null: nothing sculpted)
-        public int Moving => Meshes.Sum(m => m.Vertex.Length);
+        public WrapPlan[] Wraps = [];      // its clothing wrapped onto the skin
+        public int Moving => Meshes.Sum(m => m.Vertex.Length) + Wraps.Sum(m => m.Vertex.Length);
     }
 
     private sealed class MeshPlan
@@ -129,11 +131,16 @@ public static unsafe class LiveRig
         // plus its sculpt.
         public Vector3[] Orig = [];
         public int[] SculptIndex = [];
+        // Clothing following the skin: how far out from the skin point it follows it is (at rest), and how much it follows
+        // (0: not). The lattice's bones are scaled with the shape sliders, which would scale that gap too (clothing sunk
+        // into a smaller breast, floating off a bigger one): it's kept as it was instead.
+        public Vector3[] Offset = [];
+        public float[] Follow = [];
 
         public MeshPlan With(Vector3[] rest) => new()
         {
             Layout = Layout, Vertex = Vertex, Rest = rest, Normal = Normal, Start = Start, Mid = Mid, Slot = Slot, Weight = Weight,
-            Ranges = Ranges, Share = Share, Grad = Grad, Orig = Orig, SculptIndex = SculptIndex,
+            Ranges = Ranges, Share = Share, Grad = Grad, Orig = Orig, SculptIndex = SculptIndex, Offset = Offset, Follow = Follow,
         };
     }
 
@@ -186,13 +193,14 @@ public static unsafe class LiveRig
             models.Add(new ModelPlan
             {
                 File = m.File, Original = m.Original, Base = work, Meshes = meshes, Ranges = m.Ranges, Changed = changed, Sculpting = sp,
+                Wraps = m.Wraps,
             });
         }
         return new Plan
         {
             Info = plan.Info, Rig = plan.Rig, RealBone = plan.RealBone, VirtualBone = plan.VirtualBone, RestInverse = plan.RestInverse,
             Models = models, Report = plan.Report, SculptKeys = plan.SculptKeys, SculptMin = plan.SculptMin, SculptMax = plan.SculptMax,
-            SculptValues = values, From = plan.From ?? plan,
+            SculptValues = values, From = plan.From ?? plan, Surface = plan.Surface,
         };
     }
 
@@ -223,6 +231,7 @@ public static unsafe class LiveRig
     {
         public required Plan Plan;
         public required Matrix4x4[] Skin;
+        public Vector3[]? Surface;   // the skin surface's points where this frame's bones put them (made when first needed)
     }
 
     private static readonly ConcurrentDictionary<nint, Person> People = new();
@@ -356,6 +365,9 @@ public static unsafe class LiveRig
         public required RigPart[] Parts;           // the parts wanted now
         public required Dictionary<string, float> Sculpt, Built;
         public required string Key;
+        // The body model the worn top replaces (resolved through the mod manager), read but never drawn: the skin the
+        // clothing is wrapped onto, also where the top itself has no skin (under a bra's cups). Null: none.
+        public string? BodyFile;
 
         public static Inputs? Read(in ActorSkeleton sk, Want want)
         {
@@ -406,17 +418,54 @@ public static unsafe class LiveRig
             foreach (var k in built.Where(kv => kv.Value == 0f).Select(kv => kv.Key).ToList())
                 built.Remove(k);
             bool fit = AutoFit();
+            string? bodyFile = null;
+            try
+            {
+                if (!files.Any(f => f.Replace('\\', '/').Contains("/obj/body/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var top = files.FirstOrDefault(f => System.Text.RegularExpressions.Regex.IsMatch(f, @"c(\d{4})e\d{4}_top", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+                    var race = top == null ? null : System.Text.RegularExpressions.Regex.Match(top, @"c(\d{4})e\d{4}_top", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups[1].Value;
+                    // (only under real clothing: a top that is all skin, the nude body a body mod puts on the "no top"
+                    // slot, is the body itself, and wrapping anything onto another body model would print that
+                    // model's shape, its underwear's dents, into it)
+                    bool clothing = false;
+                    try
+                    {
+                        clothing = top != null && LiveRig.Read(top) is { } topData && MdlRigger.MeshMaterials(topData).Any(m => !MdlRigger.IsSkinMaterial(m));
+                    }
+                    catch
+                    {
+                    }
+                    if (race != null && clothing)
+                    {
+                        var game = $"chara/human/c{race}/obj/body/b0001/model/c{race}b0001_top.mdl";
+                        string? resolved = null;
+                        try
+                        {
+                            resolved = Plugin.PluginInterface.GetIpcSubscriber<string, int, string>("Penumbra.ResolveGameObjectPath")
+                                .InvokeFunc(game, obj->ObjectIndex);
+                        }
+                        catch
+                        {
+                        }
+                        bodyFile = string.IsNullOrEmpty(resolved) ? game : resolved;
+                    }
+                }
+            }
+            catch
+            {
+            }
             static string Of(Dictionary<string, float> d) => string.Join(",", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value:0.###}"));
             string key = string.Join("|",
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(info), info.Count,
                 string.Join(";", files.OrderBy(f => f, StringComparer.Ordinal)),
                 want.Physics ? "p" : "-", fit ? "f" : "-", string.Join(",", real.OrderBy(x => x)), string.Join(",", parts.Select(p => p.Key)),
                 string.Join(";", placements.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + ":" + ShapeKey(kv.Value))),
-                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built));
+                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built), bodyFile ?? "");
             return new Inputs
             {
                 Info = info, Rest = rest, Files = files, Placements = placements, Fit = fit, Physics = want.Physics, RealParts = real, Parts = parts,
-                Sculpt = sculpt, Built = built, Key = key,
+                Sculpt = sculpt, Built = built, Key = key, BodyFile = bodyFile,
             };
         }
     }
@@ -573,11 +622,34 @@ public static unsafe class LiveRig
         int movingTotal = 0, shapedTotal = 0;
         var idx = new byte[8];
         var w = new float[8];
+        // The skin the clothing is wrapped onto: the worn models' skin meshes, and the body model the top replaces (read,
+        // never drawn), each as the lattice weights it.
+        var builder = new SurfaceBuilder();
+        foreach (var (file, data) in models)
+            try
+            {
+                builder.AddSkin(data, LatticeSkins(file, data, sides, sidesKey), SlotOf, onlySkin: true);
+            }
+            catch
+            {
+            }
+        if (inp.BodyFile != null && Read(inp.BodyFile) is { } bodyData)
+            try
+            {
+                builder.AddSkin(bodyData, LatticeSkins(inp.BodyFile, bodyData, sides, sidesKey), SlotOf, onlySkin: false);
+            }
+            catch
+            {
+            }
+        var surface = builder.Count > 0 ? builder.Build() : null;
+        int wrappedTotal = 0;
         foreach (var (file, data) in models)
         {
             try
             {
-                var plan = MakeModel(file, data, sides, sidesKey, sculpt, builtSculpt, SlotOf, idx, w, ref movingTotal, ref shapedTotal);
+                var plan = MakeModel(file, data, sides, sidesKey, sculpt, builtSculpt, SlotOf, idx, w, ref movingTotal, ref shapedTotal, null, surface);
+                if (plan != null)
+                    wrappedTotal += plan.Wraps.Sum(x => x.Vertex.Length);
                 if (plan != null)
                     plans.Add(plan);
             }
@@ -600,13 +672,15 @@ public static unsafe class LiveRig
         }
         if (movingTotal > 0)
             report.Add($"{movingTotal} vertices on the lattice in {plans.Count(p => p.Moving > 0)} model(s)");
+        if (wrappedTotal > 0)
+            report.Add($"{wrappedTotal} clothing vertices wrapped onto the skin ({surface!.Count} skin triangles{(inp.BodyFile != null ? ", the body under the top included" : "")})");
         if (shapedTotal > 0)
             report.Add($"{shapedTotal} vertices sculpted");
         if (plans.Count == 0 && inp.Physics && sides.Count == 0)
             report.Add("none of the worn models has breast, butt, testicle or belly bones Limber knows");
         var made = new Plan
         {
-            Info = info, Rig = rig, RealBone = realBone, VirtualBone = virtualBone, RestInverse = restInverse, Models = plans,
+            Info = info, Rig = rig, RealBone = realBone, VirtualBone = virtualBone, RestInverse = restInverse, Models = plans, Surface = surface,
             Report = "Live rig: " + (report.Count > 0 ? string.Join("; ", report) : "nothing to do on what's worn") + ".",
         };
         if (sculpt == null)
@@ -620,10 +694,102 @@ public static unsafe class LiveRig
 
     private static string ShortName(string file) => System.IO.Path.GetFileName(file.Split('|').Last());
 
+    /// <summary>How many of a model's meshes are skin (the body's own material), not clothing.</summary>
+    private static int SkinMeshes(byte[] data)
+    {
+        try
+        {
+            return MdlRigger.MeshMaterials(data).Count(MdlRigger.IsSkinMaterial);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// The body's skin as weighted onto the lattice (each vertex: where it is at rest, its lattice bones' weights and their
+    /// share), for what's worn over it: a piece of clothing near the skin takes the skin's lattice weights, so it moves and
+    /// is shaped (size, blend shapes, physics) with the breast under it instead of by its own weights (whose edges are
+    /// often on the spine: the body then came through it).
+    /// </summary>
+    private sealed class SkinRef
+    {
+        private readonly List<Vector3> _pos = new();
+        private readonly List<(string Bone, float Weight)[]> _lattice = new();
+        private readonly List<float> _share = new();
+        private readonly Dictionary<(int, int, int), List<int>> _grid = new();
+        private const float Cell = 0.03f;
+        public const float Full = 0.015f, None = 0.06f;   // full within this of the skin, none past this
+
+        public int Count => _pos.Count;
+
+        public void Add(Vector3 p, (string, float)[] lattice, float share)
+        {
+            _pos.Add(p);
+            _lattice.Add(lattice);
+            _share.Add(share);
+        }
+
+        public void Finish()
+        {
+            _grid.Clear();
+            for (int i = 0; i < _pos.Count; i++)
+            {
+                var c = CellOf(_pos[i]);
+                if (!_grid.TryGetValue(c, out var list))
+                    _grid[c] = list = new List<int>();
+                list.Add(i);
+            }
+        }
+
+        private static (int, int, int) CellOf(Vector3 p) => ((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell), (int)MathF.Floor(p.Z / Cell));
+
+        /// <summary>The nearest skin vertex within reach, and how much it governs this point (1 near the skin, 0 past reach).</summary>
+        public (float Follow, int Index) Near(Vector3 p)
+        {
+            var (cx, cy, cz) = CellOf(p);
+            int best = -1;
+            float bestD = None * None;
+            for (int x = cx - 2; x <= cx + 2; x++)
+                for (int y = cy - 2; y <= cy + 2; y++)
+                    for (int z = cz - 2; z <= cz + 2; z++)
+                        if (_grid.TryGetValue((x, y, z), out var list))
+                            foreach (int i in list)
+                            {
+                                float d = Vector3.DistanceSquared(p, _pos[i]);
+                                if (d < bestD)
+                                {
+                                    bestD = d;
+                                    best = i;
+                                }
+                            }
+            if (best < 0)
+                return (0f, -1);
+            float u = Math.Clamp((MathF.Sqrt(bestD) - Full) / (None - Full), 0f, 1f);
+            return (1f - u * u * (3f - 2f * u), best);
+        }
+
+        public float Share(int i) => _share[i];
+        public Vector3 Position(int i) => _pos[i];
+        public (string Bone, float Weight)[] Lattice(int i) => _lattice[i];
+    }
+
     private static ModelPlan? MakeModel(string file, byte[] data, List<MdlRigger.Side> sides, string sidesKey,
         Action<Vector3, string[], byte[], float[], int, List<Limber.BodyShape.BodyShapeBuild.SculptTerm>>? sculpt,
-        Func<Vector3, string[], byte[], float[], int, Vector3>? builtSculpt, Func<string, int> slotOf, byte[] idx, float[] w, ref int movingTotal, ref int shapedTotal)
+        Func<Vector3, string[], byte[], float[], int, Vector3>? builtSculpt, Func<string, int> slotOf, byte[] idx, float[] w, ref int movingTotal, ref int shapedTotal,
+        SkinRef? skinRef = null, SkinSurface? surface = null)
     {
+        string[] materials;
+        try
+        {
+            materials = MdlRigger.MeshMaterials(data);
+        }
+        catch
+        {
+            materials = [];
+        }
+        bool SkinMesh(int mesh) => mesh < materials.Length && MdlRigger.IsSkinMaterial(materials[mesh]);
         var (offset, size, layouts) = MdlRigger.Layout(data);
         if (size[0] == 0 || offset[0] + size[0] > data.Length)
             return null;
@@ -654,8 +820,10 @@ public static unsafe class LiveRig
             if (weighted != null)
                 onLattice = MdlRigger.Skin(weighted, 0);
         }
-        if (onLattice == null && sculpt == null && builtSculpt == null)
+        if (onLattice == null && sculpt == null && builtSculpt == null && surface == null
+            && (skinRef == null || (skinRef.Count == 0 && !materials.Any(MdlRigger.IsSkinMaterial))))
             return null;
+        var wraps = new List<WrapPlan>();
 
         var work = (byte[])original.Clone();
         bool changed = false;
@@ -667,11 +835,15 @@ public static unsafe class LiveRig
         var sBuilt = new List<Vector3>();
         var sStart = new List<int>();
         var sTerms = new List<Limber.BodyShape.BodyShapeBuild.SculptTerm>();
-        foreach (var layout in layouts.Where(l => l.Lod == 0))
+        // (the skin's meshes first, so the clothing's in the same model can follow them)
+        foreach (var layout in layouts.Where(l => l.Lod == 0).OrderBy(l => SkinMesh(l.Mesh) ? 0 : 1))
         {
             var skin = skins.FirstOrDefault(k => k.Mesh == layout.Mesh);
             if (skin == null)
                 continue;
+            bool isSkin = SkinMesh(layout.Mesh);
+            var capture = isSkin ? skinRef : null;
+            var follow = !isSkin && skinRef is { Count: > 0 } ? skinRef : null;
             var rskin = onLattice?.FirstOrDefault(k => k.Mesh == layout.Mesh);
             bool[]? latticeBone = rskin?.Bones.Select(RigParts.IsRigBone).ToArray();
             var vertex = new List<int>();
@@ -687,6 +859,10 @@ public static unsafe class LiveRig
             var shares = new List<float>();
             var origs = new List<Vector3>();
             var sculptIndex = new List<int>();
+            var offsets = new List<Vector3>();
+            var follows = new List<float>();
+            bool anyFollow = false;
+            var wrap = surface != null && !isSkin ? new WrapBuilder(layout) : null;
             int posFrom = int.MaxValue, posTo = 0, nrmFrom = int.MaxValue, nrmTo = 0;
             for (int v = 0; v < layout.VertexCount; v++)
             {
@@ -723,13 +899,46 @@ public static unsafe class LiveRig
                 }
 
                 allPos[v] = p;
+                // Clothing near the skin: wrapped onto it (see WrapPlan) instead of moved by the lattice itself.
+                if (wrap != null)
+                {
+                    var nrm0 = layout.NormalAt >= 0 ? MdlRigger.ReadVector(original, layout.NormalAt + v * layout.NormalStride, layout.NormalType) : Vector3.Zero;
+                    if (wrap.TryAdd(surface!, v, p, nrm0, skin, idx, w, rskin, slotOf))
+                    {
+                        allShare[v] = 0f;
+                        continue;
+                    }
+                }
+                // (worn over the body: how much it follows the skin under it)
+                var (fol, near) = follow?.Near(p) ?? (0f, -1);
                 // On the lattice: weighted to its bones now.
-                if (rskin == null || latticeBone == null)
-                    continue;
                 float lat = 0f;
-                for (int k = 0; k < rskin.Slots; k++)
-                    if (rskin.Weights[v * 8 + k] > 0f && rskin.Indices[v * 8 + k] < latticeBone.Length && latticeBone[rskin.Indices[v * 8 + k]])
-                        lat += rskin.Weights[v * 8 + k];
+                if (rskin != null && latticeBone != null)
+                    for (int k = 0; k < rskin.Slots; k++)
+                        if (rskin.Weights[v * 8 + k] > 0f && rskin.Indices[v * 8 + k] < latticeBone.Length && latticeBone[rskin.Indices[v * 8 + k]])
+                            lat += rskin.Weights[v * 8 + k];
+                if (capture != null)
+                {
+                    var latW = new List<(string, float)>();
+                    if (rskin != null && latticeBone != null)
+                        for (int k = 0; k < rskin.Slots; k++)
+                            if (rskin.Weights[v * 8 + k] > 0f && rskin.Indices[v * 8 + k] < latticeBone.Length && latticeBone[rskin.Indices[v * 8 + k]])
+                                latW.Add((rskin.Bones[rskin.Indices[v * 8 + k]], rskin.Weights[v * 8 + k]));
+                    // (a body already weighted onto the lattice, by the rig mod: its own weights are the lattice's)
+                    float ownLat = 0f;
+                    if (rskin == null)
+                        for (int k = 0; k < skin.Slots; k++)
+                            if (skin.Weights[v * 8 + k] > 0f && skin.Indices[v * 8 + k] < skin.Bones.Length && RigParts.IsRigBone(skin.Bones[skin.Indices[v * 8 + k]]))
+                            {
+                                latW.Add((skin.Bones[skin.Indices[v * 8 + k]], skin.Weights[v * 8 + k]));
+                                ownLat += skin.Weights[v * 8 + k];
+                            }
+                    capture.Add(p, latW.ToArray(), rskin == null ? ownLat : lat);
+                }
+                if (near >= 0)
+                    lat = lat * (1f - fol) + follow!.Share(near) * fol;
+                else if (rskin == null || latticeBone == null)
+                    continue;
                 allShare[v] = lat;
                 if (lat <= 0f)
                     continue;
@@ -747,16 +956,49 @@ public static unsafe class LiveRig
                     weight.Add(wk);
                 }
                 int m0 = slot.Count;
-                for (int k = 0; k < rskin.Slots && ok; k++)
+                // the new weights: the model's own lattice weighting, eased toward the skin's under it
+                float keep = near >= 0 ? 1f - fol : 1f;
+                if (rskin != null && keep > 0f)
+                    for (int k = 0; k < rskin.Slots && ok; k++)
+                    {
+                        float wk = rskin.Weights[v * 8 + k];
+                        int bone = rskin.Indices[v * 8 + k];
+                        if (wk <= 0f || bone >= rskin.Bones.Length)
+                            continue;
+                        int sl = slotOf(rskin.Bones[bone]);
+                        ok = sl >= 0;
+                        slot.Add(sl);
+                        weight.Add(wk * keep);
+                    }
+                else if (keep > 0f)
+                    for (int k = s0; k < m0; k++)
+                    {
+                        slot.Add(slot[k]);
+                        weight.Add(weight[k] * keep);
+                    }
+                if (near >= 0 && fol > 0f && ok)
                 {
-                    float wk = rskin.Weights[v * 8 + k];
-                    int bone = rskin.Indices[v * 8 + k];
-                    if (wk <= 0f || bone >= rskin.Bones.Length)
-                        continue;
-                    int sl = slotOf(rskin.Bones[bone]);
-                    ok = sl >= 0;
-                    slot.Add(sl);
-                    weight.Add(wk);
+                    // (its own bones for the part the skin's lattice doesn't take, the skin's lattice bones for the rest)
+                    float own = 0f;
+                    for (int k = s0; k < m0; k++)
+                        own += weight[k];
+                    float skinShare = follow!.Share(near);
+                    for (int k = s0; k < m0; k++)
+                    {
+                        slot.Add(slot[k]);
+                        weight.Add(weight[k] / MathF.Max(own, 1e-6f) * (1f - skinShare) * fol);
+                    }
+                    foreach (var (bn, bw) in follow.Lattice(near))
+                    {
+                        int sl = slotOf(bn);
+                        if (sl < 0)
+                        {
+                            ok = false;
+                            break;
+                        }
+                        slot.Add(sl);
+                        weight.Add(bw * fol);
+                    }
                 }
                 if (ok && m0 > s0 && slot.Count > m0)
                 {
@@ -794,6 +1036,9 @@ public static unsafe class LiveRig
                 vertex.Add(v);
                 restList.Add(p);
                 origs.Add(p);
+                offsets.Add(near >= 0 ? p - follow!.Position(near) : Vector3.Zero);
+                follows.Add(near >= 0 ? fol : 0f);
+                anyFollow |= near >= 0 && fol > 0f;
                 sculptIndex.Add(sculptEntry);
                 shares.Add(lat);
                 normals.Add(layout.NormalAt >= 0 ? MdlRigger.ReadVector(original, layout.NormalAt + v * layout.NormalStride, layout.NormalType) : Vector3.Zero);
@@ -808,6 +1053,10 @@ public static unsafe class LiveRig
                     nrmTo = Math.Max(nrmTo, na + 16);
                 }
             }
+            if (capture != null)
+                capture.Finish();
+            if (wrap is { Count: > 0 })
+                wraps.Add(wrap.Build(original.Length));
             if (vertex.Count == 0)
                 continue;
             start.Add(slot.Count);
@@ -818,21 +1067,518 @@ public static unsafe class LiveRig
                 Ranges = MergeRanges([(posFrom, Math.Min(posTo, original.Length)), (nrmFrom, Math.Min(nrmTo, original.Length))]),
                 Share = shares.ToArray(), Grad = ShareGradients(allPos, allShare, vertex, normals),
                 Orig = origs.ToArray(), SculptIndex = sculptIndex.ToArray(),
+                Offset = anyFollow ? offsets.ToArray() : [], Follow = anyFollow ? follows.ToArray() : [],
             });
             movingTotal += vertex.Count;
         }
-        if (!changed && meshes.Count == 0)
+        if (!changed && meshes.Count == 0 && wraps.Count == 0)
             return null;
         return new ModelPlan
         {
-            File = file, Original = original, Base = work, Meshes = meshes.ToArray(), Changed = changed,
+            File = file, Original = original, Base = work, Meshes = meshes.ToArray(), Changed = changed, Wraps = wraps.ToArray(),
             Sculpting = sAt.Count == 0 ? null : new SculptPlan
             {
                 At = sAt.ToArray(), Type = sType.ToArray(), Orig = sOrig.ToArray(), Built = sBuilt.ToArray(),
                 Start = sStart.Append(sTerms.Count).ToArray(), Terms = sTerms.ToArray(),
             },
-            Ranges = MergeRanges(meshes.SelectMany(m => m.Ranges).ToList()),
+            Ranges = MergeRanges(meshes.SelectMany(m => m.Ranges).Concat(wraps.SelectMany(x => x.Ranges)).ToList()),
         };
+    }
+
+    // ---- Clothing wrapped onto the skin (as a "surface deform" / skin wrap does in Blender, Maya, VaM)
+    //
+    // Each piece of clothing near the skin is bound, at rest, to the nearest few skin triangles: where on each triangle it
+    // sits and how far off it (in the triangle's own directions). Each frame the skin is placed where its bones (and the
+    // lattice) put it, and the clothing goes where its triangles are now, at the same distance off them, turned with
+    // them: so it follows everything the rig does to the skin (size, shapes, sculpts, physics) the same way, and never
+    // sinks into it or floats off it. The skin is the worn models' own skin, and the body model the top replaces (read,
+    // never drawn: many tops have no skin under the clothing).
+
+    /// <summary>The worn models' skin as weighted onto the lattice (or their own weights when nothing is to be done).</summary>
+    private static List<MdlRigger.MeshSkin> LatticeSkins(string file, byte[] data, List<MdlRigger.Side> sides, string sidesKey)
+    {
+        var skins = MdlRigger.Skin(data, 0);
+        var have = skins.SelectMany(k => k.Bones).Where(RigParts.IsRigBone).ToHashSet(StringComparer.Ordinal);
+        var todo = have.Count == 0 ? sides
+            : sides.Where(sd => RigParts.All.FirstOrDefault(p => p.Key == sd.PartKey) is not { } part || !have.Any(part.IsMine)).ToList();
+        if (todo.Count == 0)
+            return skins;
+        var key = file + "|" + data.Length + "|" + sidesKey + "|" + string.Join(",", todo.Select(sd => sd.PartKey).Distinct());
+        if (RigCache.Count > 32)
+            RigCache.Clear();
+        var weighted = RigCache.GetOrAdd(key, _ =>
+        {
+            try
+            {
+                return MdlRigger.Rig(data, todo, new List<string>());
+            }
+            catch
+            {
+                return null;
+            }
+        });
+        if (weighted == null)
+            return skins;
+        var on = MdlRigger.Skin(weighted, 0);
+        // (each mesh the lattice reweighted, the others as they were)
+        return skins.Select(k => on.FirstOrDefault(o => o.Mesh == k.Mesh) ?? k).ToList();
+    }
+
+    private sealed class SkinSurface
+    {
+        public required Vector3[] P;        // each point at rest
+        public required int[] Tri;          // 3 points per triangle
+        public required int[] WStart;       // each point's weights: WStart[v] to WStart[v + 1]
+        public required int[] WSlot;
+        public required float[] WWeight;
+        private readonly Dictionary<(int, int, int), List<int>> _grid = new();
+        private const float Cell = 0.03f;
+
+        public int Count => Tri.Length / 3;
+
+        public void Index()
+        {
+            for (int t = 0; t < Count; t++)
+            {
+                var c = (P[Tri[t * 3]] + P[Tri[t * 3 + 1]] + P[Tri[t * 3 + 2]]) / 3f;
+                var k = CellOf(c);
+                if (!_grid.TryGetValue(k, out var list))
+                    _grid[k] = list = new List<int>();
+                list.Add(t);
+            }
+        }
+
+        private static (int, int, int) CellOf(Vector3 p) => ((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell), (int)MathF.Floor(p.Z / Cell));
+
+        /// <summary>The nearest few triangles within reach: each with how far, and where on it (its corners' shares).</summary>
+        public void Nearest(Vector3 p, float reach, List<(int Tri, float Dist, Vector3 Bary)> into, int most)
+        {
+            into.Clear();
+            var (cx, cy, cz) = CellOf(p);
+            int span = (int)MathF.Ceiling(reach / Cell) + 1;
+            for (int x = cx - span; x <= cx + span; x++)
+                for (int y = cy - span; y <= cy + span; y++)
+                    for (int z = cz - span; z <= cz + span; z++)
+                        if (_grid.TryGetValue((x, y, z), out var list))
+                            foreach (int t in list)
+                            {
+                                var bary = Closest(p, P[Tri[t * 3]], P[Tri[t * 3 + 1]], P[Tri[t * 3 + 2]], out var at);
+                                float d = Vector3.Distance(p, at);
+                                if (d > reach)
+                                    continue;
+                                if (into.Count < most)
+                                    into.Add((t, d, bary));
+                                else
+                                {
+                                    int worst = 0;
+                                    for (int i = 1; i < into.Count; i++)
+                                        if (into[i].Dist > into[worst].Dist)
+                                            worst = i;
+                                    if (d < into[worst].Dist)
+                                        into[worst] = (t, d, bary);
+                                }
+                            }
+            into.Sort((a, b) => a.Dist.CompareTo(b.Dist));
+        }
+
+        /// <summary>The point of the triangle closest to p, as its corners' shares.</summary>
+        public static Vector3 Closest(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out Vector3 at)
+        {
+            var ab = b - a;
+            var ac = c - a;
+            var ap = p - a;
+            float d1 = Vector3.Dot(ab, ap), d2 = Vector3.Dot(ac, ap);
+            if (d1 <= 0f && d2 <= 0f) { at = a; return new Vector3(1, 0, 0); }
+            var bp = p - b;
+            float d3 = Vector3.Dot(ab, bp), d4 = Vector3.Dot(ac, bp);
+            if (d3 >= 0f && d4 <= d3) { at = b; return new Vector3(0, 1, 0); }
+            float vc = d1 * d4 - d3 * d2;
+            if (vc <= 0f && d1 >= 0f && d3 <= 0f)
+            {
+                float v = d1 / (d1 - d3);
+                at = a + ab * v;
+                return new Vector3(1 - v, v, 0);
+            }
+            var cp = p - c;
+            float d5 = Vector3.Dot(ab, cp), d6 = Vector3.Dot(ac, cp);
+            if (d6 >= 0f && d5 <= d6) { at = c; return new Vector3(0, 0, 1); }
+            float vb = d5 * d2 - d1 * d6;
+            if (vb <= 0f && d2 >= 0f && d6 <= 0f)
+            {
+                float w = d2 / (d2 - d6);
+                at = a + ac * w;
+                return new Vector3(1 - w, 0, w);
+            }
+            float va = d3 * d6 - d5 * d4;
+            if (va <= 0f && (d4 - d3) >= 0f && (d5 - d6) >= 0f)
+            {
+                float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+                at = b + (c - b) * w;
+                return new Vector3(0, 1 - w, w);
+            }
+            float denom = 1f / (va + vb + vc);
+            float vv = vb * denom, ww = vc * denom;
+            at = a + ab * vv + ac * ww;
+            return new Vector3(1 - vv - ww, vv, ww);
+        }
+
+        /// <summary>A triangle's directions: along its first edge, out of it, and across.</summary>
+        public static bool Frame(Vector3 a, Vector3 b, Vector3 c, out Vector3 e1, out Vector3 n, out Vector3 t)
+        {
+            e1 = b - a;
+            n = Vector3.Cross(b - a, c - a);
+            t = Vector3.Zero;
+            if (e1.LengthSquared() < 1e-14f || n.LengthSquared() < 1e-18f)
+                return false;
+            e1 = Vector3.Normalize(e1);
+            n = Vector3.Normalize(n);
+            t = Vector3.Cross(n, e1);
+            return true;
+        }
+
+        /// <summary>Each point where this frame's bones put it.</summary>
+        public Vector3[] Place(Matrix4x4[] m)
+        {
+            var at = new Vector3[P.Length];
+            void Range(int from, int to)
+            {
+                for (int v = from; v < to; v++)
+                {
+                    var sum = Vector3.Zero;
+                    float total = 0f;
+                    for (int k = WStart[v]; k < WStart[v + 1]; k++)
+                    {
+                        int sl = WSlot[k];
+                        if (sl < 0 || sl >= m.Length)
+                            continue;
+                        sum += Vector3.Transform(P[v], m[sl]) * WWeight[k];
+                        total += WWeight[k];
+                    }
+                    at[v] = total > 1e-6f ? sum / total : P[v];
+                }
+            }
+            const int Chunk = 4096;
+            if (P.Length <= Chunk)
+                Range(0, P.Length);
+            else
+                Parallel.For(0, (P.Length + Chunk - 1) / Chunk, c => Range(c * Chunk, Math.Min(P.Length, (c + 1) * Chunk)));
+            return at;
+        }
+    }
+
+    private sealed class SurfaceBuilder
+    {
+        private readonly List<Vector3> _p = new();
+        private readonly List<int> _tri = new(), _start = new() { 0 }, _slot = new();
+        private readonly List<float> _weight = new();
+
+        public int Count => _tri.Count / 3;
+
+        /// <summary>A model's skin meshes (or all its meshes: a body model), LoD 0, with their (lattice) weights.</summary>
+        public void AddSkin(byte[] data, List<MdlRigger.MeshSkin> skins, Func<string, int> slotOf, bool onlySkin)
+        {
+            var materials = MdlRigger.MeshMaterials(data);
+            var (offset, size, layouts) = MdlRigger.Layout(data);
+            if (size[0] == 0 || offset[0] + size[0] > data.Length)
+                return;
+            var block = data.AsSpan((int)offset[0], (int)size[0]).ToArray();
+            foreach (var layout in layouts.Where(l => l.Lod == 0))
+            {
+                if (onlySkin && !(layout.Mesh < materials.Length && MdlRigger.IsSkinMaterial(materials[layout.Mesh])))
+                    continue;
+                var skin = skins.FirstOrDefault(k => k.Mesh == layout.Mesh);
+                if (skin == null || skin.Triangles.Length < 3)
+                    continue;
+                int first = _p.Count;
+                for (int v = 0; v < layout.VertexCount; v++)
+                {
+                    int pa = layout.PositionAt + v * layout.PositionStride;
+                    _p.Add(pa + 12 <= block.Length ? MdlRigger.ReadVector(block, pa, layout.PositionType) : Vector3.Zero);
+                    for (int k = 0; k < skin.Slots; k++)
+                    {
+                        float wk = skin.Weights[v * 8 + k];
+                        int bone = skin.Indices[v * 8 + k];
+                        if (wk <= 0f || bone >= skin.Bones.Length)
+                            continue;
+                        int sl = slotOf(skin.Bones[bone]);
+                        if (sl < 0)
+                            continue;
+                        _slot.Add(sl);
+                        _weight.Add(wk);
+                    }
+                    _start.Add(_slot.Count);
+                }
+                for (int i = 0; i + 2 < skin.Triangles.Length; i += 3)
+                {
+                    int a = skin.Triangles[i], b = skin.Triangles[i + 1], c = skin.Triangles[i + 2];
+                    if (a >= layout.VertexCount || b >= layout.VertexCount || c >= layout.VertexCount)
+                        continue;
+                    _tri.Add(first + a);
+                    _tri.Add(first + b);
+                    _tri.Add(first + c);
+                }
+            }
+        }
+
+        public SkinSurface Build()
+        {
+            var made = new SkinSurface
+            {
+                P = _p.ToArray(), Tri = _tri.ToArray(), WStart = _start.ToArray(), WSlot = _slot.ToArray(), WWeight = _weight.ToArray(),
+            };
+            made.Index();
+            return made;
+        }
+    }
+
+    // One mesh's clothing wrapped onto the skin.
+    private sealed class WrapPlan
+    {
+        public required MdlRigger.MeshLayout Layout;
+        public required int[] Vertex;
+        public required Vector3[] Rest, Normal;
+        public required int[] OwnStart, OwnSlot;     // its own weights (what the game skins it with)
+        public required float[] OwnWeight;
+        public required int[] NewStart, NewSlot;     // the lattice's weights for it (where it doesn't follow fully)
+        public required float[] NewWeight;
+        public required float[] Follow;              // how much it follows the skin (1 near it, less further off)
+        public required int[] BStart;                // its bindings: BStart[i] to BStart[i + 1]
+        public required int[] BTri;
+        public required Vector3[] BBary, BOff, BNrm; // where on the triangle, how far off it and its normal (triangle's directions)
+        public required float[] BShare;
+        public (int From, int To)[] Ranges = [];
+    }
+
+    private sealed class WrapBuilder
+    {
+        public const float Full = 0.03f, Reach = 0.08f;   // follows fully within this of the skin, not at all past reach
+        private readonly MdlRigger.MeshLayout _layout;
+        private readonly List<int> _vertex = new(), _ownStart = new(), _ownSlot = new(), _newStart = new(), _newSlot = new(), _bStart = new(), _bTri = new();
+        private readonly List<Vector3> _rest = new(), _normal = new(), _bBary = new(), _bOff = new(), _bNrm = new();
+        private readonly List<float> _ownWeight = new(), _newWeight = new(), _follow = new(), _bShare = new();
+        private readonly List<(int Tri, float Dist, Vector3 Bary)> _near = new();
+        private int _posFrom = int.MaxValue, _posTo, _nrmFrom = int.MaxValue, _nrmTo;
+
+        public WrapBuilder(MdlRigger.MeshLayout layout) => _layout = layout;
+
+        public int Count => _vertex.Count;
+
+        public bool TryAdd(SkinSurface surface, int v, Vector3 p, Vector3 normal, MdlRigger.MeshSkin skin, byte[] idx, float[] w,
+            MdlRigger.MeshSkin? lattice, Func<string, int> slotOf)
+        {
+            surface.Nearest(p, Reach, _near, 4);
+            if (_near.Count == 0)
+                return false;
+            // its own weights (every bone must be one the frame has)
+            int o0 = _ownSlot.Count;
+            for (int k = 0; k < skin.Slots; k++)
+            {
+                if (w[k] <= 0f || idx[k] >= skin.Bones.Length)
+                    continue;
+                int sl = slotOf(skin.Bones[idx[k]]);
+                if (sl < 0)
+                {
+                    _ownSlot.RemoveRange(o0, _ownSlot.Count - o0);
+                    _ownWeight.RemoveRange(o0, _ownWeight.Count - o0);
+                    return false;
+                }
+                _ownSlot.Add(sl);
+                _ownWeight.Add(w[k]);
+            }
+            if (_ownSlot.Count == o0)
+                return false;
+            // the lattice's weights (its own where the lattice has none for it)
+            int n0 = _newSlot.Count;
+            if (lattice != null)
+                for (int k = 0; k < lattice.Slots; k++)
+                {
+                    float wk = lattice.Weights[v * 8 + k];
+                    int bone = lattice.Indices[v * 8 + k];
+                    if (wk <= 0f || bone >= lattice.Bones.Length)
+                        continue;
+                    int sl = slotOf(lattice.Bones[bone]);
+                    if (sl < 0)
+                        continue;
+                    _newSlot.Add(sl);
+                    _newWeight.Add(wk);
+                }
+            if (_newSlot.Count == n0)
+                for (int k = o0; k < _ownSlot.Count; k++)
+                {
+                    _newSlot.Add(_ownSlot[k]);
+                    _newWeight.Add(_ownWeight[k]);
+                }
+            // the bindings: each triangle's point, the offset and the normal in its directions, shared by nearness
+            int b0 = _bTri.Count;
+            float total = 0f;
+            foreach (var (t, d, bary) in _near)
+            {
+                var a = surface.P[surface.Tri[t * 3]];
+                var b = surface.P[surface.Tri[t * 3 + 1]];
+                var c = surface.P[surface.Tri[t * 3 + 2]];
+                if (!SkinSurface.Frame(a, b, c, out var e1, out var nn, out var tt))
+                    continue;
+                var at = a * bary.X + b * bary.Y + c * bary.Z;
+                var off = p - at;
+                _bTri.Add(t);
+                _bBary.Add(bary);
+                _bOff.Add(new Vector3(Vector3.Dot(off, e1), Vector3.Dot(off, nn), Vector3.Dot(off, tt)));
+                _bNrm.Add(new Vector3(Vector3.Dot(normal, e1), Vector3.Dot(normal, nn), Vector3.Dot(normal, tt)));
+                float share = 1f / ((d + 0.004f) * (d + 0.004f));
+                _bShare.Add(share);
+                total += share;
+            }
+            if (_bTri.Count == b0)
+            {
+                _ownSlot.RemoveRange(o0, _ownSlot.Count - o0);
+                _ownWeight.RemoveRange(o0, _ownWeight.Count - o0);
+                _newSlot.RemoveRange(n0, _newSlot.Count - n0);
+                _newWeight.RemoveRange(n0, _newWeight.Count - n0);
+                return false;
+            }
+            for (int i = b0; i < _bShare.Count; i++)
+                _bShare[i] /= total;
+            _ownStart.Add(o0);
+            _newStart.Add(n0);
+            _bStart.Add(b0);
+            float u = Math.Clamp((_near[0].Dist - Full) / (Reach - Full), 0f, 1f);
+            _follow.Add(1f - u * u * (3f - 2f * u));
+            _vertex.Add(v);
+            _rest.Add(p);
+            _normal.Add(normal);
+            int pa = _layout.PositionAt + v * _layout.PositionStride;
+            _posFrom = Math.Min(_posFrom, pa);
+            _posTo = Math.Max(_posTo, pa + 16);
+            if (_layout.NormalAt >= 0)
+            {
+                int na = _layout.NormalAt + v * _layout.NormalStride;
+                _nrmFrom = Math.Min(_nrmFrom, na);
+                _nrmTo = Math.Max(_nrmTo, na + 16);
+            }
+            return true;
+        }
+
+        public WrapPlan Build(int blockLength) => new()
+        {
+            Layout = _layout, Vertex = _vertex.ToArray(), Rest = _rest.ToArray(), Normal = _normal.ToArray(),
+            OwnStart = _ownStart.Append(_ownSlot.Count).ToArray(), OwnSlot = _ownSlot.ToArray(), OwnWeight = _ownWeight.ToArray(),
+            NewStart = _newStart.Append(_newSlot.Count).ToArray(), NewSlot = _newSlot.ToArray(), NewWeight = _newWeight.ToArray(),
+            Follow = _follow.ToArray(), BStart = _bStart.Append(_bTri.Count).ToArray(), BTri = _bTri.ToArray(),
+            BBary = _bBary.ToArray(), BOff = _bOff.ToArray(), BNrm = _bNrm.ToArray(), BShare = _bShare.ToArray(),
+            Ranges = MergeRanges([(_posFrom, Math.Min(_posTo, blockLength)), (_nrmFrom, Math.Min(_nrmTo, blockLength))]),
+        };
+    }
+
+    /// <summary>One mesh's wrapped clothing where the skin is this frame (render thread). Returns how many moved.</summary>
+    private static int Wrap(WrapPlan wrap, byte[] work, Snapshot snap)
+    {
+        var surface = snap.Plan.Surface;
+        if (surface == null)
+            return 0;
+        var m = snap.Skin;
+        var skinNow = snap.Surface ??= surface.Place(m);
+        var L = wrap.Layout;
+        bool normals = L.NormalAt >= 0 && L.NormalType is (2 or 3 or 14 or 5 or 8);
+        int moved = 0;
+        void Range(int from, int to)
+        {
+            int count = 0;
+            for (int i = from; i < to; i++)
+            {
+                // where the skin's triangles put it
+                var target = Vector3.Zero;
+                var nrm = Vector3.Zero;
+                float got = 0f;
+                for (int k = wrap.BStart[i]; k < wrap.BStart[i + 1]; k++)
+                {
+                    int t = wrap.BTri[k];
+                    var a = skinNow[surface.Tri[t * 3]];
+                    var b = skinNow[surface.Tri[t * 3 + 1]];
+                    var c = skinNow[surface.Tri[t * 3 + 2]];
+                    if (!SkinSurface.Frame(a, b, c, out var e1, out var nn, out var tt))
+                        continue;
+                    var bary = wrap.BBary[k];
+                    var off = wrap.BOff[k];
+                    var bn = wrap.BNrm[k];
+                    target += (a * bary.X + b * bary.Y + c * bary.Z + e1 * off.X + nn * off.Y + tt * off.Z) * wrap.BShare[k];
+                    nrm += (e1 * bn.X + nn * bn.Y + tt * bn.Z) * wrap.BShare[k];
+                    got += wrap.BShare[k];
+                }
+                if (got < 1e-4f)
+                    continue;
+                target /= got;
+                var p = wrap.Rest[i];
+                var n = wrap.Normal[i];
+                // further from the skin: eased toward where the lattice itself puts it
+                float f = wrap.Follow[i];
+                if (f < 0.999f)
+                {
+                    var lp = Vector3.Zero;
+                    var ln = Vector3.Zero;
+                    float lw = 0f;
+                    for (int k = wrap.NewStart[i]; k < wrap.NewStart[i + 1]; k++)
+                    {
+                        var bone = m[wrap.NewSlot[k]];
+                        lp += Vector3.Transform(p, bone) * wrap.NewWeight[k];
+                        ln += Vector3.TransformNormal(n, bone) * wrap.NewWeight[k];
+                        lw += wrap.NewWeight[k];
+                    }
+                    if (lw > 1e-6f)
+                    {
+                        target = Vector3.Lerp(lp / lw, target, f);
+                        nrm = Vector3.Lerp(ln / lw, nrm, f);
+                    }
+                }
+                // back through its own bones: the rest spot the game skins to there
+                var own = new Matrix4x4();
+                float ow = 0f;
+                for (int k = wrap.OwnStart[i]; k < wrap.OwnStart[i + 1]; k++)
+                {
+                    own += m[wrap.OwnSlot[k]] * wrap.OwnWeight[k];
+                    ow += wrap.OwnWeight[k];
+                }
+                if (ow <= 1e-6f)
+                    continue;
+                own *= 1f / ow;
+                own.M14 = own.M24 = own.M34 = 0f;
+                own.M44 = 1f;
+                if (!Matrix4x4.Invert(own, out var back))
+                    continue;
+                var q = Vector3.Transform(target, back);
+                if (!MathUtil.IsFinite(q))
+                    continue;
+                int v = wrap.Vertex[i];
+                MdlRigger.WriteVector(work, L.PositionAt + v * L.PositionStride, L.PositionType, q);
+                if (normals && n.LengthSquared() > 1e-12f)
+                {
+                    var nq = Vector3.TransformNormal(nrm, back);
+                    float len = nq.Length();
+                    if (len > 1e-6f)
+                    {
+                        nq /= len;
+                        if (L.NormalType is 5 or 8)
+                        {
+                            int na = L.NormalAt + v * L.NormalStride;
+                            work[na] = (byte)Math.Clamp((nq.X * 0.5f + 0.5f) * 255f, 0f, 255f);
+                            work[na + 1] = (byte)Math.Clamp((nq.Y * 0.5f + 0.5f) * 255f, 0f, 255f);
+                            work[na + 2] = (byte)Math.Clamp((nq.Z * 0.5f + 0.5f) * 255f, 0f, 255f);
+                        }
+                        else
+                            MdlRigger.WriteVector(work, L.NormalAt + v * L.NormalStride, L.NormalType, nq);
+                    }
+                }
+                count++;
+            }
+            if (count > 0)
+                System.Threading.Interlocked.Add(ref moved, count);
+        }
+        int all = wrap.Vertex.Length;
+        const int Chunk = 2048;
+        if (all <= Chunk)
+            Range(0, all);
+        else
+            Parallel.For(0, (all + Chunk - 1) / Chunk, c => Range(c * Chunk, Math.Min(all, (c + 1) * Chunk)));
+        return moved;
     }
 
     // ---- Every frame on the render thread: the vertices written
@@ -853,7 +1599,6 @@ public static unsafe class LiveRig
     private static readonly Dictionary<string, Target> Targets = new();
     private static readonly Dictionary<string, long> NextTry = new();
     private static readonly Dictionary<string, int> Fails = new();
-    private static readonly Dictionary<string, ModelPlan> GaveUp = new(); // render thread: the plan a model was given up on
 
     public static int Count => Targets.Count;
 
@@ -909,31 +1654,63 @@ public static unsafe class LiveRig
 
         long now = Environment.TickCount64;
         int moving = 0;
+        // First, the models not found yet are looked for (see below).
+        foreach (var (file, (person, snap, model)) in claims)
+        {
+            if (Targets.ContainsKey(file))
+                continue;
+            try
+            {
+                if (NextTry.TryGetValue(file, out var when) && now < when)
+                    continue;
+                // (looking for a model's vertices in memory takes a long moment (a visible hitch): a model it keeps
+                // not finding is tried less and less often, down to every 20 seconds, but never given up on)
+                int failed = Fails.GetValueOrDefault(file);
+                NextTry[file] = now + Math.Min(20000L, 1000L << Math.Min(failed, 5));
+                var made = Start(person.Address, file, model);
+                if (made == null)
+                {
+                    Fails[file] = failed + 1;
+                    continue;
+                }
+                Targets[file] = made;
+            }
+            catch (Exception e)
+            {
+                Status = "Live rig: " + e.Message;
+            }
+        }
+        // A character's models change together or not at all: one changed while the one next to it isn't (not found
+        // yet) tears the body open where they meet (the waist, between the top and the legs). So while any of a
+        // character's models is still being looked for, the others stay as the game has them (for a while: a model
+        // never found isn't waited for for ever).
+        var waiting = new HashSet<nint>();
+        int waitingModels = 0;
+        foreach (var (file, (person, _, _)) in claims)
+            if (!Targets.ContainsKey(file) && Fails.GetValueOrDefault(file) < 8)
+            {
+                waiting.Add(person.Address);
+                waitingModels++;
+            }
         foreach (var (file, (person, snap, model)) in claims)
         {
             try
             {
                 if (!Targets.TryGetValue(file, out var target))
+                    continue;
+                if (waiting.Contains(person.Address))
                 {
-                    if (NextTry.TryGetValue(file, out var when) && now < when)
-                        continue;
-                    // (looking for a model's vertices in memory takes a long moment (a visible hitch): a model it keeps
-                    // not finding is tried a few times, then not again until its plan changes: a redraw, an outfit or
-                    // slider change)
-                    int failed = Fails.GetValueOrDefault(file);
-                    if (failed >= 4 && GaveUp.TryGetValue(file, out var gaveUpOn) && ReferenceEquals(gaveUpOn, model))
-                        continue;
-                    NextTry[file] = now + Math.Min(30000L, 2000L << Math.Min(failed, 4));
-                    target = Start(person.Address, file, model);
-                    if (target == null)
+                    if (target.BaseWritten)
                     {
-                        Fails[file] = failed + 1;
-                        if (failed + 1 >= 4)
-                            GaveUp[file] = model;
-                        continue;
+                        var held = target.Replacement != 0 ? target.Replacement : target.Found.Buffer;
+                        if (LiveMesh.StillHolds(target.Found, held) && target.Model.Original.Length == target.Work.Length)
+                        {
+                            Buffer.BlockCopy(target.Model.Original, 0, target.Work, 0, target.Model.Original.Length);
+                            LiveMesh.Upload(held, target.Found.Desc, target.Work);
+                        }
+                        target.BaseWritten = false;
                     }
-                    GaveUp.Remove(file);
-                    Targets[file] = target;
+                    continue;
                 }
                 var buffer = target.Replacement != 0 ? target.Replacement : target.Found.Buffer;
                 if (!LiveMesh.StillHolds(target.Found, buffer))
@@ -966,7 +1743,7 @@ public static unsafe class LiveRig
                     target.BaseWritten = true;
                     target.Written = snap;
                 }
-                else if (model.Meshes.Length > 0 && !ReferenceEquals(target.Written, snap))
+                else if ((model.Meshes.Length > 0 || model.Wraps.Length > 0) && !ReferenceEquals(target.Written, snap))
                 {
                     if (Deform(model, target.Work, snap))
                         UploadRanges(buffer, target.Found.Desc, target.Work, model.Ranges);
@@ -980,7 +1757,9 @@ public static unsafe class LiveRig
             }
         }
         UpdateCopies(others, now);
-        if (Targets.Count > 0)
+        if (waitingModels > 0)
+            Status = $"Live rig: waiting for {waitingModels} model(s) to be found in memory (the others hold still until then, so nothing tears).";
+        else if (Targets.Count > 0)
             Status = $"Live rig: on {Targets.Values.Select(t => t.Owner).Concat(Copies.Values.Select(c => c.Owner)).Distinct().Count()} character(s), "
                 + $"{Targets.Count + Copies.Count} model(s), {moving} moving vertices"
                 + (Copies.Count > 0 ? $"; {Copies.Count} own cop{(Copies.Count == 1 ? "y" : "ies")} (draws redirected: {LiveRigInstances.Swapped} of {LiveRigInstances.Seen} looked at)" : "")
@@ -1063,7 +1842,7 @@ public static unsafe class LiveRig
                         copy.BaseWritten = true;
                         copy.Written = snap;
                     }
-                    else if (model.Meshes.Length > 0 && !ReferenceEquals(copy.Written, snap))
+                    else if ((model.Meshes.Length > 0 || model.Wraps.Length > 0) && !ReferenceEquals(copy.Written, snap))
                     {
                         if (Deform(model, copy.Work, snap))
                             UploadRanges(copy.Buffer, copy.Desc, copy.Work, model.Ranges);
@@ -1235,7 +2014,6 @@ public static unsafe class LiveRig
             Drop(file);
         NextTry.Clear();
         Fails.Clear();
-        GaveUp.Clear();
         People.Clear();
         VirtualRigs.Clear();
         Status = "";
@@ -1282,6 +2060,8 @@ public static unsafe class LiveRig
                 });
             }
         }
+        foreach (var wrap in model.Wraps)
+            moved += Wrap(wrap, work, snap);
         return moved > 0;
     }
 
@@ -1305,6 +2085,19 @@ public static unsafe class LiveRig
                 delta += Vector3.Transform(p, bone) * w;
                 if (normals)
                     turn += Vector3.TransformNormal(n, bone) * w;
+            }
+            // Clothing following the skin: the gap between it and the skin kept as it was at rest (the lattice's bones
+            // are scaled with the size and shapes, and that would scale the gap too): its blend's size taken out of it.
+            if (i < mesh.Follow.Length && mesh.Follow[i] > 0f)
+            {
+                var all = new Matrix4x4();
+                for (int k = a; k < c; k++)
+                    all += m[mesh.Slot[k]] * mesh.Weight[k];
+                var d = Vector3.TransformNormal(mesh.Offset[i], all);
+                float size = (new Vector3(all.M11, all.M12, all.M13).Length() + new Vector3(all.M21, all.M22, all.M23).Length()
+                              + new Vector3(all.M31, all.M32, all.M33).Length()) / 3f;
+                if (size > 1e-3f && MathUtil.IsFinite(d))
+                    delta -= d * ((1f - 1f / size) * mesh.Follow[i]);
             }
             // Back through its own bones (their turn and size): where its rest spot must be.
             Matrix4x4 back;

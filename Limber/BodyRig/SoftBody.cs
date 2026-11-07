@@ -99,8 +99,14 @@ public sealed unsafe class SoftBody
     {
         public readonly Vector3 A, B;
         public readonly float Radius;
-        public Capsule(Vector3 a, Vector3 b, float radius) { A = a; B = b; Radius = radius; }
+        public readonly nint Owner; // (hands: whose)
+        public Capsule(Vector3 a, Vector3 b, float radius, nint owner = 0) { A = a; B = b; Radius = radius; Owner = owner; }
+        public Capsule Grown(float scale, float add) => new(A, B, Radius * scale + add, Owner);
     }
+
+    // This character's collision settings while it's simulated (Body > Physics collisions), and who it is.
+    private CollisionSettings _col = new();
+    private nint _self;
 
     private readonly Dictionary<nint, State> _states = new();
     private readonly List<Capsule> _capsules = new();
@@ -252,6 +258,12 @@ public sealed unsafe class SoftBody
     /// weighted average of the pushes of the points it carries, less at the rim). Out on the side each point was
     /// on before (or came from, if it went right across a thin prop in one frame), so it never flips through.
     /// </summary>
+    /// <summary>Last frame: how many colliders could push this part (Bone collision on), and how many surface points they
+    /// were pushing (0: none touching).</summary>
+    public int LastProps { get; private set; }
+    public int LastPropHits { get; private set; }
+    private int _propsSeen, _propHits;
+
     private void ProjectSurface(Breast breast, Vector3[] nodes, Vector3[]? velocity, bool remember)
     {
         if (_surface.Length == 0 || _props.Length == 0)
@@ -296,7 +308,11 @@ public sealed unsafe class SoftBody
                     var normal = side ?? OwnSide(breast, prop, j, n);
                     var push = prop.IsBox ? normal * prop.Shape.Exit(point, normal, radius) : c + normal * radius - point;
                     if (remember)
+                    {
                         breast.PropSide[key] = normal;
+                        if (iteration == 0)
+                            _propHits++;
+                    }
                     var sp = _surface[j];
                     for (int k = 0; k < sp.Node.Length; k++)
                     {
@@ -455,7 +471,8 @@ public sealed unsafe class SoftBody
                 continue;
             skeletons.Add((address, skeleton));
         }
-        if (settings.Enabled && settings.Collisions)
+        var col0 = settings.Collide ?? new CollisionSettings();
+        if (settings.Enabled && settings.Collisions && (col0.OwnHands || col0.OthersHands))
             foreach (var (address, skeleton) in skeletons)
                 AddHands(skeleton, _otherHands, address);
 
@@ -499,6 +516,10 @@ public sealed unsafe class SoftBody
                     _held.Remove(key);
         }
         LastCount = _count;
+        LastProps = _propsSeen;
+        LastPropHits = _propHits;
+        _propsSeen = 0;
+        _propHits = 0;
         LastMove = _move;
         DebugSurface = _debugSurface.ToArray();
         _debugSurface.Clear();
@@ -593,6 +614,8 @@ public sealed unsafe class SoftBody
 
     private void Simulate(in RigSkeleton skeleton, State state, SoftBodySettings s, nint self)
     {
+        _col = s.Collide ?? new CollisionSettings();
+        _self = self;
         long now = Stopwatch.GetTimestamp();
         // The breasts rest on this character's belly (where the belly was last frame).
         _belly = null;
@@ -725,22 +748,48 @@ public sealed unsafe class SoftBody
         else
             _capsules.Clear();
         // Only props with "Bone collision" on push the bones (the live mesh has its own, "Mesh collision").
-        _props = Array.FindAll(Props() ?? Array.Empty<PropWorld>(), p => p.Bones && !Skip(p));
+        _props = _col.Props ? Array.FindAll(Props() ?? Array.Empty<PropWorld>(), p => p.Bones && !Skip(p)) : Array.Empty<PropWorld>();
+        _propsSeen = Math.Max(_propsSeen, _props.Length);
         _boneStrength = Math.Clamp(BoneStrength(), 0f, 1f);
         if (_boneStrength <= 0f)
             _props = Array.Empty<PropWorld>();
-        float floor = root.Y + 0.01f;
+        float floor = _col.Floor ? root.Y + 0.01f + Math.Clamp(_col.FloorHeight, -200f, 200f) * 0.01f : -1e6f;
         float jiggle = Math.Clamp(s.Jiggle, 0f, 6f);
         float keepShape = Math.Clamp(s.KeepShape, 0f, 1f);
         Span<Vector3> shown = stackalloc Vector3[Side]; // reused for both sides (no stackalloc inside the loop)
         Span<Vector3> turned = stackalloc Vector3[Side];
+
+        // Testicles hang: the whole sac is a weight on a soft, stretchy cord from where it joins the body (the top and
+        // back of the sac, shared by both sides), pulled down by real gravity, so it swings like a pendulum, falls the
+        // way "down" is in any pose (lying back, on all fours, upside down), stretches longer as it's pulled, and both
+        // sides move mostly together (one sac) with a little lag between them.
+        bool hanging = _part.GrowsFromTop;
+        Vector3? sacTop = null;
+        float hang = Math.Clamp(s.Hang, 0f, 1f), together = Math.Clamp(s.Together, 0f, 1f);
+        if (hanging)
+        {
+            var middle = (state.Left.Origin + state.Right.Origin) * 0.5f;
+            if (Axes(state.Left, middle, out _, out var upAxis, out var forwardAxis))
+            {
+                var all = state.Left.Target.Concat(state.Right.Target).ToArray();
+                var c = Centre(all);
+                float top = all.Max(p => Vector3.Dot(p - c, upAxis));
+                float back = all.Min(p => Vector3.Dot(p - c, forwardAxis));
+                sacTop = c + upAxis * top * 0.85f + forwardAxis * back * 0.5f;
+            }
+            gravity = 9.8f * MathF.Max(weight, 0f) * Lerp(0.35f, 1f, hang);
+            maxAngle = Math.Clamp(Lerp(25f, 85f, stretch / 0.9f), 5f, 110f) * MathF.PI / 180f;
+            maxSquash = Math.Clamp(Lerp(0.08f, 0.4f, stretch / 0.9f), 0.03f, 0.8f);
+            // (softer return: it hangs and sways more than it springs back to its modelled angle)
+            omega *= Lerp(1f, 0.55f, hang);
+        }
 
         // Testicles: props (e.g. colliders on the thighs) move the whole sac out of their way first, together, rather
         // than denting each side into a wider shape. Squeezed from both sides, it slides out forward (or down if
         // something's in front too).
         if (_part.GrowsFromTop)
         {
-            var want = reset || !s.Enabled ? Vector3.Zero : SacEscape(state, size);
+            var want = reset || !s.Enabled ? Vector3.Zero : SacEscape(state, size) * Math.Clamp(_col.SacSlide, 0f, 3f);
             if (reset || !s.Enabled)
                 state.SacShift = Vector3.Zero;
             else if (advance)
@@ -759,7 +808,8 @@ public sealed unsafe class SoftBody
         {
             _skin = SkinDepth(breast);
             var restTip = Centre(breast.Target);
-            var pivot = breast.Origin;
+            var pivot = sacTop ?? breast.Origin;
+            var other = breast == state.Left ? state.Right : state.Left;
             if (reset || !breast.Started || !s.Enabled)
             {
                 // Start (or physics off): straight to the rest shape.
@@ -796,7 +846,28 @@ public sealed unsafe class SoftBody
                     float frac = (step + 1) / (float)steps;
                     var tip = Vector3.Lerp(breast.PrevTip, restTip, frac);
                     var at = Vector3.Lerp(breast.PrevPivot, pivot, frac);
-                    var force = (tip - breast.Swing) * (omega * omega) + new Vector3(0, -gravity, 0);
+                    var down = new Vector3(0, -gravity, 0);
+                    if (hanging)
+                    {
+                        // (the cord is much stiffer along its length than it is to swing: gravity mostly swings it
+                        // round; it only stretches a little longer)
+                        var cord = breast.Swing - at;
+                        if (cord.LengthSquared() > 1e-10f)
+                        {
+                            var dir = Vector3.Normalize(cord);
+                            float along = Vector3.Dot(down, dir);
+                            down -= dir * (along * 0.8f);
+                        }
+                    }
+                    var force = (tip - breast.Swing) * (omega * omega) + down;
+                    if (hanging && together > 0f && other.Started)
+                    {
+                        // (one sac: each side is drawn to swing the way the other does)
+                        var mine = breast.Swing - tip;
+                        var theirs = other.Swing - Centre(other.Target);
+                        force += (theirs - mine) * (omega * omega * 2f * together);
+                        breast.SwingVelocity += (other.SwingVelocity - breast.SwingVelocity) * MathF.Min(1f, together * 6f * h);
+                    }
                     breast.SwingVelocity += force * h;
                     breast.SwingVelocity = tipVelocity + (breast.SwingVelocity - tipVelocity) * swingKeep;
                     breast.Swing += breast.SwingVelocity * h;
@@ -811,7 +882,9 @@ public sealed unsafe class SoftBody
             var raw = breast.Swing - restTip;
             float settle = advance ? 1f - MathF.Exp(-dt / 0.6f) : 0f;
             breast.SwingSettled += (raw - breast.SwingSettled) * settle;
-            var swung = restTip + breast.SwingSettled * (1f - keepShape) + (raw - breast.SwingSettled) * jiggle;
+            // (testicles: Hang shows how far they hang with gravity even at rest, whatever Keep shape says)
+            float keepRest = hanging ? MathF.Min(1f - keepShape + hang, 1f) : 1f - keepShape;
+            var swung = restTip + breast.SwingSettled * keepRest + (raw - breast.SwingSettled) * jiggle;
             LimitSwing(pivot, restTip, ref swung, maxAngle, maxSquash);
 
             // Turn (and stretch) the rest shape about the pivot to follow the swing: the ripple layer's goal.
@@ -1147,6 +1220,9 @@ public sealed unsafe class SoftBody
                         // (a belly half: its inner column is the middle of the belly, the freest; the outer one is
                         // the flank, held to the waist; the top under the ribs least of all)
                         ? (c == 0 ? 1f : 0.55f) * (r == 0 ? 0.6f : r == part.Rows - 1 ? 0.8f : 1f)
+                        // (the butt's bottom row is its crease with the thigh: held to the body more)
+                        : part.Lattice && part.Backward && r == part.Rows - 1
+                        ? (edgeCol ? 0.4f : 0.5f)
                         : part.Lattice
                         ? (edgeRow && edgeCol ? 0.65f : edgeRow || edgeCol ? 0.8f : 1f)
                         : (edgeRow && edgeCol ? 0.45f : edgeRow || edgeCol ? 0.7f : 1f);
@@ -1486,6 +1562,7 @@ public sealed unsafe class SoftBody
                 }
             }
             var pushed = PushOutFully(p, rest, prop.Shape, radius, ref velocity, side);
+            _propHits++;
             if (prop.Gap(pushed, out _, out var now) > 1e-6f)
                 breast.PropSide[key] = now;
             p += (pushed - p) * _boneStrength;
@@ -1497,10 +1574,16 @@ public sealed unsafe class SoftBody
             return;
         }
         foreach (var c in _capsules)
-            p = PushOut(p, rest, c, ref breast.Velocity[i]);
+            p = Contact(p, rest, c, ref breast.Velocity[i]);
+        float hand = Math.Clamp(_col.HandSize, 0.1f, 4f), margin = Math.Clamp(_col.Margin, 0f, 10f) * 0.01f;
         foreach (var c in _otherHands)
-            p = PushOut(p, rest, c, ref breast.Velocity[i]);
-        p = PushOutOfBelly(p, rest, ref breast.Velocity[i]);
+        {
+            if (c.Owner == _self ? !_col.OwnHands : !_col.OthersHands)
+                continue;
+            p = Contact(p, rest, c.Grown(hand, margin), ref breast.Velocity[i]);
+        }
+        if (_col.GrownBelly)
+            p = PushOutOfBelly(p, rest, ref breast.Velocity[i]);
         // (where the swing, flattened on the floor, puts it: a breast squashed as far as it goes isn't pushed further)
         float allowed = MathF.Min(floor, MathF.Min(rest.Y, breast.Goal[i].Y));
         if (p.Y < allowed)
@@ -1852,6 +1935,33 @@ public sealed unsafe class SoftBody
         return p;
     }
 
+    /// <summary>
+    /// One body collider's push, as the Physics collisions settings say: how far out (Strength, eased in over
+    /// Softness), the slide along it held back (Friction), and a bounce off it (Rebound).
+    /// </summary>
+    private Vector3 Contact(Vector3 p, Vector3 rest, in Capsule c, ref Vector3 velocity)
+    {
+        var before = velocity;
+        var pushed = PushOut(p, rest, c, ref velocity);
+        var move = pushed - p;
+        float depth = move.Length();
+        if (depth < 1e-7f)
+            return p;
+        var normal = move / depth;
+        float k = Math.Clamp(_col.Strength, 0f, 1f);
+        float soft = Math.Clamp(_col.Softness, 0f, 1f);
+        if (soft > 0f)
+            k *= MathF.Min(1f, depth / (soft * 0.02f));
+        // (what's not pushed out keeps some of its speed into it: it sinks in rather than stopping)
+        velocity = before + (velocity - before) * k;
+        float into = Vector3.Dot(before, normal);
+        if (into < 0f)
+            velocity -= normal * (into * Math.Clamp(_col.Rebound, 0f, 1f) * k);
+        var along = velocity - normal * Vector3.Dot(velocity, normal);
+        velocity -= along * (Math.Clamp(_col.Friction, 0f, 1f) * k);
+        return p + move * k;
+    }
+
     private static Vector3 PushOut(Vector3 p, Vector3 rest, in Capsule c, ref Vector3 velocity)
     {
         var closest = ClosestOnSegment(c.A, c.B, p);
@@ -1880,14 +1990,17 @@ public sealed unsafe class SoftBody
     private void BuildColliders(in ActorSkeleton skeleton, float size)
     {
         _capsules.Clear();
-        // (not the belly's: the upper arms hang against the waist, so they'd always be pushing its sides in, and
-        // follow every turn of the shoulders; hands, props and the floor still push it)
-        if (_part.Region)
-            return;
+        // (the belly's are off by default: the upper arms hang against the waist, so they'd always be pushing its
+        // sides in; hands, props and the floor still push it)
+        float scale = skeleton.RootScale.Y;
+        float margin = Math.Clamp(_col.Margin, 0f, 10f) * 0.01f;
         foreach (var side in new[] { "l", "r" })
         {
-            AddCapsule(skeleton, "j_ude_a_" + side, "j_ude_b_" + side, MathF.Max(0.30f * size, 0.045f));
-            // (no built-in thigh colliders: attach your own collider prop to a thigh bone where you want one)
+            if (_col.OwnArms)
+                AddCapsule(skeleton, "j_ude_a_" + side, "j_ude_b_" + side, MathF.Max(0.30f * size, 0.045f) * Math.Clamp(_col.ArmSize, 0.1f, 4f) + margin);
+            // (the thigh: hip joint to knee; only what goes deeper into it than the skin rests pushes)
+            if (_col.Thighs)
+                AddCapsule(skeleton, "j_asi_a_" + side, "j_asi_b_" + side, 0.075f * scale * Math.Clamp(_col.ThighSize, 0.1f, 4f) + margin);
         }
     }
 
@@ -1912,10 +2025,10 @@ public sealed unsafe class SoftBody
             int knuckle = skeleton.Info.IndexOf("j_naka_a_" + side);
             if (elbow >= 0 && wrist >= 0)
                 into.Add(new Capsule(skeleton.ModelToWorldPoint(skeleton.GetModelPosition(elbow)),
-                    skeleton.ModelToWorldPoint(skeleton.GetModelPosition(wrist)), 0.035f * scale));
+                    skeleton.ModelToWorldPoint(skeleton.GetModelPosition(wrist)), 0.035f * scale, owner));
             if (wrist >= 0 && knuckle >= 0)
                 into.Add(new Capsule(skeleton.ModelToWorldPoint(skeleton.GetModelPosition(wrist)),
-                    skeleton.ModelToWorldPoint(skeleton.GetModelPosition(knuckle)), 0.04f * scale));
+                    skeleton.ModelToWorldPoint(skeleton.GetModelPosition(knuckle)), 0.04f * scale, owner));
         }
     }
 

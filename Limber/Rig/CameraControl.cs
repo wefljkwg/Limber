@@ -54,6 +54,7 @@ public static unsafe class CameraControl
             float d = Math.Clamp(shot.Distance, c->MinDistance, c->MaxDistance);
             c->Distance = d;
             c->InterpDistance = d;
+            c->SavedDistance = d;
         }
         if(fov && float.IsFinite(shot.FoV))
             c->FoV = Math.Clamp(shot.FoV, c->MinFoV, c->MaxFoV);
@@ -70,38 +71,104 @@ public static unsafe class CameraControl
     }
 
     // ---- Unlocking the limits (kept on every frame while wanted; put back when turned off)
+    //
+    // The game's own limits are noted for each camera while they're untouched (every frame: the game changes them,
+    // entering GPose for one), so turning Unlock off puts back exactly what that camera had. A camera only ever seen
+    // unlocked (unlocked before entering GPose, say) gets the game's usual limits back when it's next active.
 
-    private static bool _unlocked;
-    private static (float MinD, float MaxD, float MinF, float MaxF, float MinV, float MaxV) _limits;
+    public readonly record struct CameraLimits(float MinDistance, float MaxDistance, float MinFoV, float MaxFoV, float MinPitch, float MaxPitch);
 
-    /// <summary>Framework thread, once a frame.</summary>
-    public static void Update(bool unlock, float maxDistance)
+    /// <summary>The game's usual limits (the third-person camera's).</summary>
+    public static readonly CameraLimits GameDefaults = new(1.5f, 20f, 0.69f, 0.78f, -1.48353f, 0.785398f);
+
+    private static readonly System.Collections.Generic.Dictionary<nint, CameraLimits> Stock = new();
+    private static readonly System.Collections.Generic.HashSet<nint> Touched = new();
+
+    private static CameraLimits Of(GameCamera* c) => new(c->MinDistance, c->MaxDistance, c->MinFoV, c->MaxFoV, c->DirVMin, c->DirVMax);
+
+    private static void Put(GameCamera* c, CameraLimits l)
+    {
+        c->MinDistance = l.MinDistance;
+        c->MaxDistance = l.MaxDistance;
+        c->MinFoV = l.MinFoV;
+        c->MaxFoV = l.MaxFoV;
+        c->DirVMin = l.MinPitch;
+        c->DirVMax = l.MaxPitch;
+    }
+
+    /// <summary>The distance kept inside the limits: what it's at, what it's heading to and what it goes back to.</summary>
+    private static void Settle(GameCamera* c)
+    {
+        c->Distance = Math.Clamp(c->Distance, c->MinDistance, c->MaxDistance);
+        c->InterpDistance = Math.Clamp(c->InterpDistance, c->MinDistance, c->MaxDistance);
+        c->SavedDistance = Math.Clamp(c->SavedDistance, c->MinDistance, c->MaxDistance);
+        c->FoV = Math.Clamp(c->FoV, c->MinFoV, c->MaxFoV);
+        c->DirV = Math.Clamp(c->DirV, c->DirVMin, c->DirVMax);
+    }
+
+    /// <summary>This camera's own limits (as the game had them), for resetting and the sliders.</summary>
+    public static CameraLimits Own()
+    {
+        var c = Active();
+        return c != null && Stock.TryGetValue((nint)c, out var l) ? l : GameDefaults;
+    }
+
+    /// <summary>Framework thread, once a frame. <paramref name="limits"/>: the unlocked limits (when unlocking).</summary>
+    public static void Update(bool unlock, CameraLimits limits)
     {
         var c = Active();
         if(c == null)
             return;
+        nint key = (nint)c;
         if(unlock)
         {
-            if(!_unlocked)
+            if(!Touched.Contains(key))
             {
-                _limits = (c->MinDistance, c->MaxDistance, c->MinFoV, c->MaxFoV, c->DirVMin, c->DirVMax);
-                _unlocked = true;
+                if(!Stock.ContainsKey(key))
+                    Stock[key] = Sane(Of(c)) ? Of(c) : GameDefaults;
+                Touched.Add(key);
             }
-            c->MinDistance = 0.1f;
-            c->MaxDistance = Math.Clamp(maxDistance, 5f, 200f);
-            c->MinFoV = -1.2f;
-            c->MaxFoV = 1.6f;
-            c->DirVMin = -1.55f;
-            c->DirVMax = 1.55f;
+            Put(c, limits);
+            return;
         }
-        else if(_unlocked)
+        if(Touched.Remove(key))
         {
-            (c->MinDistance, c->MaxDistance, c->MinFoV, c->MaxFoV, c->DirVMin, c->DirVMax) = _limits;
-            c->Distance = Math.Clamp(c->Distance, c->MinDistance, c->MaxDistance);
-            c->FoV = Math.Clamp(c->FoV, c->MinFoV, c->MaxFoV);
-            c->DirV = Math.Clamp(c->DirV, c->DirVMin, c->DirVMax);
-            _unlocked = false;
+            Put(c, Stock.TryGetValue(key, out var own) ? own : GameDefaults);
+            Settle(c);
         }
+        else if(Sane(Of(c)))
+            Stock[key] = Of(c);
+    }
+
+    private static bool Sane(CameraLimits l)
+        => float.IsFinite(l.MinDistance) && float.IsFinite(l.MaxDistance) && l.MinDistance > 0f && l.MaxDistance > l.MinDistance && l.MaxDistance <= 1000f
+           && float.IsFinite(l.MinFoV) && float.IsFinite(l.MaxFoV) && l.MaxFoV >= l.MinFoV;
+
+    /// <summary>
+    /// Back to how the game has it: its usual distance (its own setting for it), field of view, height and angle
+    /// straight on; and Limber's move off its place undone by the caller.
+    /// </summary>
+    public static void Reset(bool distance = true, bool fov = true, bool tilt = true, bool pitch = true)
+    {
+        var c = Active();
+        if(c == null)
+            return;
+        var own = Own();
+        if(distance)
+        {
+            float d = c->ConfigOption_ThirdPersonDefaultDistance;
+            if(!float.IsFinite(d) || d < own.MinDistance || d > own.MaxDistance)
+                d = Math.Clamp(6f, own.MinDistance, own.MaxDistance);
+            c->Distance = d;
+            c->InterpDistance = d;
+            c->SavedDistance = d;
+        }
+        if(fov)
+            c->FoV = Math.Clamp(own.MaxFoV, c->MinFoV, c->MaxFoV);
+        if(tilt)
+            c->TiltOffset = 0f;
+        if(pitch)
+            c->DirV = Math.Clamp(-0.2f, c->DirVMin, c->DirVMax);
     }
 
     // ---- Moved off its place: right after the game updates the camera, it and what it looks at go along by the offset
@@ -222,6 +289,7 @@ public static unsafe class CameraControl
         try
         {
             SetNoCollision(false);
+            RestoreLimits();
         }
         catch
         {
@@ -238,5 +306,17 @@ public static unsafe class CameraControl
         if(c == null)
             return null;
         return (c->MinDistance, c->MaxDistance, c->MinFoV, c->MaxFoV, c->DirVMin, c->DirVMax);
+    }
+
+    /// <summary>Unloading: every camera Limber unlocked gets its own limits back (the active one now).</summary>
+    public static void RestoreLimits()
+    {
+        var c = Active();
+        if(c != null && Touched.Remove((nint)c))
+        {
+            Put(c, Stock.TryGetValue((nint)c, out var own) ? own : GameDefaults);
+            Settle(c);
+        }
+        Touched.Clear();
     }
 }

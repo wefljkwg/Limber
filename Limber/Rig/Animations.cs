@@ -51,7 +51,98 @@ public static unsafe class Animations
 
     // ---- The list (every action timeline with a key)
 
-    public sealed record Entry(ushort Id, string Key, string Name, string Group, uint Icon = 0);
+    /// <summary>One animation: its number, key, emote name (if an emote uses it), the key's first part, its icon, a
+    /// plain-words description made from the key (for those with no emote name), and the kind it is.</summary>
+    public sealed record Entry(ushort Id, string Key, string Name, string Group, uint Icon = 0, string Described = "", string Kind = "Other")
+    {
+        /// <summary>The name to show: the emote's, else the description, else the key.</summary>
+        public string Shown => Name.Length > 0 ? Name : Described.Length > 0 ? Described : Key;
+    }
+
+    // ---- Plain words for the keys (so "emote/j_pose01_loop" reads "Ground sitting pose 1 (loop)")
+
+    private static readonly (string Token, string Words)[] Words =
+    [
+        ("s_pose", "Chair sitting pose"), ("j_pose", "Ground sitting pose"), ("l_pose", "Lying pose"), ("b_pose", "Bed pose"), ("pose", "Standing pose"),
+        ("jmn", "Ground sitting"), ("sit", "Sitting"), ("doze", "Dozing"), ("sleep", "Sleeping"), ("idle", "Idle"), ("wait", "Waiting"),
+        ("walk", "Walking"), ("run", "Running"), ("dash", "Sprinting"), ("move", "Moving"), ("turn", "Turning"), ("jump", "Jumping"),
+        ("fall", "Falling"), ("land", "Landing"), ("swim", "Swimming"), ("dive", "Diving"), ("fly", "Flying"), ("ride", "Riding"),
+        ("mount", "Mount"), ("battle", "Battle"), ("btl", "Battle"), ("attack", "Attack"), ("damage", "Hit"), ("dmg", "Hit"),
+        ("death", "Death"), ("dead", "Dead"), ("revive", "Revive"), ("cast", "Casting"), ("magic", "Magic"), ("limitbreak", "Limit break"),
+        ("dance", "Dance"), ("emote", "Emote"), ("talk", "Talking"), ("event", "Event"), ("craft", "Crafting"), ("gather", "Gathering"),
+        ("fishing", "Fishing"), ("cbnm", "Cutscene (normal)"), ("cbbm", "Cutscene"), ("facial", "Face"), ("face", "Face"), ("eye", "Eyes"),
+        ("mouth", "Mouth"), ("blink", "Blinking"), ("lip", "Lips"), ("hand", "Hand"), ("loop", "(loop)"), ("start", "(start)"),
+        ("end", "(end)"), ("st", "(start)"), ("ed", "(end)"), ("lp", "(loop)"), ("left", "left"), ("right", "right"), ("lft", "left"),
+        ("rgt", "right"), ("front", "front"), ("back", "back"), ("upper", "upper body"), ("lower", "lower body"),
+    ];
+
+    /// <summary>A plain description of a key, from the words in it ("" if none are known).</summary>
+    public static string Describe(string key)
+    {
+        var name = key[(key.LastIndexOf('/') + 1)..].ToLowerInvariant();
+        var parts = new List<string>();
+        int known = 0;
+        int i = 0;
+        while(i < name.Length)
+        {
+            if(name[i] == '_' || name[i] == '-')
+            {
+                i++;
+                continue;
+            }
+            bool matched = false;
+            foreach(var (token, words) in Words)
+                if(string.CompareOrdinal(name, i, token, 0, token.Length) == 0
+                   && (i + token.Length == name.Length || !char.IsLetter(name[i + token.Length]) || token.Contains('_')))
+                {
+                    parts.Add(words);
+                    i += token.Length;
+                    known++;
+                    matched = true;
+                    break;
+                }
+            if(matched)
+                continue;
+            // a number (pose 01 -> 1), or an unknown word kept as it is
+            int j = i;
+            while(j < name.Length && name[j] != '_' && name[j] != '-')
+                j++;
+            var word = name[i..j];
+            parts.Add(word.All(char.IsDigit) ? (int.TryParse(word, out var n) ? n.ToString() : word) : word);
+            i = j;
+        }
+        if(known == 0)
+            return "";
+        var text = string.Join(" ", parts);
+        return char.ToUpperInvariant(text[0]) + text[1..];
+    }
+
+    /// <summary>The kind of animation, from its key.</summary>
+    public static string KindOf(string key, bool emote)
+    {
+        var k = key.ToLowerInvariant();
+        if(k.Contains("s_pose") || k.Contains("j_pose") || k.Contains("l_pose") || k.Contains("/sit") || k.Contains("jmn") || k.Contains("doze"))
+            return "Sitting and lying";
+        if(k.Contains("/pose") || k.Contains("cpose"))
+            return "Standing poses";
+        if(emote)
+            return "Emotes";
+        if(k.Contains("facial") || k.StartsWith("face", StringComparison.Ordinal) || k.Contains("/eye") || k.Contains("mouth") || k.Contains("blink"))
+            return "Face";
+        if(k.Contains("walk") || k.Contains("run") || k.Contains("move") || k.Contains("turn") || k.Contains("jump") || k.Contains("swim") || k.Contains("fly") || k.Contains("ride"))
+            return "Moving";
+        if(k.Contains("battle") || k.Contains("btl") || k.Contains("attack") || k.Contains("ws/") || k.Contains("magic") || k.Contains("cast") || k.Contains("death") || k.Contains("dmg"))
+            return "Battle";
+        if(k.Contains("dance"))
+            return "Dances";
+        if(k.StartsWith("event", StringComparison.Ordinal) || k.Contains("cbbm") || k.Contains("cbnm") || k.Contains("cut"))
+            return "Events and cutscenes";
+        if(k.Contains("craft") || k.Contains("gather") || k.Contains("fish"))
+            return "Crafting and gathering";
+        if(k.Contains("idle") || k.Contains("wait"))
+            return "Idle";
+        return "Other";
+    }
 
     private static List<Entry>? _all;
 
@@ -90,7 +181,8 @@ public static unsafe class Animations
                             continue;
                         int slash = key.IndexOf('/');
                         string group = slash > 0 ? key[..slash] : "other";
-                        list.Add(new Entry((ushort)row.RowId, key, names.GetValueOrDefault(row.RowId, ""), group, icons.GetValueOrDefault(row.RowId)));
+                        string emoteName = names.GetValueOrDefault(row.RowId, "");
+                        list.Add(new Entry((ushort)row.RowId, key, emoteName, group, icons.GetValueOrDefault(row.RowId), Describe(key), KindOf(key, emoteName.Length > 0)));
                     }
             }
             catch(Exception e)

@@ -25,6 +25,8 @@ public sealed class RigSettings
     // Gizmo on the selected handle: move (arrows) instead of rotate (rings), and world axes instead of the bone's own.
     public bool GizmoMove { get; set; } = false;
     public bool GizmoWorldAxes { get; set; } = false;
+    /// <summary>FK Posing: turning or moving a bone leaves every other bone where it is (each bone adjusted on its own).</summary>
+    public bool FkOnlyThisBone { get; set; }
 
     // Undo / redo posing changes with the hotkeys below (Hotkeys tab).
     public bool UndoHotkeys { get; set; } = true;
@@ -114,6 +116,8 @@ public sealed class RigSettings
 
     /// <summary>FK poses (FK Posing page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.FkPoseSettings> FkPoses { get; set; } = new();
+    /// <summary>Limber Poses: put on as a still pose (the posed bones stop animating) instead of on top of the animation.</summary>
+    public bool LimberPoseFreeze { get; set; }
 
     /// <summary>Throbbing (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.ThrobSettings> Throb { get; set; } = new();
@@ -136,6 +140,10 @@ public sealed class RigSettings
     /// <summary>Height growth / shrinking (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.SizeChangeSettings> SizeChange { get; set; } = new();
 
+    /// <summary>Climax (Scene): the emitters, and how the liquid looks.</summary>
+    public System.Collections.Generic.List<Limber.Rig.ClimaxEmitter> ClimaxEmitters { get; set; } = new();
+    public Limber.Rig.ClimaxLook ClimaxLook { get; set; } = new();
+
     /// <summary>Which animations "Start all selected" starts (Limber Animations page).</summary>
     public System.Collections.Generic.HashSet<string> AnimationsSelected { get; set; } = new();
 
@@ -148,11 +156,26 @@ public sealed class RigSettings
     /// <summary>Appearance &amp; gear page: saved looks, and whether changes go on as they're made.</summary>
     public System.Collections.Generic.List<Limber.Rig.AppearanceData> AppearancePresets { get; set; } = new();
     public bool AppearanceLive { get; set; } = true;
+    /// <summary>Appearance & gear: a look put on stays on when the character is redrawn (body physics, other plugins).</summary>
+    public bool AppearanceKeep { get; set; } = true;
+    /// <summary>Extras: extra minions (any creature) that follow your character.</summary>
+    public System.Collections.Generic.List<Limber.Rig.FollowerSettings> Followers { get; set; } = new();
+    public bool FollowersOn { get; set; }
+    public float FollowerSpacing { get; set; } = 1f;
+    /// <summary>Koikatsu > Import props: Koikatsu's folder, and the biggest texture size made.</summary>
+    public string KoikatsuFolder { get; set; } = "";
+    public int KoiPropsMaxTexture { get; set; } = 1024;
 
     /// <summary>Camera page: saved shots, and the unlocked limits.</summary>
     public System.Collections.Generic.List<Limber.Rig.CameraShot> CameraShots { get; set; } = new();
     public bool CameraUnlock { get; set; }
     public float CameraMaxDistance { get; set; } = 60f;
+    /// <summary>The rest of the unlocked limits: closest, the field of view's range, how far up and down (degrees).</summary>
+    public float CameraMinDistance { get; set; } = 0.1f;
+    public float CameraMinFoV { get; set; } = 0.05f;
+    public float CameraMaxFoV { get; set; } = 1.6f;
+    public float CameraMinPitch { get; set; } = -89f;
+    public float CameraMaxPitch { get; set; } = 89f;
     /// <summary>The camera goes through floors and walls instead of bumping into them.</summary>
     public bool CameraNoCollide { get; set; }
     /// <summary>The Timeline shown in a window of its own instead of on its page.</summary>

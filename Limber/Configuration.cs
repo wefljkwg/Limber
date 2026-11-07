@@ -96,6 +96,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>Show the unfinished Video and VLC Live tabs (main Advanced tab).</summary>
     public bool ShowVideoTab { get; set; } = false;
     public bool ShowVlcTab { get; set; } = false;
+    /// <summary>The Oral and Climax pages (still being made): hidden, and not running, unless switched on.</summary>
+    public bool ShowOralTab { get; set; } = false;
+    public bool ShowClimaxTab { get; set; } = false;
     /// <summary>The Breast size page (Body), and the breast size shapes it drives: experimental, off by default.</summary>
     public bool ShowBustTab { get; set; } = false;
     /// <summary>The pages moved into windows of their own ("Move to a new window" at the top of each page).</summary>

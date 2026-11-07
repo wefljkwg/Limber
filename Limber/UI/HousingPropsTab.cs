@@ -24,7 +24,7 @@ public sealed unsafe class HousingPropsTab
     private bool _filteredByType;
     private bool _favOnly, _filteredFav;
     private int _filteredFavCount;
-    private string FavList => _world ? "world" : "housing";
+    private string FavList => _source != null ? "koikatsu" : _world ? "world" : "housing";
     private readonly List<(string Section, int Start, int End)> _sections = new();
 
     private string SectionOf(HousingItem i)
@@ -64,19 +64,29 @@ public sealed unsafe class HousingPropsTab
     private static readonly string[] WhereNames = ["Indoor and outdoor", "Indoor", "Outdoor"];
 
     private readonly bool _world;
-    private string Id => _world ? "world" : "housing";
+    private string Id => _source != null ? "koiprops" : _world ? "world" : "housing";
+    // (Koikatsu props: the converted ones, listed like world props)
+    private readonly Func<HousingItem[]?>? _source;
+    private readonly string _what = "";
 
     /// <param name="world">The World props page (the game's shared groups) instead of the housing items.</param>
-    public HousingPropsTab(HousingProps props, Selection selection, bool world = false)
+    public HousingPropsTab(HousingProps props, Selection selection, bool world = false, Func<HousingItem[]?>? source = null, string what = "")
     {
         _props = props;
         _selection = selection;
-        _world = world;
+        _world = world || source != null;
+        _source = source;
+        _what = what;
     }
 
     public void Draw()
     {
-        var catalog = _world ? _props.WorldCatalog : _props.Catalog;
+        var catalog = _source != null ? _source() : _world ? _props.WorldCatalog : _props.Catalog;
+        if(_source != null && (catalog == null || catalog.Length == 0))
+        {
+            ImGui.TextWrapped($"No {_what} yet: convert some on the Koikatsu > Import props page first.");
+            return;
+        }
         if(catalog == null)
         {
             bool failed = _world ? _props.WorldFailed : _props.CatalogFailed;
@@ -84,7 +94,7 @@ public sealed unsafe class HousingPropsTab
             return;
         }
         ImGui.SetNextItemWidth(_world ? -1 : ImGui.GetContentRegionAvail().X * 0.6f);
-        ImGui.InputTextWithHint($"###{Id}_search", _world ? $"Search {catalog.Length} world props" : "Search housing items", ref _search, 64);
+        ImGui.InputTextWithHint($"###{Id}_search", _source != null ? $"Search {catalog.Length} {_what}" : _world ? $"Search {catalog.Length} world props" : "Search housing items", ref _search, 64);
         if(!_world)
         {
             ImGui.SameLine();

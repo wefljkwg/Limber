@@ -1588,20 +1588,146 @@ public sealed partial class LimberTab
         }
         Tooltip($"Soft {part.Label.ToLowerInvariant()}: physics on every nearby character whose models are rigged.");
         ImGui.SameLine(160 * ImGuiHelpers.GlobalScale);
-        bool collide = soft.Collisions;
-        if(ImGui.Checkbox("Collisions###lmb_part_collide", ref collide))
-        {
-            soft.Collisions = collide;
-            _config.Save();
-        }
-        Tooltip("Arms, hands, thighs, the floor and props push it.");
-        ImGui.SameLine();
         DrawSoftStatus(part);
         if(ImGui.TreeNode($"Settings###lmb_part_settings"))
         {
             DrawRigPart(part);
             ImGui.TreePop();
         }
+    }
+
+    /// <summary>
+    /// The Physics collisions page (Body): per soft part, what pushes it (its own arms, hands and thighs, other
+    /// characters' hands, the floor, a grown belly, collider props) and how it reacts (strength, margin, friction,
+    /// rebound, softness).
+    /// </summary>
+    public void DrawCollisionsTab()
+    {
+        ImGui.TextWrapped("What pushes each soft part, and how it gives way. Works with Body physics on (and the part's physics on).");
+        if(!_config.BodyPhysicsOn)
+            ImGui.TextColored(Warning, "Body physics is off (Body > Body physics).");
+        using var bar = ImRaii.TabBar("###lmb_collide_tabs");
+        if(!bar.Success)
+            return;
+        foreach(var part in Limber.BodyRig.RigParts.All)
+        {
+            using var item = ImRaii.TabItem($"{part.Label}###lmb_collide_{part.Key}");
+            if(!item.Success)
+                continue;
+            using var id = ImRaii.PushId(part.Key);
+            DrawCollisions(part);
+        }
+    }
+
+    private void DrawCollisions(Limber.BodyRig.RigPart part)
+    {
+        var soft = SoftFor(part);
+        var col = soft.Collide ??= new();
+        bool changed = false;
+        if(!soft.Enabled)
+            ImGui.TextColored(Warning, $"{part.Label} physics is off (Body physics > Parts).");
+        bool on = soft.Collisions;
+        if(ImGui.Checkbox("Collisions on###c_on", ref on))
+        {
+            soft.Collisions = on;
+            changed = true;
+        }
+        Tooltip("Off: nothing on the body pushes it (collider props with Bone collision still do, if ticked below).");
+        void Check(string label, bool value, Action<bool> set, string tip)
+        {
+            if(ImGui.Checkbox(label, ref value))
+            {
+                set(value);
+                changed = true;
+            }
+            Tooltip(tip);
+        }
+        void Slider(string label, float value, Action<float> set, float min, float max, string tip, string format = "%.2f")
+        {
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat(label, ref value, min, max, format))
+            {
+                set(value);
+                changed = true;
+            }
+            Tooltip(tip + " Ctrl+click to type.");
+        }
+        using(ImRaii.Disabled(!on))
+        {
+            SeparatorText("What pushes it");
+            Check("Its own upper arms###c_arms", col.OwnArms, v => col.OwnArms = v, "The character's own upper arms (squeezing the arms together pushes the breasts).");
+            if(col.OwnArms)
+            {
+                ImGui.Indent();
+                Slider("Arm size###c_arm_size", col.ArmSize, v => col.ArmSize = v, 0.2f, 3f, "How thick the arms are to it (1 = Limber's estimate).");
+                ImGui.Unindent();
+            }
+            Check("Its own hands and forearms###c_own_hands", col.OwnHands, v => col.OwnHands = v, "The character's own hands pressing in dent it and push it aside.");
+            Check("Other characters' hands and forearms###c_other_hands", col.OthersHands, v => col.OthersHands = v, "Anyone else nearby with Body physics: their hands push it.");
+            if(col.OwnHands || col.OthersHands)
+            {
+                ImGui.Indent();
+                Slider("Hand size###c_hand_size", col.HandSize, v => col.HandSize = v, 0.2f, 3f, "How thick hands and forearms are to it (1 = Limber's estimate).");
+                ImGui.Unindent();
+            }
+            Check("Its own thighs###c_thighs", col.Thighs, v => col.Thighs = v,
+                "Hip to knee. Only pushes where it goes deeper into the thigh than it rests (so it never pushes all the time).");
+            if(col.Thighs)
+            {
+                ImGui.Indent();
+                Slider("Thigh size###c_thigh_size", col.ThighSize, v => col.ThighSize = v, 0.2f, 3f, "How thick the thighs are to it (1 = Limber's estimate).");
+                ImGui.Unindent();
+            }
+            Check("The floor###c_floor", col.Floor, v => col.Floor = v, "It flattens on the ground under the character instead of going through.");
+            if(col.Floor)
+            {
+                ImGui.Indent();
+                Slider("Floor height (cm)###c_floor_h", col.FloorHeight, v => col.FloorHeight = v, -50f, 50f, "Moves the floor it meets up (+) or down (-) from the feet.", "%.1f");
+                ImGui.Unindent();
+            }
+            if(part != Limber.BodyRig.RigParts.Belly)
+                Check("A grown belly###c_belly", col.GrownBelly, v => col.GrownBelly = v, "A pregnant belly (Limber Animations) pushes it out of its way.");
+        }
+        Check("Collider props###c_props", col.Props, v => col.Props = v, "Collider props with Bone collision on (Scene > Props / Devices) push it.");
+
+        using(ImRaii.Disabled(!on && !col.Props))
+        {
+            SeparatorText("How it reacts");
+            Slider("Strength###c_strength", col.Strength, v => col.Strength = v, 0f, 1f, "1 = pushed fully out of what touches it; lower: it sinks in part way.");
+            Slider("Margin (cm)###c_margin", col.Margin, v => col.Margin = v, 0f, 5f, "Space kept between it and the body's colliders.", "%.1f");
+            Slider("Friction###c_friction", col.Friction, v => col.Friction = v, 0f, 1f, "How much it's held from sliding along what touches it (higher: it's dragged along).");
+            Slider("Rebound###c_rebound", col.Rebound, v => col.Rebound = v, 0f, 1f, "How much it bounces back off when it hits something (0: stops against it).");
+            Slider("Softness###c_soft", col.Softness, v => col.Softness = v, 0f, 1f, "0 = a hard edge; higher: light touches sink in a little and contact eases in (less jitter).");
+            if(part == Limber.BodyRig.RigParts.Testicles)
+                Slider("Sac slide###c_slide", col.SacSlide, v => col.SacSlide = v, 0f, 3f,
+                    "How far the whole sac slides out of the way when squeezed (thighs together, hands, props), instead of being dented.");
+        }
+
+        ImGui.Spacing();
+        if(ImGui.SmallButton("Defaults###c_defaults"))
+        {
+            soft.Collide = part == Limber.BodyRig.RigParts.Testicles ? Limber.BodyRig.CollisionSettings.TesticleDefaults()
+                : part == Limber.BodyRig.RigParts.Butt ? Limber.BodyRig.CollisionSettings.ButtDefaults()
+                : part == Limber.BodyRig.RigParts.Belly ? Limber.BodyRig.CollisionSettings.BellyDefaults()
+                : new Limber.BodyRig.CollisionSettings();
+            soft.Collisions = true;
+            changed = true;
+        }
+        ImGui.SameLine();
+        foreach(var other in Limber.BodyRig.RigParts.All.Where(p => p != part))
+        {
+            if(ImGui.SmallButton($"Copy to {other.Label.ToLowerInvariant()}###c_copy_{other.Key}"))
+            {
+                var target = SoftFor(other);
+                target.Collide = col.Clone();
+                target.Collisions = soft.Collisions;
+                changed = true;
+            }
+            ImGui.SameLine();
+        }
+        ImGui.NewLine();
+        if(changed)
+            _config.Save();
     }
 
     // The belly: how pregnant the chosen character is (kept with its expansion, Limber Animations).
@@ -1838,7 +1964,13 @@ public sealed partial class LimberTab
                 : "No nearby character has this part's rig bones: turn on the live rig, or rig it above (and check the worn models).");
         }
         else
+        {
             ImGui.TextDisabled($"running on {sim.LastCount} (moving up to {sim.LastMove * 100f:0.0} cm)");
+            ImGui.SameLine();
+            ImGui.TextDisabled(sim.LastProps == 0 ? "· no colliders" : sim.LastPropHits > 0 ? $"· colliders touching ({sim.LastPropHits})" : $"· {sim.LastProps} collider(s), none touching");
+            Tooltip("Colliders (Devices) with Bone collision on that can push this part, and whether one is touching it right now.\n"
+                + "\"No colliders\": none has Bone collision on, the overall Bone collision strength is 0, or Collider props is off on Physics collisions.");
+        }
     }
 
     // Whether the chosen character's worn models use the rig (once for all parts): to see why something doesn't move.
@@ -1936,6 +2068,14 @@ public sealed partial class LimberTab
         Slider("Jiggle##lmb_soft", soft.Jiggle, v => soft.Jiggle = v, "Exaggerates the movement.", 0f, 6f);
         Slider("Cohesion##lmb_soft", soft.Cohesion, v => soft.Cohesion = v, "High = one piece; low = more liquid.");
         Slider("Max stretch##lmb_soft", soft.MaxStretch, v => soft.MaxStretch = v, "Limit on swing and stretch.", 0f, 3f);
+        if(part == Limber.BodyRig.RigParts.Testicles)
+        {
+            Slider("Hang##lmb_soft", soft.Hang, v => soft.Hang = v,
+                "How much they hang with real gravity: 0 = held to the model's shape; 1 = they fall the way down is in any pose "
+                + "(lying back, on all fours, upside down) and swing like a weight on a cord.", 0f, 1f);
+            Slider("One sac##lmb_soft", soft.Together, v => soft.Together = v,
+                "How much both sides move together as one sac (0 = each swings on its own).", 0f, 1f);
+        }
 
 
         if(ImGui.TreeNode("Shape###lmb_shape_node"))

@@ -40,6 +40,15 @@ public sealed class AhegaoSettings
     public float Brows { get; set; } = 0.4f;
     /// <summary>The inner ends of the brows up (+, worried / helpless) or down (-, cross), -1..1.</summary>
     public float BrowTilt { get; set; } = 0.5f;
+    /// <summary>Worried brows: the inner ends curving up and the outer ends curving down, -1..2.</summary>
+    public float Worried { get; set; } = 0f;
+    /// <summary>The eyes opened wide (upper lids up, lower lids down), 0..2.</summary>
+    public float EyesWide { get; set; } = 0f;
+    /// <summary>The pupils (the irises) bigger (+) or smaller (-), -0.5..1 (0.3 = 30% bigger).</summary>
+    public float PupilSize { get; set; } = 0f;
+    /// <summary>The jaw moved straight down (+) or up, and forward (+) or back, without turning (centimetres).</summary>
+    public float JawDown { get; set; } = 0f;
+    public float JawForward { get; set; } = 0f;
     /// <summary>The brows pulled together (a frown, as in pain), 0..1.</summary>
     public float Furrow { get; set; } = 0f;
     /// <summary>How far the jaw opens (degrees).</summary>
@@ -146,6 +155,8 @@ public sealed unsafe class AhegaoService
         public int Head = -1;
         public Quaternion HeadBefore, HeadWritten;
         public bool Wrote;
+        public Vector3 EyeScaleL = Vector3.One, EyeScaleR = Vector3.One;
+        public bool ScaledEyes;
         // the tongue's physics: where each bone is and how fast it's going (in the character's space)
         public Vector3[]? TongueAt, TongueSpeed;   // (in the head's own space: it moves with the head)
         public Vector3 HeadLast, HeadVelocity;      // the head's place (world) and speed: its moves push the tongue a little
@@ -402,9 +413,15 @@ public sealed unsafe class AhegaoService
                     sk.SetPartialPosition(part, state.Bones[i], state.Before[i].Position, children: true);
                     sk.SetPartialRotation(part, state.Bones[i], state.Before[i].Rotation, children: true);
                 }
+                if(state.ScaledEyes)
+                {
+                    sk.SetPartialScale(part, eyeL, state.EyeScaleL, children: true);
+                    sk.SetPartialScale(part, eyeR, state.EyeScaleR, children: true);
+                }
             }
         }
         state.Wrote = false;
+        state.ScaledEyes = false;
 
         float level = Smooth(state.Level);
         if(level <= 0f)
@@ -511,6 +528,10 @@ public sealed unsafe class AhegaoService
             float open = (Math.Clamp(s.MouthOpen, 0f, 70f) + pantNow * 7f) * level;
             var j = sk.GetPartialFrame(part, jaw);
             sk.SetPartialRotation(part, jaw, Quaternion.Normalize(Turn(gazeDown, open) * j.Rotation), children: true);
+            // (and moved, without turning: straight down, and forward)
+            float jawDown = Math.Clamp(s.JawDown, -3f, 5f) * level, jawForward = Math.Clamp(s.JawForward, -3f, 5f) * level;
+            if(MathF.Abs(jawDown) + MathF.Abs(jawForward) > 1e-4f)
+                sk.SetPartialPosition(part, jaw, sk.GetPartialFrame(part, jaw).Position + (down * jawDown + facing * jawForward) * (0.01f * sc), children: true);
             // The tongue hangs from the jaw in the face's skeleton, so opening the jaw swings it down too: turned back
             // (about the jaw's hinge) by as much as it shouldn't follow, so it can be posed with the head instead.
             float keepUp = 1f - Math.Clamp(s.TongueFollowsJaw, 0f, 1f);
@@ -547,9 +568,20 @@ public sealed unsafe class AhegaoService
                      * Turn(gazeUp, Math.Clamp(s.EyesUp, 0f, 90f) * level + jitterUp);
             sk.SetPartialRotation(part, eye, Quaternion.Normalize(turn * f.Rotation), children: true);
         }
+        // The pupils (the irises) bigger or smaller: each eye bone scaled (the scale the face had kept, to put back).
+        float pupil = Math.Clamp(s.PupilSize, -0.6f, 1.5f) * level;
+        if(MathF.Abs(pupil) > 1e-4f)
+        {
+            state.EyeScaleL = sk.GetPartialScale(part, eyeL);
+            state.EyeScaleR = sk.GetPartialScale(part, eyeR);
+            sk.SetPartialScale(part, eyeL, state.EyeScaleL * (1f + pupil), children: true);
+            sk.SetPartialScale(part, eyeR, state.EyeScaleR * (1f + pupil), children: true);
+            state.ScaledEyes = true;
+        }
 
         // 5. The eyelids: the upper ones drooping (or opening wide), the lower ones pushed up (squint).
-        float lid = Math.Clamp(s.Lids, -2f, 2f) * level;
+        float wide = Math.Clamp(s.EyesWide, 0f, 2f) * level;
+        float lid = Math.Clamp(s.Lids, -2f, 2f) * level - wide;
         // (with the face rig on, the lids, brows, lips and cheeks are shaped by it instead: see 10.)
         bool rig = s.FaceRig && Limber.Gpu.FaceRig.Running && Limber.Gpu.FaceRig.Owner == address;
         if(!rig)
@@ -563,13 +595,14 @@ public sealed unsafe class AhegaoService
         foreach(var b in lowLids)
         {
             var f = sk.GetPartialFrame(part, b);
-            sk.SetPartialPosition(part, b, f.Position + up * (0.0035f * sc * lowLid), children: true);
+            sk.SetPartialPosition(part, b, f.Position + up * (0.0035f * sc * lowLid) + down * (0.0022f * sc * wide), children: true);
         }
 
         // 6. The brows: raised or lowered, the inner ends up (worried) or down (cross), pulled together (pain).
         float brow = Math.Clamp(s.Brows, -2f, 2f) * level;
         float browTilt = Math.Clamp(s.BrowTilt, -2f, 2f) * level;
         float furrow = Math.Clamp(s.Furrow, 0f, 2f) * level;
+        float worried = Math.Clamp(s.Worried, -1f, 2f) * level;
         var across = Vector3.Normalize(eyeRPos - eyeLPos);
         float halfGap = eyeGap * 0.5f;
         if(!rig)
@@ -578,7 +611,9 @@ public sealed unsafe class AhegaoService
             var f = sk.GetPartialFrame(part, b);
             float x = Vector3.Dot(f.Position - eyesMid, across);
             float inner = Math.Clamp(1f - MathF.Abs(x) / MathF.Max(halfGap * 1.6f, 1e-4f), 0f, 1f); // 1 at the middle, 0 at the outer ends
-            float lift = 0.004f * sc * brow + 0.0035f * sc * browTilt * (2f * inner - 1f) - 0.0015f * sc * furrow * inner;
+            // (worried: the inner end curving up, the outer end curving down, the middle staying about where it is)
+            float curve = inner >= 0.5f ? Smooth((inner - 0.5f) * 2f) : -0.8f * Smooth((0.5f - inner) * 2f);
+            float lift = 0.004f * sc * brow + 0.0035f * sc * browTilt * (2f * inner - 1f) - 0.0015f * sc * furrow * inner + 0.0045f * sc * worried * curve;
             var toMiddle = x > 0f ? -across : across;
             var pull = MathF.Abs(x) > 1e-4f ? toMiddle * (0.003f * sc * furrow * inner) : Vector3.Zero;
             sk.SetPartialPosition(part, b, f.Position + up * lift + pull, children: true);
@@ -676,7 +711,8 @@ public sealed unsafe class AhegaoService
             {
                 float inner = i == 0 ? 1f : i == 1 ? 0.45f : 0f;
                 float tiltBy = i == 0 ? 1f : i == 1 ? 0.1f : -0.7f;
-                float dy = 0.0042f * brow + 0.0038f * browTilt * tiltBy - 0.0018f * furrow * inner;
+                float worryBy = i == 0 ? 1f : i == 1 ? 0.15f : -0.8f;
+                float dy = 0.0042f * brow + 0.0038f * browTilt * tiltBy - 0.0018f * furrow * inner + 0.0045f * worried * worryBy;
                 float toMiddle = 0.0032f * furrow * inner;
                 o[Limber.Gpu.FaceRig.BrowL + i] = new Vector3(-toMiddle, dy, 0.0006f * furrow * inner) * k; // left brow is at +X: the middle is -X
                 o[Limber.Gpu.FaceRig.BrowR + i] = new Vector3(toMiddle, dy, 0.0006f * furrow * inner) * k;
@@ -686,7 +722,7 @@ public sealed unsafe class AhegaoService
                 float middle = i == 1 ? 1f : 0.7f;
                 float droop = lid > 0f ? -0.0055f * lid * middle : -0.003f * lid * middle;
                 o[Limber.Gpu.FaceRig.UpperLidL + i] = o[Limber.Gpu.FaceRig.UpperLidR + i] = new Vector3(0f, droop, 0f) * k;
-                float raise = 0.0038f * lowLid * (i == 1 ? 1f : 0.65f);
+                float raise = 0.0038f * lowLid * (i == 1 ? 1f : 0.65f) - 0.0024f * wide * (i == 1 ? 1f : 0.7f);
                 o[Limber.Gpu.FaceRig.LowerLidL + i] = o[Limber.Gpu.FaceRig.LowerLidR + i] = new Vector3(0f, raise, 0.0004f * lowLid) * k;
             }
             var cheek = new Vector3(0f, 0.0045f * MathF.Max(0f, smile) + 0.0015f * lowLid, 0.0012f * MathF.Max(0f, smile)) * k;

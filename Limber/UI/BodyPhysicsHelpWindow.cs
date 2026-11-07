@@ -58,13 +58,14 @@ public sealed class BodyPhysicsHelpWindow : Window
             "Keep shape: 1 keeps the model's own shape when it's still.",
             "Cohesion: high moves as one piece; low is more liquid.",
             "Max stretch: a limit on how far it can swing and stretch.",
-            "Collisions: lets arms, hands, thighs, the floor and props push on it.",
+            "Testicles also have Hang (how much they fall with real gravity in any pose) and One sac (both sides moving together).",
+            "Collisions are on their own page, Body > Physics collisions: per part, what pushes it (arms, hands, thighs, the floor, props) and how it gives way.",
             "Shape (under each part): size, width, height, projection, lift and spacing, on top of the model's own shape.",
             "Tip: change one slider at a time and move the character to see it.",
         ]),
         ("Touching", "Hands, grabbing and props",
         [
-            "With Collisions on, a hand pressed into the chest, butt or belly dents it and pushes it aside.",
+            "With collisions on (Body > Physics collisions), a hand pressed into the chest, butt or belly dents it and pushes it aside.",
             "On the Hands page, \"Grab\" curls the fingers onto the skin under them and keeps them on it as it moves. " +
             "\"Lock\" holds that spot to the hand; \"Whole breast\" carries the whole breast with the hand.",
             "On the Devices page you can add colliders (balls, boxes) and attach them to bones, or place them in the scene, " +

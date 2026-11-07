@@ -101,8 +101,26 @@ public sealed class AppearanceTab
         Tooltip("Each change goes on as soon as you let go of it (race, clan, sex, face and colours redraw the character).");
         ImGui.SameLine();
         if(ImGui.Button("Back to its original look###app_original") && _original.TryGetValue(actor.Address, out var orig))
+        {
             Apply(actor, orig.Copy());
+            Appearance.Forget(actor.ObjectIndex);
+        }
         Tooltip("The look it had when you first opened this page for it.");
+        bool keep = _config.AppearanceKeep;
+        if(ImGui.Checkbox("Keep the look through redraws###app_keep", ref keep))
+        {
+            _config.AppearanceKeep = keep;
+            _config.Save();
+        }
+        Appearance.KeepThroughRedraws = _config.AppearanceKeep;
+        Tooltip("A look put on here (an NPC's, say) stays on when the character is drawn again: rigging for body physics, "
+            + "a body shape build, a collection change, or another plugin putting its own record of the look back.\n"
+            + "Off: a redraw may bring back the character's usual look.");
+        if(Appearance.IsKept(actor.Address, actor.ObjectIndex))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("(kept)");
+        }
         if(_status.Length > 0)
         {
             ImGui.SameLine();
@@ -113,7 +131,7 @@ public sealed class AppearanceTab
             DrawBody(actor, look);
         if(ImGui.CollapsingHeader("Gear###app_gear", ImGuiTreeNodeFlags.DefaultOpen))
             DrawGear(actor, look);
-        if(ImGui.CollapsingHeader("Looks###app_looks"))
+        if(ImGui.CollapsingHeader("Saved looks (presets)###app_looks", ImGuiTreeNodeFlags.DefaultOpen))
             DrawLooks(actor, look);
         if(ImGui.CollapsingHeader("NPC looks###app_npcs"))
             DrawNpcs(actor);
@@ -707,6 +725,7 @@ public sealed class AppearanceTab
 
     private string _npcSearch = "";
     private Dictionary<Guid, string>? _collections;
+    private readonly Dictionary<ushort, Guid> _assigned = new();   // collections picked here, per actor
     private long _collectionsAt;
 
     // The Penumbra collection the chosen character is drawn with; another one picked for it (Brio style), or back to
@@ -749,10 +768,56 @@ public sealed class AppearanceTab
     {
         try
         {
-            var (ec, _) = Plugin.PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5")
-                .InvokeFunc(actor.ObjectIndex, id, true, true);
-            Limber.Rig.Appearance.Redraw((ushort)(actor.ObjectIndex));
+            ushort index = actor.ObjectIndex;
+            var spawner = Limber.Rig.ActorSpawner.Current;
+            bool spawned = spawner != null && spawner.Made.Contains(index);
+            var set = Plugin.PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5");
+            int ec;
+            if(spawned && id != null)
+            {
+                // An actor Limber added is a copy of the character it was made from, as far as the mod manager knows:
+                // it shares that character's collection (and every other copy's). It's made its own character first
+                // (known by its own name), so it has a collection of its own.
+                spawner!.SetOwnIdentity(index, true);
+                (ec, _) = set.InvokeFunc(index, id, true, true);
+                if(ec is not (0 or 1))
+                {
+                    spawner.SetOwnIdentity(index, false);
+                    (ec, _) = set.InvokeFunc(index, id, true, true);
+                }
+            }
+            else
+            {
+                (ec, _) = set.InvokeFunc(index, id, true, true);
+                if(spawned && id == null && spawner!.HasOwnIdentity(index))
+                    spawner.SetOwnIdentity(index, false);
+            }
+            Limber.Rig.Appearance.Redraw(index);
             _status = ec is 0 or 1 ? (id == null ? "Back to the default (redrawn)." : "Collection set (redrawn).") : $"The mod manager couldn't set it (error {ec}).";
+            // (who else the mod manager now draws with it: characters it counts as the same one share it)
+            if(ec is 0 or 1 && id != null)
+            {
+                var get = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5");
+                var sharing = new List<string>();
+                foreach(var o in Plugin.ObjectTable)
+                {
+                    if(o == null || o.ObjectIndex == index || o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc && o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc
+                       && o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc)
+                        continue;
+                    var (valid, own, (other, _)) = get.InvokeFunc(o.ObjectIndex);
+                    if(valid && own && other == id && !_assigned.ContainsKey(o.ObjectIndex))
+                        sharing.Add(o.Name.TextValue);
+                }
+                if(sharing.Count > 0)
+                    _status += $" The mod manager counts {string.Join(", ", sharing.Distinct())} as the same character, so they have it too.";
+            }
+            if(ec is 0 or 1)
+            {
+                if(id != null)
+                    _assigned[index] = id.Value;
+                else
+                    _assigned.Remove(index);
+            }
         }
         catch(Exception e)
         {

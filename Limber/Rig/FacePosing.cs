@@ -20,17 +20,31 @@ public sealed class FaceBoneOffset
     public FaceBoneOffset Copy() => (FaceBoneOffset)MemberwiseClone();
 }
 
+/// <summary>Which directions a face bone's offset is in.</summary>
+public enum FaceSpace
+{
+    Face,      // the face's own (from the eyes and the mouth): the same on every face, turned with the head
+    Character, // the character's (across, up, forward of the body as it stands)
+    Bone,      // the bone's own
+}
+
 [Serializable]
 public sealed class FacePoseSettings
 {
     public bool Enabled { get; set; } = true;
+    /// <summary>Done after Limber Animations (the ahegao, the throbbing...): this face pose wins over them.</summary>
+    public bool RunAfter { get; set; }
+    public FaceSpace Space { get; set; } = FaceSpace.Face;
+    /// <summary>Moved bones slide over the face's curve (round the forehead, the cheeks) and turn with it, instead of
+    /// moving in a straight line off it.</summary>
+    public bool Hug { get; set; }
     /// <summary>Editing a left / right bone changes its partner the mirrored way.</summary>
     public bool Mirror { get; set; } = true;
     public Dictionary<string, FaceBoneOffset> Bones { get; set; } = new();
 
     public FacePoseSettings Copy()
     {
-        var c = new FacePoseSettings { Enabled = Enabled, Mirror = Mirror };
+        var c = new FacePoseSettings { Enabled = Enabled, Mirror = Mirror, RunAfter = RunAfter, Space = Space, Hug = Hug };
         foreach(var (k, v) in Bones)
             c.Bones[k] = v.Copy();
         return c;
@@ -44,7 +58,7 @@ public sealed class FacePoseSettings
 /// </summary>
 public sealed unsafe class FacePosingService
 {
-    public readonly record struct BoneView(string Name, Vector3 Model, Vector3 World);
+    public readonly record struct BoneView(string Name, Vector3 Model, Vector3 World, Quaternion Rotation);
 
     /// <summary>The watched character's face right now: its bones, and the face's axes and middle (model space).</summary>
     public sealed class FaceView
@@ -185,13 +199,20 @@ public sealed unsafe class FacePosingService
 
     private static bool Same(Frame a, Frame b) => a.Position == b.Position && a.Rotation == b.Rotation;
 
-    /// <summary>Bone update stage.</summary>
-    public void UpdateFrame()
+    /// <summary>Bone update stage: the poses that go before Limber Animations.</summary>
+    public void UpdateFrame() => Update(false);
+
+    /// <summary>Bone update stage, after Limber Animations: the poses set to win over them.</summary>
+    public void UpdateFrameAfter() => Update(true);
+
+    private void Update(bool after)
     {
         var seen = new HashSet<nint>();
         foreach(var (address, index, s) in _targets)
         {
             seen.Add(address);
+            if(s.RunAfter != after)
+                continue;
             try
             {
                 Apply(address, index, s);
@@ -205,6 +226,9 @@ public sealed unsafe class FacePosingService
             foreach(var a in new List<nint>(_states.Keys))
                 if(!seen.Contains(a))
                     _states.Remove(a);
+        // (the face map shows the face as it ends up: after everything)
+        if(!after)
+            return;
 
         nint wa = _watchAddress;
         ushort wi = _watchIndex;
@@ -250,10 +274,12 @@ public sealed unsafe class FacePosingService
         state.Partial = part;
         state.Sentinel = -1;
 
-        if(!Axes(sk, part, info, out var across, out var up, out var forward, out _, out _))
+        if(!Axes(sk, part, info, out var across, out var up, out var forward, out var middle, out float width))
             return;
-        var basis = Basis(across, up, forward);
-        var basisInverse = Quaternion.Inverse(basis);
+        var faceBasis = Basis(across, up, forward);
+        // the round of the face the bones slide over (Hug): a ball behind the middle of the face, about the head's size
+        float radius = width * 0.75f;
+        var centre = middle - forward * radius;
 
         // Parents first (the jaw before the lips and teeth on it), so each lands where it should.
         var order = new List<(int Bone, FaceBoneOffset Offset)>();
@@ -269,9 +295,40 @@ public sealed unsafe class FacePosingService
             var f = sk.GetPartialFrame(part, b);
             var scaleNow = sk.GetPartialScale(part, b);
             state.Before.Add((b, f, scaleNow));
+            var basis = s.Space switch
+            {
+                FaceSpace.Character => Quaternion.Identity,
+                FaceSpace.Bone => Quaternion.Normalize(f.Rotation),
+                _ => faceBasis,
+            };
+            var basisInverse = Quaternion.Inverse(basis);
             var t = o.Turn * (MathF.PI / 180f);
             var turn = basis * Quaternion.CreateFromYawPitchRoll(t.Y, t.X, t.Z) * basisInverse;
-            var position = f.Position + Vector3.Transform(o.Move * 0.001f, basis);
+            var move = Vector3.Transform(o.Move * 0.001f, basis);
+            var position = f.Position + move;
+            if(s.Hug && move.LengthSquared() > 1e-14f)
+            {
+                // Over the face's round: the move along the surface slides it round the ball (the same distance from
+                // its middle), the move out of it lifts it off there, and it's turned as the surface turns.
+                var from = f.Position - centre;
+                float r0 = from.Length();
+                if(r0 > 1e-5f)
+                {
+                    var n0 = from / r0;
+                    float lift = Vector3.Dot(move, n0);
+                    var along = move - n0 * lift;
+                    float arc = along.Length() / r0;
+                    var to = n0;
+                    if(arc > 1e-6f)
+                    {
+                        var axis = Vector3.Normalize(Vector3.Cross(n0, along));
+                        var slide = Quaternion.CreateFromAxisAngle(axis, arc);
+                        to = Vector3.Normalize(Vector3.Transform(n0, slide));
+                        turn = Quaternion.Normalize(slide * turn);
+                    }
+                    position = centre + to * (r0 + lift);
+                }
+            }
             sk.SetPartialRotation(part, b, Quaternion.Normalize(turn * f.Rotation), children: true);
             sk.SetPartialPosition(part, b, position, children: true);
             if(MathF.Abs(o.Scale - 1f) > 1e-5f)
@@ -305,8 +362,8 @@ public sealed unsafe class FacePosingService
             string name = info.Names[i];
             if(!name.StartsWith("j_f_", StringComparison.Ordinal) || name == "j_f_face")
                 continue;
-            var p = sk.GetPartialFrame(part, i).Position;
-            bones.Add(new BoneView(name, p, sk.ModelToWorldPoint(p)));
+            var fr = sk.GetPartialFrame(part, i);
+            bones.Add(new BoneView(name, fr.Position, sk.ModelToWorldPoint(fr.Position), fr.Rotation));
         }
         View = new FaceView
         {
@@ -320,6 +377,22 @@ public sealed unsafe class FacePosingService
             WorldScale = MathF.Max(1e-3f, sk.RootScale.Y),
             Width = width,
         };
+    }
+
+    /// <summary>A move in the face's directions (across, up, forward) as the same move in a pose's directions.</summary>
+    public static Vector3 FromFace(FaceView view, string bone, FaceSpace space, Vector3 faceMove)
+    {
+        var model = view.Across * faceMove.X + view.Up * faceMove.Y + view.Forward * faceMove.Z;
+        switch(space)
+        {
+            case FaceSpace.Character:
+                return model;
+            case FaceSpace.Bone:
+                var b = Array.Find(view.Bones, x => x.Name == bone);
+                return b.Name == null ? faceMove : Vector3.Transform(model, Quaternion.Inverse(Quaternion.Normalize(b.Rotation)));
+            default:
+                return faceMove;
+        }
     }
 
     /// <summary>The bone on the other side ("_l" &lt;-&gt; "_r"), or null for a middle bone.</summary>

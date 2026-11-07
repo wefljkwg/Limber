@@ -459,6 +459,22 @@ public sealed class TimelineTab
                 ImGui.SetTooltip("The game's animations (emotes, poses...): each key plays one, at its speed, until the next key. Pick a key to choose its animation.");
             if(ImGui.MenuItem("Move / turn / size###tl_m_move"))
                 Add(clip, name, "move", "");
+            if(ImGui.MenuItem("Costume (creature)###tl_m_model"))
+                Add(clip, name, "model", "");
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Which creature it's drawn as (Costume / Entity spawning), from key to key (0: its own body). Set it there, then key it.");
+            if(ImGui.BeginMenu("Saved look###tl_m_look"))
+            {
+                var looks = _config.AppearancePresets ?? new();
+                if(looks.Count == 0)
+                    ImGui.TextDisabled("No saved looks yet (Appearance & gear > Saved looks).");
+                foreach(var l in looks)
+                    if(l.Name.Length > 0 && ImGui.MenuItem($"{l.Name}###tl_m_look_{l.Name}"))
+                        Add(clip, name, "look", l.Name);
+                ImGui.EndMenu();
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("A saved look (body, face, gear) put on the character when its key is reached.");
             if(ImGui.BeginMenu("Bone scale###tl_m_scale"))
             {
                 var bones = _timeline.ScaledBones(name);
