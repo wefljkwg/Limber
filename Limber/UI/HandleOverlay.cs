@@ -624,6 +624,45 @@ public sealed class HandleOverlay
         return usingGizmo || overGizmo;
     }
 
+    // Scale: the gizmo sizes the bone (its bone scale, the same as Body > Bone scale), from its size when the drag began.
+    private Vector3 _scaleStart = Vector3.One;
+
+    private bool DrawScaleGizmo(ActorRef actor, string bone, Matrix4x4 matrix, Matrix4x4 view, Matrix4x4 projection, Vector2 viewportPos, Vector2 viewportSize)
+    {
+        ImGuizmo.BeginFrame();
+        ImGuizmo.SetID(GizmoId);
+        ImGuizmo.SetOrthographic(false);
+        ImGuizmo.SetDrawlist();
+        ImGuizmo.SetRect(viewportPos.X, viewportPos.Y, viewportSize.X, viewportSize.Y);
+        ImGuizmo.Enable(true);
+        string name = actor.Name ?? "";
+        var all = _config.BoneScales ??= new();
+        if(ImGuizmo.Manipulate(ref view, ref projection, ImGuizmoOperation.Scale, ImGuizmoMode.Local, ref matrix) && name.Length > 0)
+        {
+            if(!all.TryGetValue(name, out var bones))
+                all[name] = bones = new();
+            if(!bones.TryGetValue(bone, out var entry))
+                bones[bone] = entry = new Limber.BodyShape.BoneScaleEntry();
+            if(_gizmoTracking == null)
+            {
+                _rigs.Checkpoint();
+                _scaleStart = entry.Scale;
+            }
+            _gizmoTracking = matrix;
+            if(Matrix4x4.Decompose(matrix, out var size, out _, out _) && MathUtil.IsFinite(size))
+            {
+                entry.Scale = Vector3.Clamp(_scaleStart * size, new Vector3(0.01f), new Vector3(20f));
+                _config.Save();
+            }
+        }
+        bool usingGizmo = ImGuizmo.IsUsing();
+        bool overGizmo = ImGuizmo.IsOver();
+        if(!usingGizmo)
+            _gizmoTracking = null;
+        ImGuizmo.SetID(0);
+        return usingGizmo || overGizmo;
+    }
+
     // ---- Gizmo on the selected handle: rotation rings or move arrows, on the bone's own axes or the world's
 
     private bool DrawGizmo(BoneSnapshot snapshot, ActorRef actor, Vector2 viewportPos, Vector2 viewportSize)
@@ -647,11 +686,14 @@ public sealed class HandleOverlay
             _gizmoTracking = null;
         }
 
-        bool move = _config.GizmoMove;
-        var operation = move ? ImGuizmoOperation.Translate : ImGuizmoOperation.Rotate;
-        var mode = _config.GizmoWorldAxes ? ImGuizmoMode.World : ImGuizmoMode.Local;
+        bool move = _config.GizmoMove && !_config.GizmoScale;
+        var operation = _config.GizmoScale ? ImGuizmoOperation.Scale : move ? ImGuizmoOperation.Translate : ImGuizmoOperation.Rotate;
+        // (sizing is along the bone's own axes)
+        var mode = _config.GizmoWorldAxes && !_config.GizmoScale ? ImGuizmoMode.World : ImGuizmoMode.Local;
 
         var matrix = _gizmoTracking ?? MathUtil.FrameMatrix(world);
+        if(_config.GizmoScale)
+            return DrawScaleGizmo(actor, bone, matrix, view, projection, viewportPos, viewportSize);
         if(FkMode)
             return DrawFkGizmo(snapshot, actor, bone, matrix, view, projection, operation, mode, viewportPos, viewportSize);
 

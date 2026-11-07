@@ -315,6 +315,20 @@ public sealed partial class LimberTab
         }
         Tooltip("What dragging a handle does.\nIK: moves the bone and bends the limb to follow (IK posing).\n"
             + "FK: turns that bone itself, with a turning gizmo (FK posing).\nAuto: FK while the FK Posing page is open, IK otherwise.");
+        ImGui.SameLine();
+        int op = _config.GizmoScale ? 2 : _config.GizmoMove ? 1 : 0;
+        string[] ops = ["Rotate", "Move", "Scale"];
+        for(int i = 0; i < ops.Length; i++)
+        {
+            if(i > 0)
+                ImGui.SameLine();
+            if(ImGui.RadioButton($"{ops[i]}###limber_handle_op_{i}", op == i))
+            {
+                (_config.GizmoMove, _config.GizmoScale) = (i == 1, i == 2);
+                _config.Save();
+            }
+        }
+        Tooltip("What the gizmo on the chosen handle does: turn the bone, move it, or size it.");
     }
 
     // ---- Hotkeys tab (main tab bar)
@@ -2397,17 +2411,24 @@ public sealed partial class LimberTab
 
         ImGui.TextUnformatted("Gizmo:");
         ImGui.SameLine();
-        if(ImGui.RadioButton("Rotate###limber_gizmo_rotate", !_config.GizmoMove))
+        if(ImGui.RadioButton("Rotate###limber_gizmo_rotate", !_config.GizmoMove && !_config.GizmoScale))
         {
-            _config.GizmoMove = false;
+            (_config.GizmoMove, _config.GizmoScale) = (false, false);
             changed = true;
         }
         ImGui.SameLine();
-        if(ImGui.RadioButton("Move###limber_gizmo_move", _config.GizmoMove))
+        if(ImGui.RadioButton("Move###limber_gizmo_move", _config.GizmoMove && !_config.GizmoScale))
         {
-            _config.GizmoMove = true;
+            (_config.GizmoMove, _config.GizmoScale) = (true, false);
             changed = true;
         }
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Scale###limber_gizmo_scale", _config.GizmoScale))
+        {
+            _config.GizmoScale = true;
+            changed = true;
+        }
+        Tooltip("Scale: the gizmo sizes the bone (its bone scale, as on Body > Bone scale), in IK and FK alike.");
 
         ImGui.SameLine();
         ImGui.TextDisabled("|");
