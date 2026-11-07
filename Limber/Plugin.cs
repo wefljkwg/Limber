@@ -213,6 +213,7 @@ public sealed class Plugin : IDalamudPlugin
             _softBodyButt.Props = () => _props.World;
             _softBodyBelly.Props = () => _props.World;
             Limber.Gpu.LiveSoftBody.Props = () => _props.World;
+            Limber.Gpu.LiveRig.Props = () => _props.World;
             Limber.Gpu.LiveSoftBody.Settings = () => _config.Ik.LiveMesh ??= new Limber.Gpu.LiveMeshSettings();
             Limber.BodyRig.SoftBoneMarks.Source = () => _config.Ik.SoftBoneMarks ??= new();
             // Grab: the skin the fingers wrap onto (the live mesh breasts when it runs, else the soft body bones' resting surface).

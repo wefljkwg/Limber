@@ -232,7 +232,11 @@ public static unsafe class LiveRig
         public required Plan Plan;
         public required Matrix4x4[] Skin;
         public Vector3[]? Surface;   // the skin surface's points where this frame's bones put them (made when first needed)
+        public Shape[] Colliders = [];  // colliders with Mesh collision on, in model space, each its strength thick
     }
+
+    /// <summary>Colliders (Devices) in the world, this frame (set by the plugin).</summary>
+    public static Func<PropWorld[]?> Props = () => null;
 
     private static readonly ConcurrentDictionary<nint, Person> People = new();
 
@@ -349,7 +353,24 @@ public static unsafe class LiveRig
             else
                 skin[s] = Matrix4x4.Identity;
         }
-        person.Snapshot = new Snapshot { Plan = plan, Skin = skin };
+        // Colliders with Mesh collision on: the skin the live rig moves is pressed in where they touch it.
+        var colliders = new List<Shape>();
+        try
+        {
+            float toModel = 1f / MathF.Max(sk.RootScale.Y, 0.01f);
+            var worldToModel = sk.WorldToModel;
+            float global = Math.Clamp(LiveSoftBody.Strength, 0f, 1f);
+            foreach (var prop in Props() ?? Array.Empty<PropWorld>())
+                if (prop.Mesh && prop.MeshStrength * global > 0f)
+                {
+                    var shape = prop.Shape.Moved(x => Vector3.Transform(x, worldToModel), toModel);
+                    colliders.Add(shape.WithRadius(shape.R * prop.MeshStrength * global));
+                }
+        }
+        catch
+        {
+        }
+        person.Snapshot = new Snapshot { Plan = plan, Skin = skin, Colliders = colliders.ToArray() };
     }
 
     // ---- What a plan is made from (read in the bone update, used in the background)
@@ -2048,13 +2069,13 @@ public static unsafe class LiveRig
             int count = mesh.Vertex.Length;
             const int Chunk = 2048;
             if (count <= Chunk)
-                moved += DeformRange(mesh, work, m, inverse, hasInverse, 0, count);
+                moved += DeformRange(mesh, work, m, inverse, hasInverse, 0, count, snap.Colliders);
             else
             {
                 int chunks = (count + Chunk - 1) / Chunk;
                 Parallel.For(0, chunks, c =>
                 {
-                    int n = DeformRange(mesh, work, m, inverse, hasInverse, c * Chunk, Math.Min(count, (c + 1) * Chunk));
+                    int n = DeformRange(mesh, work, m, inverse, hasInverse, c * Chunk, Math.Min(count, (c + 1) * Chunk), snap.Colliders);
                     if (n > 0)
                         System.Threading.Interlocked.Add(ref moved, n);
                 });
@@ -2065,7 +2086,7 @@ public static unsafe class LiveRig
         return moved > 0;
     }
 
-    private static int DeformRange(MeshPlan mesh, byte[] work, Matrix4x4[] m, Matrix4x4[] inverse, bool[] hasInverse, int from, int to)
+    private static int DeformRange(MeshPlan mesh, byte[] work, Matrix4x4[] m, Matrix4x4[] inverse, bool[] hasInverse, int from, int to, Shape[] colliders)
     {
         var L = mesh.Layout;
         bool normals = L.NormalAt >= 0 && L.NormalType is (2 or 3 or 14);
@@ -2098,6 +2119,25 @@ public static unsafe class LiveRig
                               + new Vector3(all.M31, all.M32, all.M33).Length()) / 3f;
                 if (size > 1e-3f && MathUtil.IsFinite(d))
                     delta -= d * ((1f - 1f / size) * mesh.Follow[i]);
+            }
+            // Pressed by colliders (Mesh collision): where it would be drawn, pushed out of each one it's inside.
+            if (colliders.Length > 0)
+            {
+                var drawn = delta;
+                for (int k = a; k < b; k++)
+                    drawn += Vector3.Transform(p, m[mesh.Slot[k]]) * mesh.Weight[k];
+                foreach (var shape in colliders)
+                {
+                    if (shape.R <= 0f)
+                        continue;
+                    float gap = shape.Gap(drawn, out _, out var outward);
+                    if (gap < shape.R && outward != Vector3.Zero)
+                    {
+                        var push = outward * (shape.R - gap);
+                        delta += push;
+                        drawn += push;
+                    }
+                }
             }
             // Back through its own bones (their turn and size): where its rest spot must be.
             Matrix4x4 back;
