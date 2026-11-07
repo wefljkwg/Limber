@@ -31,6 +31,8 @@ public static class FaceMorphs
     public static nint Wanted;
     /// <summary>Bumped whenever the weights change: writers write again when it moves.</summary>
     public static int Version => _version;
+    /// <summary>What the last write did (for the page).</summary>
+    public static volatile string Applied = "";
     /// <summary>Any morph on at all.</summary>
     public static bool Active => _weights.Count > 0;
 
@@ -670,10 +672,17 @@ public static class FaceMorphs
             return false;
         var face = Find(file, byteWidth);
         if(face == null)
+        {
+            Applied = "the face model drawn wasn't read for morphs (its lips weren't found?)";
             return false;
+        }
         var mix = Mix(face);
         if(mix == null || mix.Moved.Count == 0)
+        {
+            Applied = "none of the morphs set are on this face";
             return false;
+        }
+        Applied = $"{mix.Moved.Values.Sum(m => m.Count)} vertices moved by {_weights.Count} morph(s)";
         foreach(var (mesh, moved) in mix.Moved)
         {
             if(!face.Layouts.TryGetValue(mesh, out var layout) || !face.Vertices.TryGetValue(mesh, out var vs))

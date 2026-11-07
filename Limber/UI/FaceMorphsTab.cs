@@ -116,8 +116,18 @@ public sealed class FaceMorphsTab
         Tip("On: the sliders below (and Oral's drive) shape this character's face. One face at a time (the one Oral has, if any).");
         if(_service.Status.Length > 0)
             ImGui.TextDisabled(_service.Status);
-        if(FaceRig.Status.Length > 0 && FaceRig.Owner == actor.Address)
-            ImGui.TextDisabled(FaceRig.Status);
+        if(s.Enabled)
+        {
+            // (what's happening: for when nothing shows)
+            bool mine = FaceMorphs.Wanted == actor.Address;
+            bool rig = FaceRig.Running && FaceRig.Owner == actor.Address, lips = LipMesh.Running && LipMesh.Owner == actor.Address;
+            ImGui.TextDisabled(!mine ? (FaceMorphs.Active ? "Another character's face has the morphs right now (one face at a time)." : "No morph is set above 0 yet.")
+                : rig ? $"Shown through the face rig. Last write: {(FaceMorphs.Applied.Length > 0 ? FaceMorphs.Applied : "none yet")}."
+                : lips ? $"Shown through Oral's lips mesh. Last write: {(FaceMorphs.Applied.Length > 0 ? FaceMorphs.Applied : "none yet")}."
+                : "Waiting for the face rig to start on this character...");
+            if(FaceRig.Status.Length > 0)
+                ImGui.TextDisabled(FaceRig.Status);
+        }
 
         var face = FaceOf(actor);
         ImGui.TextDisabled(_faceNote);

@@ -211,6 +211,7 @@ public sealed unsafe class AhegaoService
 
     private long _nextRigTry;
     private string _rigTried = "";
+    private long _rigRetryAt;
 
     /// <summary>
     /// Render thread: start the live face rig on the character whose ahegao uses it (once per face model; starting
@@ -252,9 +253,11 @@ public sealed unsafe class AhegaoService
                         if(Limber.Gpu.LipMesh.IsFace(file))
                             face = file;
                 string key = want + "|" + face;
-                if(drawObject != 0 && face.Length > 0 && key != _rigTried)
+                // (a new face, or the same one again after a few seconds: it may have been redrawn, or not drawn yet)
+                if(drawObject != 0 && face.Length > 0 && (key != _rigTried || now >= _rigRetryAt))
                 {
                     _rigTried = key;
+                    _rigRetryAt = now + 3000;
                     Limber.Gpu.FaceRig.Start(want, drawObject, readFile);
                 }
             }
