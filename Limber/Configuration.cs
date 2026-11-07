@@ -208,5 +208,35 @@ public class Configuration : IPluginConfiguration
     /// <summary>Preset library keyed by "tribe_sex" so each FFXIV face can have its own captures.</summary>
     public Dictionary<string, Dictionary<string, FacePreset>> FacePresets { get; set; } = new();
 
-    public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
+    // Saving writes the whole settings file, so a slider or gizmo dragged (a change every frame) would write it every
+    // frame and stutter: a change only marks it, and it's written once things have been still for a moment.
+    private bool _dirty;
+    private long _dirtyAt;
+
+    /// <summary>Counts changes (each Save), so watchers can tell nothing changed without comparing everything.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public long Changes { get; private set; }
+
+    public void Save()
+    {
+        Changes++;
+        _dirty = true;
+        _dirtyAt = Environment.TickCount64;
+    }
+
+    /// <summary>Writes the settings now (if anything changed).</summary>
+    public void SaveNow()
+    {
+        if(!_dirty)
+            return;
+        _dirty = false;
+        Plugin.PluginInterface.SavePluginConfig(this);
+    }
+
+    /// <summary>Framework update: writes the settings once they've been unchanged for a little while.</summary>
+    public void SaveIfDue()
+    {
+        if(_dirty && Environment.TickCount64 - _dirtyAt > 750)
+            SaveNow();
+    }
 }

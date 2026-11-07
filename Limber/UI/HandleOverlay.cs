@@ -593,7 +593,14 @@ public sealed class HandleOverlay
         ImGuizmo.SetDrawlist();
         ImGuizmo.SetRect(viewportPos.X, viewportPos.Y, viewportSize.X, viewportSize.Y);
         ImGuizmo.Enable(true);
-        if(ImGuizmo.Manipulate(ref view, ref projection, operation, mode, ref matrix))
+        bool changed = ImGuizmo.Manipulate(ref view, ref projection, operation, mode, ref matrix);
+        // (held still mid-drag: sent again anyway, so an animating body can't pull the bone away until the mouse moves)
+        if(!changed && ImGuizmo.IsUsing() && _gizmoTracking is { } held)
+        {
+            matrix = held;
+            changed = true;
+        }
+        if(changed)
         {
             editor.GizmoStart(actor.Name ?? "");
             _gizmoTracking = matrix;
@@ -654,7 +661,14 @@ public sealed class HandleOverlay
         ImGuizmo.SetRect(viewportPos.X, viewportPos.Y, viewportSize.X, viewportSize.Y);
         ImGuizmo.Enable(true);
 
-        if(ImGuizmo.Manipulate(ref view, ref projection, operation, mode, ref matrix))
+        bool moved = ImGuizmo.Manipulate(ref view, ref projection, operation, mode, ref matrix);
+        // (held still mid-drag: sent again anyway, so an animating body can't pull the bone away until the mouse moves)
+        if(!moved && ImGuizmo.IsUsing() && _gizmoTracking is { } held)
+        {
+            matrix = held;
+            moved = true;
+        }
+        if(moved)
         {
             // First change of this drag: remember the state before it for undo.
             if(_gizmoTracking == null)

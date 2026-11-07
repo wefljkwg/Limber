@@ -15,6 +15,15 @@ public static class Solver
     // The limb keeps bending the way it already bends; `bendHint` is used when it is perfectly straight.
     public static bool SolveTwoBone(in ActorSkeleton skeleton, int upper, int middle, int end, Vector3 target, Vector3? bendHint)
     {
+        Vector3? last = null;
+        return SolveTwoBone(skeleton, upper, middle, end, target, bendHint, ref last);
+    }
+
+    // `lastBend` (model space): the way the joint bent last frame, kept by the caller. When the animated limb is
+    // (nearly) straight its own bend direction is noise, so the joint keeps bending the way it did instead of
+    // spinning round; the animation's bend takes over again smoothly as the limb bends.
+    public static bool SolveTwoBone(in ActorSkeleton skeleton, int upper, int middle, int end, Vector3 target, Vector3? bendHint, ref Vector3? lastBend)
+    {
         var a = skeleton.GetModelPosition(upper);
         var b = skeleton.GetModelPosition(middle);
         var c = skeleton.GetModelPosition(end);
@@ -36,16 +45,28 @@ public static class Solver
         float maxReach = upperLength + lowerLength - 0.0005f;
         float reach = Math.Clamp(distance, minReach, maxReach);
 
-        // Which way the middle joint should point, perpendicular to the line from the joint to the target.
-        var bend = (b - a) - direction * Vector3.Dot(b - a, direction);
-        if(bend.LengthSquared() < 1e-8f)
+        // Which way the middle joint should point, perpendicular to the line from the joint to the target: the
+        // animated limb's own bend, blended toward last frame's (or the hint) as the animated limb straightens.
+        Vector3 Perp(Vector3 v)
         {
-            var hint = bendHint ?? MathUtil.AnyPerpendicular(direction);
-            bend = hint - direction * Vector3.Dot(hint, direction);
-            if(bend.LengthSquared() < 1e-8f)
-                bend = MathUtil.AnyPerpendicular(direction);
+            var p = v - direction * Vector3.Dot(v, direction);
+            return p.LengthSquared() > 1e-10f ? Vector3.Normalize(p) : Vector3.Zero;
         }
-        bend = Vector3.Normalize(bend);
+        var fallback = Perp(lastBend ?? Vector3.Zero);
+        if(fallback == Vector3.Zero)
+            fallback = Perp(bendHint ?? Vector3.Zero);
+        if(fallback == Vector3.Zero)
+            fallback = MathUtil.AnyPerpendicular(direction);
+        var acDir = c - a;
+        acDir = acDir.LengthSquared() > 1e-10f ? Vector3.Normalize(acDir) : direction;
+        var animPole = (b - a) - acDir * Vector3.Dot(b - a, acDir);
+        float w = Math.Clamp(animPole.Length() / (0.15f * upperLength), 0f, 1f);
+        var own = Perp(animPole);
+        var bend = own == Vector3.Zero ? fallback : Vector3.Lerp(fallback, own, w);
+        bend = Perp(bend);
+        if(bend == Vector3.Zero)
+            bend = own != Vector3.Zero ? own : fallback;
+        lastBend = bend;
 
         // Law of cosines for the angle at the upper joint.
         float cosUpper = (upperLength * upperLength + reach * reach - lowerLength * lowerLength) / (2f * upperLength * reach);
@@ -64,6 +85,10 @@ public static class Solver
         var oldNormal = Vector3.Cross(oldUpperDir, oldLowerDir);
         var newNormal = Vector3.Cross(newUpperDir, newLowerDir);
 
+        // (an animated limb that's straight has no plane of its own: the plane it would bend in, toward the chosen
+        // bend, stands in for it, so the upper bone doesn't suddenly roll as the limb straightens)
+        if(oldNormal.LengthSquared() <= 1e-10f)
+            oldNormal = Vector3.Cross(bend, oldUpperDir);
         Quaternion swing;
         if(oldNormal.LengthSquared() > 1e-10f && newNormal.LengthSquared() > 1e-10f)
             swing = MathUtil.AlignFrames(oldUpperDir, oldNormal, newUpperDir, newNormal);

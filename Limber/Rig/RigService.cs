@@ -315,12 +315,20 @@ public sealed unsafe class RigService : IDisposable
                         goal.HasSolved = false;
             }
 
-            // Bone positions for characters the UI is looking at but Limber isn't posing.
+        }
+    }
+
+    /// <summary>
+    /// A late bone stage (after everything else that moves bones: symmetry, ragdoll, twerk, look at, soft body...):
+    /// where the bones of the characters the UI is looking at ended up, for the dots and gizmos, so they sit on the
+    /// body as it's drawn rather than as it was before those stages moved it.
+    /// </summary>
+    public void SnapshotWatched()
+    {
+        lock(Sync)
+        {
             foreach(var (address, index) in _watched)
             {
-                if(_snapshotted.Contains(address))
-                    continue;
-
                 if(ActorSkeleton.TryGet(address, index, _infoCache, out var skeleton))
                     TakeSnapshot(address, skeleton);
                 else
@@ -435,7 +443,14 @@ public sealed unsafe class RigService : IDisposable
             goal.SortDepth = index >= 0 ? info.Depths[index] : int.MaxValue;
             _sortedGoals.Add(goal);
         }
-        _sortedGoals.Sort((a, b) => a.SortDepth.CompareTo(b.SortDepth));
+        // (bones held on to another bone of the same character go after the rest, so the bone they hold has
+        // already been posed this frame: clasped hands meet instead of one trailing the other)
+        _sortedGoals.Sort((a, b) =>
+        {
+            bool sa = a.Space == GoalSpace.Attached && a.ParentActor == rig.Address;
+            bool sb = b.Space == GoalSpace.Attached && b.ParentActor == rig.Address;
+            return sa != sb ? sa.CompareTo(sb) : a.SortDepth.CompareTo(b.SortDepth);
+        });
 
         // Mirrored bones: the animation's pose of every bone involved (and its other-side partner) before Limber.
         _mirrorBones.Clear();
@@ -556,8 +571,6 @@ public sealed unsafe class RigService : IDisposable
         if(_extraGoals.Count > 0)
             SolveExtraGoals(rig, skeleton);
 
-        if(_watched.ContainsKey(rig.Address))
-            TakeSnapshot(rig.Address, skeleton);
     }
 
     private readonly List<(Goal Goal, int Part, int Bone)> _extraGoals = [];
@@ -844,7 +857,7 @@ public sealed unsafe class RigService : IDisposable
                 if(upper >= 0 && middle >= 0)
                 {
                     ShoulderAssist(skeleton, upper, middle, bone, target.Position);
-                    solved = Solver.SolveTwoBone(skeleton, upper, middle, bone, target.Position, goal.BendHint);
+                    solved = Solver.SolveTwoBone(skeleton, upper, middle, bone, target.Position, goal.BendHint, ref goal.LastBend);
                 }
                 else
                 {
@@ -863,7 +876,7 @@ public sealed unsafe class RigService : IDisposable
                 // Only bend the joints above when the bone has somewhere to go: a bone that's just being turned
                 // (head, neck) turns on its own, without dragging the chest and shoulders around.
                 bool solved = true;
-                if(Vector3.Distance(skeleton.GetModelPosition(bone), target.Position) > 0.002f)
+                if(Vector3.Distance(skeleton.GetModelPosition(bone), target.Position) > 0.0005f)
                 {
                     Solver.CollectChain(info, bone, Math.Max(1, goal.ChainLength), _joints);
                     // Bones held by their own handles (solved before this one) stay as they are.

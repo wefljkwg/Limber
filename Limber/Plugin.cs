@@ -340,7 +340,7 @@ public sealed class Plugin : IDalamudPlugin
             _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
-                ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame),
+                ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
                 ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber attached props", _housing.CaptureBones), ("Limber attached effects", _effects.CaptureBones), ("Limber effect helpers", _effects.CopyPoses), ("Limber climax", _climax.UpdateFrame), ("Limber hide mounts", _hideMounts.UpdateFrame), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
                 ("Limber freeze motion (end of frame)", _freeze.CaptureFrame));
 
@@ -567,6 +567,8 @@ public sealed class Plugin : IDalamudPlugin
         try
         {
             var perf = new Limber.Core.Perf.Clock("framework");
+            lock(FaceDriver.PresetLock)
+                _config.SaveIfDue();
             _props.ApplyResults();
             perf.Mark("prop results");
             _actors.CheckPriorityHook();
@@ -1022,6 +1024,7 @@ public sealed class Plugin : IDalamudPlugin
     private string _settingsShot = "";
     private long _settingsShotAt;
     private bool _mouseWasDown;
+    private long _settingsShotChanges = -1;
 
     // The settings as text, read again a few times a second and whenever the mouse is let go (all of them each frame
     // would cost frames).
@@ -1031,10 +1034,12 @@ public sealed class Plugin : IDalamudPlugin
         bool down = ImGui.IsMouseDown(ImGuiMouseButton.Left);
         bool released = _mouseWasDown && !down;
         _mouseWasDown = down;
-        if(_settingsShot.Length == 0 || released || now - _settingsShotAt > 300)
+        // (and only when something was changed since: nothing to compare otherwise)
+        if(_settingsShot.Length == 0 || ((released || now - _settingsShotAt > 300) && _config.Changes != _settingsShotChanges))
         {
             _settingsShot = Newtonsoft.Json.JsonConvert.SerializeObject(_config.Ik, UndoJson);
             _settingsShotAt = now;
+            _settingsShotChanges = _config.Changes;
         }
         return _settingsShot;
     }
@@ -1109,6 +1114,15 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        try
+        {
+            lock(FaceDriver.PresetLock)
+                _config.SaveNow();
+        }
+        catch(Exception e)
+        {
+            Log.Warning(e, "Limber: couldn't save the settings");
+        }
         // (waits for a frame being drawn to finish; none starts after this)
         lock(_drawLock)
             _disposed = true;

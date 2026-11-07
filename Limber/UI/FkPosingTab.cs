@@ -27,6 +27,7 @@ public sealed class FkPosingTab
     private readonly HashSet<string> _open = new() { "n_root", "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c" };
     private Vector3 _euler;          // what the rotation fields show (kept while dragging, so they don't jump)
     private string? _eulerBone;
+    private Quaternion _eulerQ = Quaternion.Identity; // the turn the shown numbers stand for
     private bool _fromRest = true;   // show the rotation as a turn from the rest pose
     private FkBoneSettings? _clipboard;
     private string _note = "";
@@ -640,10 +641,13 @@ public sealed class FkPosingTab
             var local = entry?.Rotation ?? LocalNow(snapshot, i);
             shownQ = fromRest ? Quaternion.Normalize(Quaternion.Inverse(rest) * local) : local;
         }
-        if(_eulerBone != bone || !ImGui.IsAnyItemActive())
+        // (the numbers shown are kept as typed or dragged, and worked out again only when the bone was turned some
+        // other way: worked out each time, one turn can read as quite different numbers, which looks broken)
+        if(_eulerBone != bone || (!ImGui.IsAnyItemActive() && MathF.Abs(Quaternion.Dot(shownQ, _eulerQ)) < 0.99999f))
         {
             _euler = ToEuler(shownQ);
             _eulerBone = bone;
+            _eulerQ = shownQ;
         }
         var euler = _euler;
         ImGui.SetNextItemWidth(-1);
@@ -656,6 +660,7 @@ public sealed class FkPosingTab
             entry.Rotation = fromRest ? Quaternion.Normalize(rest * q) : q;
             entry.Enabled = true;
             _euler = euler;
+            _eulerQ = q;
             _config.Save();
         }
         else if(ImGui.IsItemActivated())

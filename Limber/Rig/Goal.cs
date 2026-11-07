@@ -58,6 +58,9 @@ public sealed class Goal
         if(HoldPosition)
             return;
         HoldPosition = true;
+        // (its place too: a turn-only goal keeps its place relative to the bone's parent, which means something
+        // else once it holds its place, so it's taken again from where the bone is)
+        CapturePosition = true;
         CaptureRotation = true;
     }
 
@@ -85,6 +88,8 @@ public sealed class Goal
     // Filled in during the frame update.
     public int SortDepth;
     public bool LastSolveFailed;
+    // TwoBone: the way the middle joint bent last frame (model space), so it can't spin round on a straight limb.
+    public Vector3? LastBend;
 
     // Where the bone actually ended up last frame (model space), with this goal applied. Re-anchoring the goal
     // (attach, pin, detach, hold rotation) starts from here, so the bone stays where the user put it instead of
