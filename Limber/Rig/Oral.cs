@@ -1076,7 +1076,7 @@ public sealed unsafe class OralService
         _lipsHanded = false;
         try
         {
-            Mouth();
+            DriveMouth();
         }
         finally
         {
@@ -1087,7 +1087,7 @@ public sealed unsafe class OralService
 
     private bool _lipsHanded;
 
-    private void Mouth()
+    private void DriveMouth()
     {
         if(!_running || _blend <= 0f)
             return;
