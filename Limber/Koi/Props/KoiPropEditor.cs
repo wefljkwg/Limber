@@ -80,7 +80,7 @@ internal static class KoiPropEditor
             Slider("Shine###koi_shine", ref inst.Shine, 0f, 1f, "How much light it reflects (0: matte).");
             Slider("Roughness###koi_rough", ref inst.Roughness, 0f, 1f, "Sharp highlights (low) or soft, spread ones (high).");
             var glow = inst.Glow;
-            if(ImGui.ColorEdit3("Glow###koi_glow", ref glow, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.HDR | ImGuiColorEditFlags.Float))
+            if(ImGui.ColorEdit3("Glow###koi_glow", ref glow, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.Float))
                 inst.Glow = glow;
             if(ImGui.IsItemDeactivatedAfterEdit())
                 apply = true;
