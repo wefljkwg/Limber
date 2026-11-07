@@ -87,14 +87,17 @@ public static unsafe class FaceRig
         Stop();
         var log = new List<string>();
         var found = LiveMesh.Probe(drawObject, log, LipMesh.IsFace);
+        var tried = new List<string>();
         foreach(var target in LipMesh.NearestFirst(found.Where(f => f.IsVertex && LipMesh.IsFace(f.File)), readFile))
         {
+            string which = $"{System.IO.Path.GetFileName(target.File.Replace('|', '/'))} buffer {target.Desc.ByteWidth} bytes ({target.Usage})";
             try
             {
                 var state = Build(target, readFile, out string report);
                 if(state == null)
                 {
                     Status = "Face rig: " + report;
+                    tried.Add($"{which}: {report}");
                     continue;
                 }
                 state.Address = address;
@@ -102,17 +105,24 @@ public static unsafe class FaceRig
                 {
                     state.Replacement = LiveMesh.Replace(target, state.Original);
                     if(state.Replacement == 0)
+                    {
+                        tried.Add($"{which}: couldn't put a writable copy in its place");
                         continue;
+                    }
                 }
                 _state = state;
                 _pose = null;
+                tried.Add($"{which}: {report}");
+                Plugin.Log.Information("Limber face rig: " + string.Join(" | ", tried));
                 return Status = "Face rig: " + report;
             }
             catch(Exception e)
             {
                 Status = "Face rig: " + e.Message;
+                tried.Add($"{which}: {e.Message}");
             }
         }
+        Plugin.Log.Information($"Limber face rig: {found.Count} buffers found; " + string.Join(" | ", tried));
         if(Status.Length == 0 || !Status.StartsWith("Face rig:", StringComparison.Ordinal))
             Status = "Face rig: couldn't find the face model (the face needs to be drawn).";
         return Status;
@@ -167,7 +177,7 @@ public static unsafe class FaceRig
         int lod = Array.FindIndex(size, s => s == target.Desc.ByteWidth);
         if(lod < 0)
         {
-            report = "the face model drawn isn't the one on file.";
+            report = $"the face model drawn isn't the one on file (its levels of detail: {string.Join(", ", size)} bytes).";
             return null;
         }
         var original = data.AsSpan((int)offset[lod], (int)size[lod]).ToArray();
@@ -383,7 +393,7 @@ public static unsafe class FaceRig
             list.Add(new Mesh { Layout = layout, Vertices = m.V.ToArray(), Rest = m.P.ToArray(), Weights = m.W.ToArray() });
         }
         int found = (browL.Ok ? 1 : 0) + (browR.Ok ? 1 : 0) + (ulidL.Ok ? 1 : 0) + (ulidR.Ok ? 1 : 0) + (dlidL.Ok ? 1 : 0) + (dlidR.Ok ? 1 : 0) + (cheekL.Ok ? 1 : 0) + (cheekR.Ok ? 1 : 0);
-        report = $"on, {moved} vertices rigged (lips {half * 200f:0.0} cm across; brows, lids and cheeks: {found} of 8 found).";
+        report = $"on (detail level {lod}), {moved} vertices rigged (lips {half * 200f:0.0} cm across; brows, lids and cheeks: {found} of 8 found).";
         return new State { Target = target, Original = original, Work = (byte[])original.Clone(), Meshes = list, Scale = scale, File = target.File, ByteWidth = (int)size[lod] };
     }
 
