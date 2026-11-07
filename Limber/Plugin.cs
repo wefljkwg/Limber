@@ -140,7 +140,10 @@ public sealed class Plugin : IDalamudPlugin
             _ballThrob = new BallThrobService(ObjectTable, () => _config.Ik.BallThrob ??= new()) { PenisBeat = a => _throb.LevelOf(a) };
             // (Oral's mouth rig has the face while it's on; with it off, Ahegao shapes the face during Oral too)
             _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 && (_config.Ik.Oral?.MouthRig ?? true) };
-            _faceMorphs = new FaceMorphService(ObjectTable, () => _config.Ik.FaceMorphs ??= new(), _oral, _ahegao, () => _config.Ik.Ahegao ??= new());
+            _faceMorphs = new FaceMorphService(ObjectTable, () => _config.Ik.FaceMorphs ??= new(), _oral, _ahegao, () => _config.Ik.Ahegao ??= new())
+            {
+                Selected = () => _selection.Actor.Address,
+            };
             _lookAt = new LookAtService(ObjectTable, () => _config.Ik.LookAt ??= new()) { Skip = a => _oral.Follows(a) != 0 };
             _dynamicBones = new DynamicBoneService(ObjectTable, () => _config.Ik.DynamicBones ??= new()) { Skip = a => _oral.IsPartner(a) };
             _oral.Allowed = () => _config.PluginEnabled && _config.ShowOralTab && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);

@@ -45,6 +45,9 @@ public sealed unsafe class FaceMorphService
     private readonly SkeletonInfoCache _cache = new();
     private double _time;
 
+    /// <summary>The character chosen in Limber's window (set by the plugin).</summary>
+    public Func<nint> Selected = () => 0;
+
     /// <summary>What it's doing (for the page).</summary>
     public string Status = "";
     /// <summary>The weights handed over last frame (for the page).</summary>
@@ -119,6 +122,7 @@ public sealed unsafe class FaceMorphService
         ushort bestIndex = 0;
         Dictionary<string, float>? weights = null;
         float throat = 0f;
+        int bestScore = 0;
         foreach(var obj in _objects)
         {
             if(obj == null || obj.Address == 0)
@@ -147,15 +151,16 @@ public sealed unsafe class FaceMorphService
             float neck = 0f;
             if(oral && mouth is { } m)
                 neck = AddOral(w, s!, m);
-            // The mouth's character first (Oral), else the first one found.
-            if(weights == null || oral)
+            // Which one: Oral's mouth first, then the character chosen at the top of Limber's window, then a GPose
+            // actor (in GPose the character you see is a copy with the same name as the one walking about, hidden).
+            int score = oral ? 4 : obj.Address == Selected() ? 3 : obj.ObjectIndex >= 200 ? 2 : 1;
+            if(score > bestScore)
             {
+                bestScore = score;
                 weights = w;
                 best = obj.Address;
                 bestIndex = obj.ObjectIndex;
                 throat = neck;
-                if(oral)
-                    break;
             }
         }
         if(weights == null || best == 0)
@@ -173,7 +178,17 @@ public sealed unsafe class FaceMorphService
         _throat = throat;
         Status = Limber.Gpu.FaceRig.Owner == best || Limber.Gpu.LipMesh.Owner == best
             ? "" : "Starting the face rig on the character (its face needs to be drawn)...";
+        // (what it's doing, in the log when it changes: for when nothing shows)
+        string report = $"#{bestIndex}, {weights.Count} morph(s); face rig: {(Limber.Gpu.FaceRig.Owner == best ? "on it" : Limber.Gpu.FaceRig.Running ? "on another character" : "not running")} "
+            + $"({Limber.Gpu.FaceRig.Status}); last write: {Limber.Gpu.FaceMorphs.Applied}";
+        if(report != _lastReport)
+        {
+            _lastReport = report;
+            Plugin.Log.Information("Limber face morphs: " + report);
+        }
     }
+
+    private string _lastReport = "";
 
     private static float Smooth(float u)
     {
