@@ -494,6 +494,10 @@ public static unsafe class LiveRig
     private static string ShapeKey(BreastRigShape s)
         => $"{s.Size:0.####},{s.Height:0.####},{s.Out:0.####},{s.Up:0.####},{s.Forward:0.####},{s.Depth:0.####},{s.HasNipple},{s.NippleOut:0.####},{s.NippleUp:0.####},{s.NippleForward:0.####}";
 
+    private static bool IsGenitalBone(string bone)
+        => bone.StartsWith("iv_ochinko", StringComparison.Ordinal) || bone.StartsWith("iv_funyachin", StringComparison.Ordinal)
+        || bone.StartsWith("iv_kougan", StringComparison.Ordinal) || bone.StartsWith("iv_kintama", StringComparison.Ordinal);
+
     // Models the live rig leaves alone: the face (the face rig and lips have it) and the hair.
     private static bool Usable(string file)
     {
@@ -816,6 +820,12 @@ public static unsafe class LiveRig
             return null;
         var original = data.AsSpan((int)offset[0], (int)size[0]).ToArray();
         var skins = MdlRigger.Skin(data, 0);
+        // A genital model worn as its own item (an IVCS accessory like the Junker): its own bones move and size it,
+        // so it's left to the game. (Put on the lattice, its base was held at the body's size and pose while the
+        // shaft was scaled from its base: pinched in at the body.)
+        if (!file.Replace('\\', '/').Contains("/obj/body/", StringComparison.OrdinalIgnoreCase)
+            && skins.Any(k => k.Bones.Any(IsGenitalBone)))
+            return null;
         // Already weighted onto Limber's lattice (the rig mod's copy): the skeleton moves those parts, nothing to do
         // for them here; a part it wasn't rigged for (the belly, on a copy rigged before there was one) still goes on.
         var have = skins.SelectMany(k => k.Bones).Where(RigParts.IsRigBone).ToHashSet(StringComparer.Ordinal);
