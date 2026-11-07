@@ -138,7 +138,7 @@ public static unsafe class LipMesh
         Stop();
         var log = new List<string>();
         var found = LiveMesh.Probe(drawObject, log, IsFace);
-        foreach(var target in found.Where(f => f.IsVertex && IsFace(f.File)))
+        foreach(var target in NearestFirst(found.Where(f => f.IsVertex && IsFace(f.File)), readFile))
         {
             try
             {
@@ -164,6 +164,34 @@ public static unsafe class LipMesh
             }
         }
         return Status = "Lips: couldn't find the face model's lips (the live mesh needs the face to be drawn).";
+    }
+
+    /// <summary>
+    /// The face model's vertex buffers in the order to try them: its closest-up level of detail first (the one drawn
+    /// near the camera). Each level has its own buffer; writing a far one shows nothing up close.
+    /// </summary>
+    internal static List<LiveMesh.Found> NearestFirst(IEnumerable<LiveMesh.Found> found, Func<string, byte[]?> readFile)
+    {
+        var sizes = new Dictionary<string, uint[]>();
+        int Lod(LiveMesh.Found f)
+        {
+            if(!sizes.TryGetValue(f.File, out var size))
+            {
+                try
+                {
+                    var data = readFile(f.File);
+                    size = data == null ? [] : MdlRigger.Layout(data).Size;
+                }
+                catch
+                {
+                    size = [];
+                }
+                sizes[f.File] = size;
+            }
+            int lod = Array.FindIndex(size, x => x == f.Desc.ByteWidth);
+            return lod < 0 ? 99 : lod;
+        }
+        return found.OrderBy(Lod).ToList();
     }
 
     public static void Stop()

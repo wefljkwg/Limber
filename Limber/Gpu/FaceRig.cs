@@ -87,7 +87,7 @@ public static unsafe class FaceRig
         Stop();
         var log = new List<string>();
         var found = LiveMesh.Probe(drawObject, log, LipMesh.IsFace);
-        foreach(var target in found.Where(f => f.IsVertex && LipMesh.IsFace(f.File)))
+        foreach(var target in LipMesh.NearestFirst(found.Where(f => f.IsVertex && LipMesh.IsFace(f.File)), readFile))
         {
             try
             {
@@ -207,8 +207,8 @@ public static unsafe class FaceRig
                     else if(LipMesh.IsLowerLip(b)) down += w;
                     else if(b.StartsWith("j_f_lip", StringComparison.Ordinal)) corner += w;
                     else if(Any(b, "j_f_mayu", "j_f_mmayu", "j_f_miken")) brow += w;
-                    else if(b.StartsWith("j_f_umab", StringComparison.Ordinal)) ulid += w;
-                    else if(b.StartsWith("j_f_dmab", StringComparison.Ordinal)) dlid += w;
+                    else if(Any(b, "j_f_umab", "j_f_mabup")) ulid += w;   // (older faces / Dawntrail faces)
+                    else if(Any(b, "j_f_dmab", "j_f_mabdn")) dlid += w;
                     else if(Any(b, "j_f_hoho", "j_f_shoho")) cheek += w;
                     else if(Any(b, "j_f_haguki", "j_f_bero", "j_f_eye")) skip += w;
                 }
