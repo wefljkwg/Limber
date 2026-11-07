@@ -373,7 +373,12 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.BustShapeTab = new BustShapeTab(_selection, _config.Ik, _bust);
             _mainWindow.WorldPropsTab = new HousingPropsTab(_housing, _selection, world: true);
             _mainWindow.KoiImportTab = new KoiImportTab(_config.Ik);
-            _mainWindow.KoiPropsTab = new HousingPropsTab(_housing, _selection, source: () => Limber.Koi.Props.KoiProps.AsHousingItems(), what: "Koikatsu props");
+            _mainWindow.KoiPropsTab = new HousingPropsTab(_housing, _selection, source: () => Limber.Koi.Props.KoiProps.AsHousingItems(), what: "Koikatsu props")
+            {
+                Extra = Limber.Koi.Props.KoiPropRuntime.DrawEditor,
+            };
+            Limber.Koi.Props.KoiPropRuntime.Housing = _housing;
+            Limber.Koi.Props.KoiPropRuntime.Start();
             try
             {
                 Limber.Koi.Props.KoiProps.LoadImported();
@@ -886,6 +891,7 @@ public sealed class Plugin : IDalamudPlugin
                 var liquidLook = _config.Ik.ClimaxLook ??= new();
                 Limber.Gpu.GameLiquid.SetLook(liquidLook);
                 Limber.Gpu.GameLiquid.Render(_climax);
+                Limber.Koi.Props.KoiPropRuntime.Update();
                 perf.Mark("climax liquid");
                 _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
                 perf.Mark("timeline");
@@ -1150,6 +1156,7 @@ public sealed class Plugin : IDalamudPlugin
         _hook.Dispose();
         _actors.Dispose();
         _followers?.RemoveAll();
+        Limber.Koi.Props.KoiPropRuntime.Stop();
         Limber.Koi.Props.KoiProps.Unregister();
         _spawner.Dispose();
         Framework.Update -= OnFrameworkUpdate;

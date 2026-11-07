@@ -304,6 +304,12 @@ public static class KoiProps
     /// <summary>Has the mod manager use the props' files right away, in every collection (also without the mod turned on).</summary>
     public static void Register()
     {
+        lock(KoiPropRuntime.Gate)
+            RegisterNow();
+    }
+
+    private static void RegisterNow()
+    {
         try
         {
             var map = new Dictionary<string, string>();
@@ -311,6 +317,8 @@ public static class KoiProps
                 foreach(var (game, disk) in p.Files)
                     if(File.Exists(disk))
                         map[game] = disk;
+            foreach(var (game, disk) in Extra)
+                map[game] = disk;
             Plugin.PluginInterface.GetIpcSubscriber<string, int, int>("Penumbra.RemoveTemporaryModAll.V5").InvokeFunc(TempTag, 90);
             if(map.Count > 0)
                 Plugin.PluginInterface.GetIpcSubscriber<string, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryModAll.V5")
@@ -411,6 +419,17 @@ public static class KoiProps
 
     // A furnishing whose model has the layout props need, and whose material has just a colour, normal and (maybe)
     // specular map: the props copy its layout and material settings.
+    private static (MdlTemplate Mdl, byte[] Mtrl, string[] Slots)? _template;
+
+    /// <summary>The game model props are made like (looked for once; framework thread).</summary>
+    internal static (MdlTemplate Mdl, byte[] Mtrl, string[] Slots)? Template() => _template ??= FindTemplate();
+
+    internal const string FlatNormal = Root + "/common/texture/koi_flat_n.tex", PlainSpecular = Root + "/common/texture/koi_plain_s.tex";
+    internal const string GameRoot = Root;
+
+    /// <summary>More files for the mod manager: the placed props' own copies (game path -> file on disk).</summary>
+    internal static readonly Dictionary<string, string> Extra = new(StringComparer.OrdinalIgnoreCase);
+
     private static (MdlTemplate Mdl, byte[] Mtrl, string[] Slots)? FindTemplate()
     {
         for(int k = 1; k < 600; k++)
@@ -499,9 +518,12 @@ public static class KoiProps
 
         // Every mesh under it, as it rests, in the prefab's own space.
         static long Id(object? pptr) => ((Dictionary<string, object?>?)pptr)?.I("m_PathID") ?? 0;
-        var parts = new List<(Dictionary<string, object?> Mesh, long[] Bones, Matrix4x4 World, List<long> Materials, bool Skinned)>();
+        var parts = new List<(Dictionary<string, object?> Mesh, long[] Bones, Matrix4x4 World, List<long> Materials, bool Skinned, long Own)>();
         var worlds = new Dictionary<long, Matrix4x4>(); // transform -> its world matrix (relative to the prefab)
-        void Walk(long go, Matrix4x4 parent, bool isRoot)
+        var rig = new KoiRig();
+        var boneOf = new Dictionary<long, int>();        // transform -> its bone number
+        var dynamics = new List<Dictionary<string, object?>>();
+        void Walk(long go, Matrix4x4 parent, bool isRoot, int parentBone)
         {
             var g = sf!.Read(go);
             if(g == null || (g.Get("m_IsActive") is bool active && !active))
@@ -521,8 +543,18 @@ public static class KoiProps
             var local = isRoot || t == null ? Matrix4x4.Identity
                 : Matrix4x4.CreateScale(t.V3("m_LocalScale")) * Matrix4x4.CreateFromQuaternion(t.Q("m_LocalRotation")) * Matrix4x4.CreateTranslation(t.V3("m_LocalPosition"));
             var world = local * parent;
+            int myBone = parentBone;
             if(transform != 0)
+            {
                 worlds[transform] = world;
+                myBone = rig.Bones.Count;
+                boneOf[transform] = myBone;
+                rig.Bones.Add(new KoiRig.Bone { Name = g.S("m_Name"), Parent = parentBone, Rest = world, RestLocal = local });
+            }
+            // (dynamic bones: Koikatsu's swinging chains, a script on the object)
+            foreach(var (cls, id) in comps)
+                if(cls == 114 && sf.Read(id) is { } mb && mb.ContainsKey("m_Root") && mb.ContainsKey("m_Elasticity"))
+                    dynamics.Add(mb);
             foreach(var (cls, id) in comps)
             {
                 if(cls == 23) // mesh renderer: its mesh is the mesh filter's
@@ -535,7 +567,7 @@ public static class KoiProps
                         continue;
                     var (mf, mp) = sf.Read(filter.Id).Ptr("m_Mesh");
                     if(mf == 0 && sf.Read(mp) is { } mesh)
-                        parts.Add((mesh, [], world, r.L("m_Materials").Select(Id).ToList(), false));
+                        parts.Add((mesh, [], world, r.L("m_Materials").Select(Id).ToList(), false, transform));
                 }
                 else if(cls == 137) // skinned mesh renderer
                 {
@@ -545,7 +577,7 @@ public static class KoiProps
                     var (mf, mp) = r.Ptr("m_Mesh");
                     if(mf != 0 || sf.Read(mp) is not { } mesh)
                         continue;
-                    parts.Add((mesh, r.L("m_Bones").Select(Id).ToArray(), world, r.L("m_Materials").Select(Id).ToList(), true));
+                    parts.Add((mesh, r.L("m_Bones").Select(Id).ToArray(), world, r.L("m_Materials").Select(Id).ToList(), true, transform));
                 }
             }
             if(t != null)
@@ -555,10 +587,21 @@ public static class KoiProps
                     var cto = sf.Read(ct);
                     var (gf, gp) = cto.Ptr("m_GameObject");
                     if(gf == 0 && gp != 0)
-                        Walk(gp, world, false);
+                        Walk(gp, world, false, myBone);
                 }
         }
-        Walk(rootId, Matrix4x4.Identity, true);
+        Walk(rootId, Matrix4x4.Identity, true, -1);
+        foreach(var mb in dynamics)
+        {
+            var (rf, rp) = mb.Ptr("m_Root");
+            if(rf != 0 || !boneOf.TryGetValue(rp, out var root))
+                continue;
+            rig.Chains.Add(new KoiRig.Chain
+            {
+                Root = root, Damping = mb.F("m_Damping", 0.1f), Elasticity = mb.F("m_Elasticity", 0.1f), Stiffness = mb.F("m_Stiffness", 0.1f),
+                Inert = mb.F("m_Inert"), Radius = mb.F("m_Radius"), Gravity = mb.V3("m_Gravity"), Force = mb.V3("m_Force"),
+            });
+        }
         if(parts.Count == 0)
             throw new InvalidDataException("it has no meshes");
 
@@ -566,8 +609,9 @@ public static class KoiProps
         var byMaterial = new Dictionary<long, PropMesh>();
         var order = new List<long>();
         int skipped = 0;
-        foreach(var (mesh, bonesRaw, world, materials, skinned) in parts)
+        foreach(var (mesh, bonesRaw, world, materials, skinned, ownTransform) in parts)
         {
+            int ownBone = boneOf.TryGetValue(ownTransform, out var ob) ? ob : 0;
             if(mesh.I("m_MeshCompression") != 0)
             {
                 skipped++;
@@ -596,6 +640,7 @@ public static class KoiProps
                     skin[b] = (b < binds.Length ? binds[b] : Matrix4x4.Identity) * bw;
                 }
             }
+            var mats = new Matrix4x4[data.P.Length];
             for(int v = 0; v < data.P.Length; v++)
             {
                 Matrix4x4 m = world;
@@ -612,12 +657,14 @@ public static class KoiProps
                         }
                     m = total > 1e-5f ? acc * (1f / total) : world;
                 }
+                mats[v] = m;
                 final[v] = Vector3.Transform(data.P[v], m);
                 normals[v] = Vector3.Normalize(Vector3.TransformNormal(data.N.Length > v ? data.N[v] : Vector3.UnitY, m));
                 var tg = data.T.Length > v ? data.T[v] : new Vector4(1, 0, 0, 1);
                 var t3 = Vector3.TransformNormal(new Vector3(tg.X, tg.Y, tg.Z), m);
                 tangents[v] = new Vector4(t3.LengthSquared() > 1e-12f ? Vector3.Normalize(t3) : Vector3.UnitX, tg.W);
             }
+            var maps = new List<(PropMesh Mesh, Dictionary<int, int> Map)>();
             for(int s = 0; s < data.Submeshes.Count; s++)
             {
                 long material = materials.Count == 0 ? 0 : materials[Math.Min(s, materials.Count - 1)];
@@ -627,6 +674,7 @@ public static class KoiProps
                     order.Add(material);
                 }
                 var map = new Dictionary<int, int>();
+                maps.Add((pm, map));
                 var (first, count) = data.Submeshes[s];
                 for(int i = first; i + 2 < first + count && i + 2 < data.Indices.Length; i += 3)
                 {
@@ -650,12 +698,40 @@ public static class KoiProps
                             pm.N.Add(new Vector3(-n.X, n.Y, n.Z));
                             pm.T.Add(new Vector4(-tg.X, tg.Y, tg.Z, -tg.W));
                             pm.UV.Add(data.UV.Length > src ? data.UV[src] : Vector2.Zero);
+                            if(skinned && data.Weights != null && bonesRaw.Length > 0)
+                            {
+                                var (bi, bw) = data.Weights[src];
+                                int B(int k) => bi[k] < bonesRaw.Length && boneOf.TryGetValue(bonesRaw[bi[k]], out var x) ? x : ownBone;
+                                pm.Bones.Add((B(0), B(1), B(2), B(3)));
+                                pm.Weights.Add(new Vector4(bw[0], bw[1], bw[2], bw[3]));
+                            }
+                            else
+                            {
+                                pm.Bones.Add((ownBone, 0, 0, 0));
+                                pm.Weights.Add(new Vector4(1, 0, 0, 0));
+                            }
                         }
                         pm.I.Add(dst);
                     }
                 NextTriangle:;
                 }
             }
+            // Blend shapes: each one's full frame, moved into the prefab's space as the vertex rests there (mirrored).
+            foreach(var (name, deltas) in MeshData.Shapes(mesh))
+                foreach(var (src, delta) in deltas)
+                {
+                    if(src >= mats.Length)
+                        continue;
+                    var d = Vector3.TransformNormal(delta, mats[src]);
+                    d.X = -d.X;
+                    foreach(var (pm2, map2) in maps)
+                        if(map2.TryGetValue(src, out var dst))
+                        {
+                            if(!pm2.Shapes.TryGetValue(name, out var list))
+                                pm2.Shapes[name] = list = new();
+                            list.Add((dst, d));
+                        }
+                }
         }
         if(byMaterial.Count == 0)
             throw new InvalidDataException(skipped > 0 ? "its meshes are stored compressed (not supported yet)" : "it has no meshes");
@@ -669,15 +745,28 @@ public static class KoiProps
         {
             string tex = $"{folder}/texture/koi_{key}_{m}_d.tex";
             string mat = $"{folder}/material/koi_{key}_{m}.mtrl";
-            var (rgba, w, h) = Diffuse(sf, bundle, order[m], maxTexture);
-            files[tex] = TexWriter.Bgra(rgba, w, h);
+            var material = Material(sf, bundle, order[m], maxTexture);
+            rig.Materials.Add(material);
+            files[tex] = TexWriter.Bgra(KoiRig.Tint(material, material.Colours), material.W, material.H);
             var textures = slots.Select(s => s == "d" ? tex : s == "n" ? flatNormal : plainSpec).ToList();
             files[mat] = MtrlBuilder.With(mtrl, textures);
             materialPaths.Add(mat);
         }
-        files[modelPath] = MdlBuilder.Build(mdl, order.Select(o => byMaterial[o]).ToList(), materialPaths);
+        rig.Meshes = order.Select(o => byMaterial[o]).ToList();
+        files[modelPath] = MdlBuilder.Build(mdl, rig.Meshes, materialPaths);
+        try
+        {
+            rig.Save(RigPath(key));
+        }
+        catch(Exception e)
+        {
+            progress.Add($"  {item.Name}: its bones and colours couldn't be saved ({e.Message}).");
+        }
         int vertices = byMaterial.Values.Sum(p => p.P.Count), triangles = byMaterial.Values.Sum(p => p.I.Count / 3);
-        progress.Add($"  {item.Name}: {triangles} triangles, {vertices} vertices, {order.Count} material(s){(skipped > 0 ? $" ({skipped} compressed mesh(es) left out)" : "")}.");
+        int shapeCount = rig.ShapeNames.Count();
+        progress.Add($"  {item.Name}: {triangles} triangles, {vertices} vertices, {order.Count} material(s), {rig.Bones.Count} bone(s)"
+            + $"{(shapeCount > 0 ? $", {shapeCount} blend shape(s)" : "")}{(rig.Chains.Count > 0 ? $", {rig.Chains.Count} dynamic bone chain(s)" : "")}"
+            + $"{(skipped > 0 ? $" ({skipped} compressed mesh(es) left out)" : "")}.");
         var made = new KoiImported { Key = key, Name = item.Name.Length > 0 ? item.Name : item.Asset, Pack = item.Pack, Category = item.Category, Model = modelPath };
         foreach(var g in files.Keys.Where(g => g.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase)))
             made.Files[g] = "";
@@ -698,7 +787,10 @@ public static class KoiProps
 
     // ---- The colour texture: the main texture, coloured as the material's colours say (through its colour mask)
 
-    private static (byte[] Rgba, int W, int H) Diffuse(SerializedFile sf, Bundle bundle, long materialId, int maxSize)
+    /// <summary>Where the props' bones and colours are kept (next to Limber's settings).</summary>
+    public static string RigPath(string key) => Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), "koikatsu_props", key + ".rig");
+
+    private static KoiRig.Material Material(SerializedFile sf, Bundle bundle, long materialId, int maxSize)
     {
         var mat = materialId != 0 ? sf.Read(materialId) : null;
         var saved = mat.D("m_SavedProperties");
@@ -713,48 +805,44 @@ public static class KoiProps
                 }
             return null;
         }
-        Vector4 Col(string name)
+        Vector4? Col(string name)
         {
             foreach(var e in saved.L("m_Colors"))
                 if(e is KeyValuePair<object?, object?> kv && kv.Key as string == name && kv.Value is Dictionary<string, object?> c)
                     return new Vector4(c.F("r", 1f), c.F("g", 1f), c.F("b", 1f), c.F("a", 1f));
-            return Vector4.One;
+            return null;
         }
-        var main = Tex("_MainTex");
+        var main = Tex("_MainTex") ?? new Texture(4, 4, Enumerable.Repeat(new byte[] { 255, 255, 255, 255 }, 16).SelectMany(x => x).ToArray());
         var mask = Tex("_ColorMask");
-        Vector4 c1 = Col("_Color"), c2 = Col("_Color2"), c3 = Col("_Color3");
-        if(main == null)
-        {
-            // (no texture: the colour itself)
-            main = new Texture(4, 4, Enumerable.Repeat(new byte[] { 255, 255, 255, 255 }, 16).SelectMany(x => x).ToArray());
-        }
-        var px = (byte[])main.Rgba.Clone();
+        var px = main.Rgba;
         int w = main.W, h = main.H;
-        for(int y = 0; y < h; y++)
-            for(int x = 0; x < w; x++)
-            {
-                int i = (y * w + x) * 4;
-                var col = new Vector4(px[i], px[i + 1], px[i + 2], px[i + 3]) / 255f;
-                Vector4 tinted;
-                if(mask != null)
-                {
-                    int mx = x * mask.W / w, my = y * mask.H / h;
-                    int mi = (my * mask.W + mx) * 4;
-                    float r = mask.Rgba[mi] / 255f, g = mask.Rgba[mi + 1] / 255f, b = mask.Rgba[mi + 2] / 255f;
-                    tinted = Vector4.Lerp(col, col * c1, r);
-                    tinted = Vector4.Lerp(tinted, col * c2, g);
-                    tinted = Vector4.Lerp(tinted, col * c3, b);
-                }
-                else
-                    tinted = col * c1;
-                px[i] = (byte)Math.Clamp(tinted.X * 255f, 0, 255);
-                px[i + 1] = (byte)Math.Clamp(tinted.Y * 255f, 0, 255);
-                px[i + 2] = (byte)Math.Clamp(tinted.Z * 255f, 0, 255);
-                px[i + 3] = (byte)Math.Clamp(col.W * 255f, 0, 255);
-            }
         while((w > maxSize || h > maxSize) && w > 4 && h > 4)
             (px, w, h) = TexWriter.Half(px, w, h);
-        return (px, w, h);
+        byte[]? m = null;
+        int slots = 1;
+        if(mask != null)
+        {
+            // (the mask at the texture's size, nearest pixel)
+            m = new byte[w * h * 4];
+            bool g = false, b = false;
+            for(int y = 0; y < h; y++)
+                for(int x = 0; x < w; x++)
+                {
+                    int mi = ((y * mask.H / h) * mask.W + x * mask.W / w) * 4, o = (y * w + x) * 4;
+                    m[o] = mask.Rgba[mi];
+                    m[o + 1] = mask.Rgba[mi + 1];
+                    m[o + 2] = mask.Rgba[mi + 2];
+                    m[o + 3] = 255;
+                    g |= m[o + 1] > 24;
+                    b |= m[o + 2] > 24;
+                }
+            slots = b ? 3 : g ? 2 : 1;
+        }
+        return new KoiRig.Material
+        {
+            Name = mat.S("m_Name"), W = w, H = h, Main = px, Mask = m, Slots = slots,
+            Colours = [Col("_Color") ?? Vector4.One, Col("_Color2") ?? Vector4.One, Col("_Color3") ?? Vector4.One],
+        };
     }
 }
 
@@ -767,6 +855,35 @@ internal sealed class MeshData
     public int[] Indices = [];
     public List<(int First, int Count)> Submeshes = new();
     public (int[] Index, float[] Weight)[]? Weights;
+
+    /// <summary>The mesh's blend shapes: each by name, at its last (full) frame: (vertex, how far it moves).</summary>
+    public static IEnumerable<(string Name, List<(int Vertex, Vector3 Delta)> Deltas)> Shapes(Dictionary<string, object?> mesh)
+    {
+        var shapes = mesh.D("m_Shapes");
+        if(shapes == null)
+            yield break;
+        var vertices = shapes.L("vertices");
+        var frames = shapes.L("shapes");
+        foreach(var channel in shapes.L("channels"))
+        {
+            string name = channel.S("name");
+            int frame = (int)(channel.I("frameIndex") + Math.Max(1, channel.I("frameCount")) - 1);
+            if(name.Length == 0 || frame < 0 || frame >= frames.Count)
+                continue;
+            var f = frames[frame];
+            int first = (int)f.I("firstVertex"), count = (int)f.I("vertexCount");
+            var list = new List<(int, Vector3)>(count);
+            for(int i = first; i < first + count && i < vertices.Count; i++)
+            {
+                var v = vertices[i];
+                var d = v.V3("vertex");
+                if(d.LengthSquared() > 1e-14f)
+                    list.Add(((int)v.I("index"), d));
+            }
+            if(list.Count > 0)
+                yield return (name, list);
+        }
+    }
 
     public static MeshData? Read(Dictionary<string, object?> mesh)
     {

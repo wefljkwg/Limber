@@ -113,13 +113,32 @@ public sealed class PropMesh
     public List<Vector2> UV = new();
     public List<int> I = new();
     public int Material;
+    // (for posing it live: each vertex's bones (up to 4, the prop's bone numbers) and their weights, and its blend
+    // shapes: name -> (vertex, how far it moves at full))
+    public List<(int A, int B, int C, int D)> Bones = new();
+    public List<Vector4> Weights = new();
+    public Dictionary<string, List<(int Vertex, Vector3 Delta)>> Shapes = new();
+}
+
+/// <summary>Where a built model's vertices are: the vertex block (as the game's buffer holds it), and for each of the
+/// meshes given (in order) where each stream of its vertices starts in that block, and the meshes' vertex counts.</summary>
+public sealed class MdlLayout
+{
+    public byte[] Block = [];
+    public List<(uint[] Offsets, int Count)> Meshes = new();
 }
 
 /// <summary>Writes a static (background) model in the game's format, laid out like the template.</summary>
 public static class MdlBuilder
 {
     public static byte[] Build(MdlTemplate t, IReadOnlyList<PropMesh> meshesIn, IReadOnlyList<string> materials)
+        => Build(t, meshesIn, materials, out _);
+
+    /// <summary>The same, and where each vertex ended up (meshes with more than 65535 vertices aren't split here: those
+    /// models can't be moved live, and <paramref name="layout"/> is null).</summary>
+    public static byte[] Build(MdlTemplate t, IReadOnlyList<PropMesh> meshesIn, IReadOnlyList<string> materials, out MdlLayout? layout)
     {
+        layout = meshesIn.All(m => m.P.Count <= 65535 && m.I.Count > 0) ? new MdlLayout() : null;
         // (a mesh may hold at most 65535 vertices: bigger ones are cut into pieces)
         var meshes = new List<PropMesh>();
         foreach(var m in meshesIn)
@@ -167,7 +186,10 @@ public static class MdlBuilder
             while(index.Length % 16 != 0)
                 index.WriteByte(0);
             meshInfo.Add((m.P.Count, m.I.Count, start, offsets));
+            layout?.Meshes.Add((offsets, m.P.Count));
         }
+        if(layout != null)
+            layout.Block = vertex.ToArray();
 
         // Strings: the materials.
         var strings = new MemoryStream();

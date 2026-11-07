@@ -1,0 +1,161 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
+using Limber.BodyRig;
+
+namespace Limber.Koi.Props;
+
+/// <summary>A placed Koikatsu prop's own settings on the Props page: colours, blend shapes, bones, dynamic bones.</summary>
+internal static class KoiPropEditor
+{
+    private static string _boneSearch = "";
+
+    public static void Draw(SpawnedProp prop)
+    {
+        var inst = KoiPropRuntime.For(prop.Id);
+        if(inst == null)
+        {
+            if((prop.Item.Sgb ?? "").StartsWith(KoiProps.GameRoot + "/", StringComparison.OrdinalIgnoreCase))
+                ImGui.TextDisabled("To colour and pose it: convert it again (Import props), then place it again.");
+            return;
+        }
+        var rig = inst.Rig;
+        ImGui.TextDisabled($"Koikatsu prop: {inst.Note}.");
+
+        // Colours: each part (material) with the colours its mask has.
+        if(rig.Materials.Count > 0 && ImGui.TreeNodeEx("Colours###koi_colours", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            bool apply = false;
+            for(int m = 0; m < rig.Materials.Count; m++)
+            {
+                var material = rig.Materials[m];
+                using var id = ImRaii.PushId(m);
+                string name = material.Name.Length > 0 ? material.Name : $"Part {m + 1}";
+                ImGui.TextUnformatted($"{(rig.Materials.Count > 1 ? $"Part {m + 1}: " : "")}{name}");
+                for(int c = 0; c < Math.Clamp(material.Slots, 1, 3); c++)
+                {
+                    ImGui.SameLine();
+                    var colour = inst.Colours[m][c];
+                    if(ImGui.ColorEdit4($"###koi_col_{c}", ref colour, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.AlphaBar))
+                        inst.Colours[m][c] = colour;
+                    if(ImGui.IsItemDeactivatedAfterEdit())
+                        apply = true;
+                    if(ImGui.IsItemHovered())
+                        ImGui.SetTooltip(material.Slots > 1 ? $"Colour {c + 1} of this part (where its colour mask's {(c == 0 ? "red" : c == 1 ? "green" : "blue")} is)." : "This part's colour.");
+                }
+                ImGui.SameLine();
+                if(ImGui.SmallButton("Default###koi_col_def"))
+                {
+                    inst.Colours[m] = (Vector4[])material.Colours.Clone();
+                    apply = true;
+                }
+            }
+            if(apply)
+                KoiPropRuntime.Recolour(inst);
+            ImGui.TextDisabled("(a colour is put on when you let go of the picker: the prop is drawn again)");
+            ImGui.TreePop();
+        }
+
+        // Blend shapes.
+        var shapes = rig.ShapeNames.ToList();
+        if(shapes.Count > 0 && ImGui.TreeNodeEx($"Shapes ({shapes.Count})###koi_shapes", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach(var name in shapes)
+            {
+                float v = inst.Shapes.GetValueOrDefault(name);
+                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                if(ImGui.SliderFloat($"{name}###koi_shape_{name}", ref v, 0f, 100f, "%.0f"))
+                {
+                    inst.Shapes[name] = v;
+                    inst.Dirty = true;
+                }
+            }
+            if(ImGui.SmallButton("All back to 0###koi_shapes_reset"))
+            {
+                inst.Shapes.Clear();
+                inst.Dirty = true;
+            }
+            ImGui.TreePop();
+        }
+
+        // Dynamic bones.
+        if(rig.Chains.Count > 0 && ImGui.TreeNodeEx($"Dynamic bones ({rig.Chains.Count})###koi_dyn"))
+        {
+            bool on = inst.Dynamics;
+            if(ImGui.Checkbox("Swing###koi_dyn_on", ref on))
+            {
+                inst.Dynamics = on;
+                inst.Settled = false;
+                inst.Dirty = true;
+            }
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            float k = inst.DynamicsStrength;
+            if(ImGui.SliderFloat("Weight###koi_dyn_weight", ref k, 0f, 2f, "%.2f"))
+            {
+                inst.DynamicsStrength = k;
+                inst.Settled = false;
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("How hard gravity pulls the swinging parts (1: as the prop's own settings).");
+            if(ImGui.SmallButton("Shake###koi_dyn_shake"))
+            {
+                for(int b = 0; b < inst.Now.Length; b++)
+                    inst.Last[b] = inst.Now[b] + new Vector3(0.01f, 0.005f, 0.01f);
+                inst.Settled = false;
+            }
+            ImGui.TreePop();
+        }
+
+        // Bones.
+        if(rig.Bones.Count > 1 && ImGui.TreeNodeEx($"Bones ({rig.Bones.Count})###koi_bones"))
+        {
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.InputTextWithHint("###koi_bone_search", "Search bones", ref _boneSearch, 64);
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Reset all###koi_bones_reset"))
+            {
+                Array.Clear(inst.Turn);
+                inst.Dirty = true;
+                inst.Settled = false;
+            }
+            using(var child = ImRaii.Child("###koi_bone_list", new Vector2(-1, 220 * ImGuiHelpers.GlobalScale), true))
+            if(child.Success)
+            {
+                for(int b = 0; b < rig.Bones.Count; b++)
+                {
+                    var bone = rig.Bones[b];
+                    if(_boneSearch.Length > 0 && !bone.Name.Contains(_boneSearch, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    int depth = 0;
+                    for(int a = bone.Parent; a >= 0 && depth < 12; a = rig.Bones[a].Parent)
+                        depth++;
+                    using var bid = ImRaii.PushId(b);
+                    if(_boneSearch.Length == 0)
+                        ImGui.Indent(depth * 8f * ImGuiHelpers.GlobalScale);
+                    var turn = inst.Turn[b];
+                    ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+                    if(ImGui.DragFloat3($"{bone.Name}###turn", ref turn, 0.5f, -180f, 180f, "%.0f°"))
+                    {
+                        inst.Turn[b] = turn;
+                        inst.Dirty = true;
+                        inst.Settled = false;
+                    }
+                    if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                    {
+                        inst.Turn[b] = Vector3.Zero;
+                        inst.Dirty = true;
+                    }
+                    if(ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Turn (yaw, pitch, roll) on top of how it rests. Right-click: back to rest.");
+                    if(_boneSearch.Length == 0)
+                        ImGui.Unindent(depth * 8f * ImGuiHelpers.GlobalScale);
+                }
+            }
+            ImGui.TreePop();
+        }
+    }
+}

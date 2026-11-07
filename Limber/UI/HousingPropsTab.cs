@@ -67,6 +67,8 @@ public sealed unsafe class HousingPropsTab
     private string Id => _source != null ? "koiprops" : _world ? "world" : "housing";
     // (Koikatsu props: the converted ones, listed like world props)
     private readonly Func<HousingItem[]?>? _source;
+    /// <summary>More settings drawn for each placed prop (Koikatsu props: colours, shapes, bones).</summary>
+    public Action<SpawnedProp>? Extra { get; set; }
     private readonly string _what = "";
 
     /// <param name="world">The World props page (the game's shared groups) instead of the housing items.</param>
@@ -357,6 +359,7 @@ public sealed unsafe class HousingPropsTab
                 prop.Scale = scale;
                 HousingProps.MarkChanged(prop);
             }
+            Extra?.Invoke(prop);
             ImGui.TreePop();
         }
     }

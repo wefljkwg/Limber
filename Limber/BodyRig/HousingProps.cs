@@ -494,6 +494,9 @@ public sealed unsafe class HousingProps : IDisposable
         {
             var prop = new SpawnedProp { Item = item, Position = position, Turn = new Vector3(yawDegrees, 0f, 0f) };
             prop.Parts = PartsOf(item);
+            // (a prop that gets a model of its own each time it's placed: Koikatsu props, to pose and colour each one)
+            if(prop.Parts.Length == 1 && Instancer?.Invoke(prop) is { } own)
+                prop.Parts = [prop.Parts[0] with { Path = own }];
             prop.Objects = new BgObject*[prop.Parts.Length];
             prop.Ready = new bool[prop.Parts.Length];
             for(int i = 0; i < prop.Parts.Length; i++)
@@ -509,6 +512,32 @@ public sealed unsafe class HousingProps : IDisposable
             }
             lock(_spawned)
                 _spawned.Add(prop);
+        });
+
+    /// <summary>Gives a newly placed prop its own model path (or null: the item's own). Framework thread.</summary>
+    public static Func<SpawnedProp, string?>? Instancer;
+
+    /// <summary>Draws a placed (single-model) prop with another model from now on (made again in place).</summary>
+    public void ReplaceModel(Guid id, string path)
+        => _jobs.Enqueue(() =>
+        {
+            SpawnedProp? prop;
+            lock(_spawned)
+                prop = _spawned.Find(p => p.Id == id);
+            if(prop == null || prop.Parts.Length != 1)
+                return;
+            Destroy(prop);
+            prop.Parts = [prop.Parts[0] with { Path = path }];
+            prop.Ready = new bool[1];
+            try
+            {
+                prop.Objects[0] = BgObject.Create(path, string.Empty);
+            }
+            catch(Exception e)
+            {
+                _log.Warning(e, $"Limber: couldn't create {path}");
+            }
+            prop.Dirty = true;
         });
 
     public void Remove(Guid id)
