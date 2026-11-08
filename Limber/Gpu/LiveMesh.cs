@@ -153,6 +153,16 @@ public static unsafe class LiveMesh
         }
     }
 
+    [DllImport("kernel32.dll")]
+    private static extern bool ReadProcessMemory(nint process, nint address, void* buffer, nint size, out nint read);
+
+    /// <summary>
+    /// Copies memory that may be freed while it is read (a character still loading: its models are made and thrown
+    /// away on the game's other threads). Unlike reading through a pointer, this fails instead of crashing the game.
+    /// </summary>
+    private static bool Copy(nint address, void* to, int length)
+        => ReadProcessMemory(-1, address, to, length, out var read) && read == length;
+
     private static bool Readable(nint address, int length)
     {
         if (address < 0x10000 || address > 0x7FFFFFFF0000 || (address & 7) != 0)
@@ -165,6 +175,22 @@ public static unsafe class LiveMesh
         if (info.State != commit || !read || (info.Protect & 0x100) != 0)
             return false;
         return address + length <= info.BaseAddress + info.RegionSize;
+    }
+
+    // The same, read with Copy (for a model that may be freed meanwhile).
+    private static string SafeStdString(nint at)
+    {
+        ulong* head = stackalloc ulong[4];
+        if (!Copy(at, head, 32))
+            return "";
+        ulong length = head[2], capacity = head[3];
+        if (length == 0 || length > 1024)
+            return "";
+        var bytes = new byte[length];
+        fixed (byte* to = bytes)
+            if (!Copy(capacity >= 16 ? (nint)head[0] : at, to, (int)length))
+                return "";
+        return System.Text.Encoding.UTF8.GetString(bytes);
     }
 
     // A std::string (MSVC): its text inline when shorter than 16 bytes, otherwise behind a pointer.
@@ -369,13 +395,16 @@ public static unsafe class LiveMesh
             return found;
         }
         var regions = new Regions();
+        nint* chunk = stackalloc nint[ScanBytes / 8];
         for (int slot = 0; slot < slots; slot++)
         {
-            var model = cb->Models[slot];
-            if (model == null || !Readable((nint)model, 0x180))
+            FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model* model;
+            if (!Copy((nint)(cb->Models + slot), &model, 8) || model == null || !Readable((nint)model, 0x180))
                 continue;
-            var handle = model->ModelResourceHandle;
-            string file = handle != null && Readable((nint)handle, 0x2A0) ? StdString((nint)handle + 0x48) : "?";
+            FFXIVClientStructs.FFXIV.Client.System.Resource.Handle.ModelResourceHandle* handle;
+            if (!Copy((nint)(&model->ModelResourceHandle), &handle, 8))
+                continue;
+            string file = handle != null && Readable((nint)handle, 0x2A0) ? SafeStdString((nint)handle + 0x48) : "?";
             if (onlyFiles != null && !onlyFiles(file))
                 continue; // (searching a model's memory is slow: only the ones asked for)
             int before = found.Count;
@@ -388,14 +417,17 @@ public static unsafe class LiveMesh
             while (queue.Count > 0 && nodes++ < MaxNodes)
             {
                 var (at, path, depth) = queue.Dequeue();
-                if (!seen.Add(at) || !regions.Readable(at, ScanBytes))
+                if (!seen.Add(at) || !regions.Readable(at, ScanBytes) || !Copy(at, chunk, ScanBytes))
                     continue;
                 for (int off = 0; off < ScanBytes; off += 8)
                 {
-                    nint value = *(nint*)(at + off);
+                    nint value = chunk[off / 8];
                     if (value == 0 || seen.Contains(value) || !regions.Readable(value, 16))
                         continue;
-                    if (*(nint*)value == cls)
+                    nint head;
+                    if (!Copy(value, &head, 8))
+                        continue;
+                    if (head == cls)
                     {
                         var known = found.FirstOrDefault(f => f.Buffer == value);
                         if (known != null)
@@ -429,6 +461,7 @@ public static unsafe class LiveMesh
         if (cls == 0)
             return found;
         var regions = new Regions();
+        nint* chunk = stackalloc nint[ScanBytes / 8];
         var seen = new HashSet<nint>();
         var queue = new Queue<(nint Address, string Path, int Depth)>();
         foreach (var root in roots)
@@ -438,14 +471,17 @@ public static unsafe class LiveMesh
         while (queue.Count > 0 && nodes++ < MaxNodes)
         {
             var (at, path, depth) = queue.Dequeue();
-            if (!seen.Add(at) || !regions.Readable(at, ScanBytes))
+            if (!seen.Add(at) || !regions.Readable(at, ScanBytes) || !Copy(at, chunk, ScanBytes))
                 continue;
             for (int off = 0; off < ScanBytes; off += 8)
             {
-                nint value = *(nint*)(at + off);
+                nint value = chunk[off / 8];
                 if (value == 0 || seen.Contains(value) || !regions.Readable(value, 16))
                     continue;
-                if (*(nint*)value == cls)
+                nint head;
+                if (!Copy(value, &head, 8))
+                    continue;
+                if (head == cls)
                 {
                     var known = found.FirstOrDefault(f => f.Buffer == value);
                     if (known != null)
