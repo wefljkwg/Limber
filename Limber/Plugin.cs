@@ -142,7 +142,7 @@ public sealed class Plugin : IDalamudPlugin
             _ahegao = new AhegaoService(ObjectTable, () => _config.Ik.Ahegao ??= new()) { Skip = a => _oral.Follows(a) != 0 && (_config.Ik.Oral?.MouthRig ?? true) };
             _faceMorphs = new FaceMorphService(ObjectTable, () => _config.Ik.FaceMorphs ??= new(), _oral, _ahegao, () => _config.Ik.Ahegao ??= new())
             {
-                Selected = () => _selection.Actor.Address,
+                Selected = () => (_selection.Actor.Address, _selection.Actor.Name),
             };
             _lookAt = new LookAtService(ObjectTable, () => _config.Ik.LookAt ??= new()) { Skip = a => _oral.Follows(a) != 0 };
             _dynamicBones = new DynamicBoneService(ObjectTable, () => _config.Ik.DynamicBones ??= new()) { Skip = a => _oral.IsPartner(a) };

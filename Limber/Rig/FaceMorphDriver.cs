@@ -46,7 +46,7 @@ public sealed unsafe class FaceMorphService
     private double _time;
 
     /// <summary>The character chosen in Limber's window (set by the plugin).</summary>
-    public Func<nint> Selected = () => 0;
+    public Func<(nint Address, string? Name)> Selected = () => (0, null);
 
     /// <summary>What it's doing (for the page).</summary>
     public string Status = "";
@@ -123,11 +123,16 @@ public sealed unsafe class FaceMorphService
         Dictionary<string, float>? weights = null;
         float throat = 0f;
         int bestScore = 0;
+        string skipped = "";
+        string bestName = "";
         foreach(var obj in _objects)
         {
             if(obj == null || obj.Address == 0)
                 continue;
-            string name = obj.Name.TextValue;
+            // (the character chosen in Limber's window goes by the name the window shows: the page keeps its
+            // settings under that, which for spawned actors and NPCs can differ from the game's name for them)
+            var sel = Selected();
+            string name = obj.Address == sel.Address && !string.IsNullOrEmpty(sel.Name) ? sel.Name! : obj.Name.TextValue;
             if(name.Length == 0)
                 continue;
             all.TryGetValue(name, out var s);
@@ -137,7 +142,10 @@ public sealed unsafe class FaceMorphService
             if((s == null || !s.Enabled) && !ohogao)
                 continue;
             if(!Limber.Koi.Safety.AdultAllowed(obj.Address))
+            {
+                skipped = $"{name} skipped (not an adult character's body)";
                 continue;
+            }
             var w = new Dictionary<string, float>();
             if(s != null && s.Enabled)
                 foreach(var (k, v) in s.Values)
@@ -153,18 +161,24 @@ public sealed unsafe class FaceMorphService
                 neck = AddOral(w, s!, m);
             // Which one: Oral's mouth first, then the character chosen at the top of Limber's window, then a GPose
             // actor (in GPose the character you see is a copy with the same name as the one walking about, hidden).
-            int score = oral ? 4 : obj.Address == Selected() ? 3 : obj.ObjectIndex >= 200 ? 2 : 1;
+            int score = oral ? 4 : obj.Address == sel.Address ? 3 : obj.ObjectIndex >= 200 ? 2 : 1;
             if(score > bestScore)
             {
                 bestScore = score;
                 weights = w;
                 best = obj.Address;
                 bestIndex = obj.ObjectIndex;
+                bestName = name;
                 throat = neck;
             }
         }
         if(weights == null || best == 0)
         {
+            if(skipped.Length > 0 && skipped != _lastReport)
+            {
+                _lastReport = skipped;
+                Plugin.Log.Information("Limber face morphs: " + skipped);
+            }
             Limber.Gpu.FaceMorphs.Clear();
             Last = new();
             _throat = 0f;
@@ -179,7 +193,7 @@ public sealed unsafe class FaceMorphService
         Status = Limber.Gpu.FaceRig.Owner == best || Limber.Gpu.LipMesh.Owner == best
             ? "" : "Starting the face rig on the character (its face needs to be drawn)...";
         // (what it's doing, in the log when it changes: for when nothing shows)
-        string report = $"#{bestIndex}, {weights.Count} morph(s); face rig: {(Limber.Gpu.FaceRig.Owner == best ? "on it" : Limber.Gpu.FaceRig.Running ? "on another character" : "not running")} "
+        string report = $"#{bestIndex} ({bestName}), {weights.Count} morph(s); face rig: {(Limber.Gpu.FaceRig.Owner == best ? "on it" : Limber.Gpu.FaceRig.Running ? "on another character" : "not running")} "
             + $"({Limber.Gpu.FaceRig.Status}); last write: {Limber.Gpu.FaceMorphs.Applied}";
         if(report != _lastReport)
         {
