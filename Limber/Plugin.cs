@@ -1154,6 +1154,7 @@ public sealed class Plugin : IDalamudPlugin
         try { VoiceSwitcher.ResetAll(); } catch { }
         try { ActorVisibility.ShowAll(); } catch { } // (nobody stays invisible after Limber goes)
         try { BodySwap.ClearBodySwaps(); } catch { } // (the body-only swaps taken out of the mod manager)
+        try { Limber.Gpu.JointReadout.Dispose(); } catch { }
         PluginInterface.UiBuilder.Draw -= OnDraw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleWindow;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleWindow;

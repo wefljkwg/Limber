@@ -1273,6 +1273,68 @@ public sealed class MainWindow : Window
     }
 
     // Main Advanced tab: settings for the whole plugin.
+    // Research: the game's final per-mesh skinning matrices (Gpu/JointReadout). Read only.
+    private double _jointWatchAt;
+    private unsafe void DrawJointReadout()
+    {
+        ImGui.Text("Research: final skinning matrices");
+        ImGui.TextDisabled("Reads the matrices the game hands the graphics card for the chosen character (changes nothing).");
+        if (!Limber.Gpu.JointReadout.Running)
+        {
+            if (ImGui.Button("Start reading###limber_joint_start"))
+                Limber.Gpu.JointReadout.Start();
+            if (Limber.Gpu.JointReadout.Problem.Length > 0)
+                ImGui.TextColored(Warn, Limber.Gpu.JointReadout.Problem);
+            return;
+        }
+        if (ImGui.Button("Stop###limber_joint_stop"))
+        {
+            Limber.Gpu.JointReadout.Stop();
+            return;
+        }
+        var actor = _limberTab.ChosenActor;
+        if (ImGui.GetTime() >= _jointWatchAt)
+        {
+            _jointWatchAt = ImGui.GetTime() + 1.0;
+            nint draw = 0;
+            if (actor.IsSet)
+            {
+                var go = Limber.Core.ActorSkeleton.GetObject(actor.ObjectIndex);
+                if (go != null && (nint)go == actor.Address)
+                    draw = (nint)go->DrawObject;
+            }
+            Limber.Gpu.JointReadout.Watch(draw);
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Copy to clipboard###limber_joint_copy"))
+        {
+            var text = new System.Text.StringBuilder();
+            foreach (var t in Limber.Gpu.JointReadout.Snapshot())
+            {
+                text.AppendLine($"{t.Model} slot {t.Slot} table {t.Index}: {t.Count} bones, ring {t.Ring}, frames {t.Frames}");
+                for (int b = 0; b < t.Count && b * 12 + 11 < t.Matrices.Length; b++)
+                {
+                    var m = t.Matrices;
+                    int o = b * 12;
+                    ushort r = b < t.Refs.Length ? t.Refs[b] : (ushort)0;
+                    text.AppendLine($"  {b} (partial {r >> 12}, bone {r & 0xFFF}): " + string.Join(" ", System.Linq.Enumerable.Range(o, 12).Select(k => m[k].ToString("0.####"))));
+                }
+            }
+            ImGui.SetClipboardText(text.ToString());
+        }
+        foreach (var t in Limber.Gpu.JointReadout.Snapshot())
+        {
+            ImGui.TextDisabled($"{t.Model} (slot {t.Slot}, table {t.Index}): {t.Count} bones, ring slot {t.Ring}, read {t.Frames} times");
+            int shown = Math.Min(3, t.Count);
+            for (int b = 0; b < shown && b * 12 + 11 < t.Matrices.Length; b++)
+            {
+                var m = t.Matrices;
+                int o = b * 12;
+                ImGui.TextDisabled($"   bone {b}: last 3 = ({m[o + 9]:0.###}, {m[o + 10]:0.###}, {m[o + 11]:0.###})  first 3 = ({m[o]:0.###}, {m[o + 1]:0.###}, {m[o + 2]:0.###})");
+            }
+        }
+    }
+
     private void DrawMainAdvanced()
     {
         var outside = Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose;
@@ -1300,6 +1362,10 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         ImGui.Separator();
         DrawPerformance();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        DrawJointReadout();
 
         ImGui.Spacing();
         ImGui.Separator();

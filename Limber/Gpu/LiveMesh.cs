@@ -194,7 +194,7 @@ public static unsafe class LiveMesh
     }
 
     // A std::string (MSVC): its text inline when shorter than 16 bytes, otherwise behind a pointer.
-    private static string StdString(nint at)
+    internal static string StdString(nint at)
     {
         ulong length = *(ulong*)(at + 0x10), capacity = *(ulong*)(at + 0x18);
         if (length == 0 || length > 1024)
