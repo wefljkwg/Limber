@@ -408,6 +408,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.GlobalPresetsTab = new GlobalPresetsTab(_selection, _config.Ik, _globalPresets!);
             _followers = new Limber.Rig.Followers(_spawner, _config.Ik);
             _mainWindow.EntitiesTab = new EntitiesTab(_selection, _config.Ik, _spawner, _followers);
+            _mainWindow.BodySwapTab = new BodySwapTab(_selection, _actors);
             _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab };
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
@@ -585,6 +586,7 @@ public sealed class Plugin : IDalamudPlugin
                 _config.SaveIfDue();
             Limber.Rig.Animations.Tick();
             Limber.Rig.ActorVisibility.Update();
+            Limber.Rig.BodySwap.Tick();
             _props.ApplyResults();
             perf.Mark("prop results");
             _actors.CheckPriorityHook();

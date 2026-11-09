@@ -53,6 +53,7 @@ public sealed class MainWindow : Window
     public VoiceTab? VoiceTab { get; set; }
     public GlobalPresetsTab? GlobalPresetsTab { get; set; }
     public ExtrasTab? ExtrasTab { get; set; }
+    public BodySwapTab? BodySwapTab { get; set; }
     private int _portEdit;
     private string _newPresetName = "";
     /// <summary>Which link the Face tab captures from / shows presets for.</summary>
@@ -115,6 +116,7 @@ public sealed class MainWindow : Window
         new("collide", "Body", "Physics collisions", "What pushes the soft breasts, butt, testicles and belly (arms, hands, thighs, the floor, props) and how they give way.", () => _limberTab.DrawCollisionsTab()),
         new("dynamic", "Body", "Dynamic Bones", "Penis hardness: holds the pose exactly, hangs flaccid and swings with the body, or anything between.", () => DynamicBonesTab?.Draw(), () => DynamicBonesTab != null),
         new("bust", "Body", "Breast size", "Breast size for tops made with size shapes: flat at 0 to huge at 100, from the Bust slider or set here.", () => BustShapeTab?.Draw(), () => BustShapeTab != null && Cfg.ShowBustTab),
+        new("bodyswap", "Body", "Body swap", "The character becomes another race, whole: that race's full skeleton (body, face, hair, headgear) with its physics and every model, keeping its size and the rest of its look.", () => BodySwapTab?.Draw(), () => BodySwapTab != null),
         new("shape", "Body", "Body shape", "Sliders for the body's shape, live or built into your models.", () => BodyShapeTab?.Draw(), () => BodyShapeTab != null),
 
         new("appearance", "Scene", "Appearance & gear", "Change a character's race, clan, face, colours and every customize value, and its gear, weapons and dyes.", () => AppearanceTab?.Draw(), () => AppearanceTab != null),
@@ -214,6 +216,13 @@ public sealed class MainWindow : Window
             "oral" => () => new() { ["Oral"] = ik.Oral ??= new() },
 
             // Every other page with settings (2026-11-09: "everything in Limber has presets").
+            "bodyswap" => BodySwapTab is not { } swap ? null : () => new()
+            {
+                ["BodySwap"] = new PresetValues()
+                    .Add("Race", () => swap.Race, v => swap.Race = v)
+                    .Add("Clan", () => swap.Clan, v => swap.Clan = v)
+                    .Add("KeepHeight", () => swap.KeepHeight, v => swap.KeepHeight = v),
+            },
             "facemorphs" => PerCharacter(n => new() { ["FaceMorphs"] = For(ik.FaceMorphs ??= new(), n) }),
             "bust" => PerCharacter(n => new() { ["BustShape"] = For(ik.BustShapes ??= new(), n) }),
             "shape" => PerCharacter(n => new()
