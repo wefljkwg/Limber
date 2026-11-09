@@ -98,6 +98,51 @@ public sealed class OralSettings
 
     /// <summary>Shrink the teeth away into the mouth while it runs.</summary>
     public bool HideTeeth { get; set; } = true;
+
+    // ---- The mouth's path (Style = Path)
+
+    /// <summary>How the two meet: the shaft bending into the mouth (Path), or the head doing all the work (Classic, as before).</summary>
+    public OralStyle Style { get; set; } = OralStyle.Path;
+    /// <summary>Path: how much of the way the head moves to the shaft (0..1); the shaft bends the rest.</summary>
+    public float HeadShare { get; set; } = 0.4f;
+    /// <summary>Path: how much the head turns to face down the shaft (0..1); the shaft bends at the lips for the rest.</summary>
+    public float HeadTurnShare { get; set; } = 0.6f;
+    /// <summary>Path: how much the shaft bends onto the mouth's path (0..1).</summary>
+    public float ShaftFollows { get; set; } = 1f;
+    /// <summary>Path: the most the shaft swings or bends at any joint (degrees); past that the head comes the rest of the way.</summary>
+    public float MaxShaftBend { get; set; } = 35f;
+    /// <summary>Path: how fast the shaft's tip may move (metres per second), so it never jumps.</summary>
+    public float TipSpeed { get; set; } = 1.5f;
+    /// <summary>Path: it may go on past the back of the mouth, down the throat. Off: it stops at the back of the mouth.</summary>
+    public bool Throat { get; set; } = true;
+    /// <summary>Path: how deep the mouth is (1 = an average mouth, lips to the back of the mouth ~8 cm).</summary>
+    public float MouthDepth { get; set; } = 1f;
+    /// <summary>Path: how much the lips are pushed in and pulled out by the strokes (0..1).</summary>
+    public float PushPull { get; set; } = 0.5f;
+    /// <summary>Path: how far (metres) a gripping lip stretches with the shaft before it slips.</summary>
+    public float GripSlip { get; set; } = 0.006f;
+    /// <summary>Path: what happens to the teeth.</summary>
+    public OralTeeth Teeth { get; set; } = OralTeeth.Tuck;
+}
+
+/// <summary>How the mouth and the shaft meet.</summary>
+public enum OralStyle
+{
+    /// <summary>As before: the head moves all the way onto a fixed point of the shaft; the shaft barely moves.</summary>
+    Classic,
+    /// <summary>The shaft bends into a path through the mouth; the head only comes part of the way.</summary>
+    Path,
+}
+
+/// <summary>What the Path style does with the teeth.</summary>
+public enum OralTeeth
+{
+    /// <summary>Moved up and back behind the lips, as far as the shaft's thickness needs.</summary>
+    Tuck,
+    /// <summary>Shrunk away (as Classic does).</summary>
+    Hide,
+    /// <summary>Left as they are.</summary>
+    Leave,
 }
 
 /// <summary>
@@ -115,7 +160,7 @@ public sealed class OralSettings
 ///   (grip) and the cheeks drawn in on the way out.
 /// Everything happens on this PC only, on adult characters only.
 /// </summary>
-public sealed unsafe class OralService
+public sealed unsafe partial class OralService
 {
     private const string Head = "j_kao";
     private static readonly string[] ShaftBones = ["iv_ochinko_a", "iv_ochinko_b", "iv_ochinko_c", "iv_ochinko_d", "iv_ochinko_e", "iv_ochinko_f"];
@@ -150,7 +195,7 @@ public sealed unsafe class OralService
     // Bone thread -> UI.
     public volatile string Status = "";
     /// <summary>What "Show the shaft" draws (world space).</summary>
-    public sealed record GuideShape(Vector3[] Line, float[] Radius, Vector3 LipsShouldBe, Vector3 LipsAre);
+    public sealed record GuideShape(Vector3[] Line, float[] Radius, Vector3 LipsShouldBe, Vector3 LipsAre, Vector3[]? Path = null);
     public volatile GuideShape? Guide;
     /// <summary>A sample of the shaft's skinned vertices (world), when it's read from the model.</summary>
     public volatile Vector3[]? GuideDots;
@@ -193,6 +238,15 @@ public sealed unsafe class OralService
             foreach(var d in dots)
                 if(Screen(d, out var at))
                     draw.AddCircleFilled(at, 2f, 0xFFFF60FF);
+        // (Path style: the mouth's path in light blue, the back of the mouth as a dot)
+        if(g.Path is { Length: >= 2 } path)
+        {
+            for(int i = 1; i < path.Length; i++)
+                if(Screen(path[i - 1], out var a) && Screen(path[i], out var b))
+                    draw.AddLine(a, b, 0xFFFFD040, 2f);
+            if(path.Length >= 3 && Screen(path[2], out var back))
+                draw.AddCircleFilled(back, 4f, 0xFFFFD040);
+        }
         if(Screen(g.LipsShouldBe, out var target))
             draw.AddCircleFilled(target, 5f, 0xFF40FF40);
         if(Screen(g.LipsAre, out var lips))
@@ -349,8 +403,14 @@ public sealed unsafe class OralService
 
     /// <summary>The mouth's stroke right now (for the face morphs): depth 0 (at the tip) to 1 (all the way), its speed
     /// per second (+ going deeper), how big the shaft is for the mouth (0..1), and how far Oral has taken over (0..1).</summary>
-    public readonly record struct Mouth(nint Giver, float Depth, float Speed, float Big, float Blend);
-    public Mouth? MouthState => _running && _giver != 0 ? new Mouth(_giver, _depth, _depthSpeed, _bigness, _blend) : null;
+    /// <summary>(Path style also: how far it really is in the mouth, how far the back of the mouth is, and the shaft's
+    /// length (world metres; Inside -1 = not known), and the lips pushed in (+) or pulled out (-), -1..1.)</summary>
+    public readonly record struct Mouth(nint Giver, float Depth, float Speed, float Big, float Blend,
+        float Inside = -1f, float Back = 0f, float Length = 0f, float PushPull = 0f);
+    public Mouth? MouthState => !_running || _giver == 0 ? null
+        : _pathActive && _shaftLength > 1e-3f
+            ? new Mouth(_giver, Math.Clamp(_inside / _shaftLength, 0f, 1f), _depthSpeed, _bigness, _blend, _inside, _back, _shaftLength, _pushPullShown)
+            : new Mouth(_giver, _depth, _depthSpeed, _bigness, _blend);
 
     /// <summary>Whether this character is Oral's partner right now (its shaft is read as posed).</summary>
     public bool IsPartner(nint actor) => _running && actor == _receiver;
@@ -847,6 +907,8 @@ public sealed unsafe class OralService
             return null;
         }
         var s = _settings();
+        if(s.Style == OralStyle.Path)
+            return HeadTargetPath(s, held, giver, shaft, blend);
         float fromTip = _depth * shaft.Length;
         var (pointWorld, tangentWorld) = shaft.At(fromTip);
         var point = giver.WorldToModelPoint(pointWorld);
@@ -905,17 +967,22 @@ public sealed unsafe class OralService
     // head so it doesn't matter what the body has done yet), and the head's forward / up axes (from the rest pose,
     // which faces +Z with +Y up).
     private bool TryMouth(in ActorSkeleton giver, out Vector3 mouthLocal, out Vector3 localForward, out Vector3 localUp)
+        => TryMouth(giver, out mouthLocal, out localForward, out localUp, out _, out _);
+
+    // (also: the head's frame the mouth is measured from (model space), and which extra skeleton has the face)
+    private bool TryMouth(in ActorSkeleton giver, out Vector3 mouthLocal, out Vector3 localForward, out Vector3 localUp, out Frame head, out int part)
     {
         mouthLocal = default;
         localForward = Vector3.UnitZ;
         localUp = Vector3.UnitY;
-        if(!FindLips(giver, out int part, out var lips) || lips.Count == 0)
+        head = Frame.Identity;
+        if(!FindLips(giver, out part, out var lips) || lips.Count == 0)
             return false;
         var info = giver.PartialInfo(part, _cache);
         if(info == null)
             return false;
         int root = info.IndexOf(Head);
-        var head = root >= 0 ? giver.GetPartialFrame(part, root) : giver.GetPartialParentFrame(part, 0, _cache);
+        head = root >= 0 ? giver.GetPartialFrame(part, root) : giver.GetPartialParentFrame(part, 0, _cache);
         var centre = Vector3.Zero;
         foreach(var b in lips)
             centre += giver.GetPartialFrame(part, b).Position;
@@ -1017,9 +1084,17 @@ public sealed unsafe class OralService
     /// </summary>
     public void UpdatePartner()
     {
+        // (Path style: last frame's bend taken back off if the game didn't rebuild the partner's pose since)
+        RestoreBend();
         if(!_running || _blend <= 0f)
+        {
+            ResetPath();
             return;
+        }
         var s = _settings();
+        // Path style: the shaft bends onto the mouth's path after posing instead (UpdateMouth).
+        if(s.Style == OralStyle.Path)
+            return;
         float amount = Math.Clamp(s.PartnerMoves, 0f, 1f) * Smoother(_blend);
         if(amount <= 0f)
             return;
@@ -1094,6 +1169,18 @@ public sealed unsafe class OralService
         var s = _settings();
         if(!ActorSkeleton.TryGet(_giver, _giverIndex, _cache, out var giver) || giver.Info.Count == 0)
             return;
+        bool path = s.Style == OralStyle.Path;
+        float dt = BoneDt();
+        // Path style: the shaft bent onto the mouth's path first (the head is where posing left it), then read again.
+        if(path)
+            BendShaft(s, giver, Smoother(_blend), dt);
+        else
+        {
+            _pathWorld = null;
+            _bendOffsets = null;
+            _anchors.Clear();
+        }
+        _pathActive = path && _pathWorld != null;
         if(!TryShaft(out var shaft) || !FindLips(giver, out int part, out var lips))
             return;
         var info = giver.PartialInfo(part, _cache);
@@ -1103,13 +1190,18 @@ public sealed unsafe class OralService
         float scale = MathF.Max(0.5f, giver.RootScale.Y);
 
         float fromTip = _depth * shaft.Length;
+        // (Path: how deep it really is: where the bent shaft crosses the lips)
+        if(_pathActive && _pathWorld is { } entryPath)
+            fromTip = FromTipAt(shaft, entryPath[0], out _);
         var (pointWorld, tangentWorld) = shaft.At(fromTip);
         var axisPoint = giver.WorldToModelPoint(pointWorld);
         var axis = Norm(Vector3.Transform(tangentWorld, Quaternion.Inverse(giver.RootRotation)));
         // Thinner right at the tip.
         // The shaft's real thickness at the lips when measured (in this character's units), else the slider's.
+        // (Path: from the thickness table, built once for this shaft)
         float measured = shaft.RadiusAt(fromTip);
-        float radius = measured > 0f
+        float radius = _pathActive ? GirthAt(fromTip, shaft.Length, s)
+            : measured > 0f
             ? measured / MathF.Max(0.01f, giver.RootScale.Y)
             : MathF.Max(0.004f, s.Thickness) * (0.72f + 0.28f * Math.Clamp(fromTip / MathF.Max(1e-3f, shaft.Length * 0.1f), 0f, 1f));
 
@@ -1128,7 +1220,26 @@ public sealed unsafe class OralService
         var guideRadii = new float[shaft.Points.Length];
         for(int i = 0; i < guideRadii.Length; i++)
             guideRadii[i] = shaft.Radii?[i] ?? MathF.Max(0.004f, s.Thickness) * giver.RootScale.Y;
-        Guide = new GuideShape(shaft.Points, guideRadii, pointWorld, giver.ModelToWorldPoint(mouth));
+        Guide = new GuideShape(shaft.Points, guideRadii, pointWorld, giver.ModelToWorldPoint(mouth), _pathActive ? _pathWorld : null);
+
+        // Path: how deep it is (for the face morphs), and the lips pushed in / pulled out by the change in depth,
+        // dying away (a stroke in pushes them in, out pulls them out).
+        if(_pathActive)
+        {
+            float inside = away <= 0.06f * scale ? fromTip : 0f;
+            float change = inside - _lastInside;
+            _lastInside = inside;
+            if(MathF.Abs(change) > 0.1f)
+                change = 0f; // (a jump, not a stroke)
+            float most = 0.007f * scale;
+            _pushPull = Math.Clamp((_pushPull + change / MathF.Max(0.01f, giver.RootScale.Y) * 0.25f * Math.Clamp(s.PushPull, 0f, 1f))
+                * MathF.Exp(-dt / 0.3f), -most, most);
+            _pushPullShown = _pushPull / most;
+            _inside = inside;
+            _back = _pathBackWorld;
+            _shaftLength = shaft.Length;
+        }
+
         // Mouth rig off: the mouth is left as it is (no lips, jaw, teeth or cheeks moved).
         if(!s.MouthRig)
         {
@@ -1136,7 +1247,10 @@ public sealed unsafe class OralService
             return;
         }
         if(away > 0.06f * scale)
+        {
+            _anchors.Clear(); // (not touching: the lips let go)
             return;
+        }
         // The ring goes round the mouth where it actually is (across the shaft), not pulled over to the shaft's
         // line: if the head is a little off (out of reach, or nudged by the sliders) the lips keep their place, and
         // fade out of the wrap the further off it is.
@@ -1196,6 +1310,16 @@ public sealed unsafe class OralService
         bool shaped = s.LipMesh && Limber.Gpu.LipMesh.HasShapes && Limber.Gpu.LipMesh.Owner == _giver;
         float fit = shaped ? 0f : Math.Clamp(s.LipFit, 0f, 1f) * blend * near;
         float drag = Math.Clamp(_depthSpeed * shaft.Length * 0.06f * Math.Clamp(s.LipGrip, 0f, 1f), -0.007f, 0.007f) * scale;
+        // Path: pushed in / pulled out by the depth's change, and each lip gripping the shaft until it slips.
+        ActorSkeleton partner = default;
+        bool gripping = _pathActive && near > 0.5f && s.LipGrip > 0f
+            && ActorSkeleton.TryGet(_receiver, _receiverIndex, _cache, out partner) && partner.Info.Count > 0;
+        if(!gripping)
+            _anchors.Clear();
+        float grip = Math.Clamp(s.LipGrip, 0f, 1f), slip = Math.Clamp(s.GripSlip, 0.001f, 0.02f) * scale;
+        if(_pathActive)
+            drag = _pushPull;
+        _centreGrip = gripping && shaped ? Grip(-1, centre, axis, slip, giver, partner) * grip : 0f;
         if(fit > 0f)
         {
             // The mouth's centre again now the jaw is open (across the shaft only).
@@ -1265,6 +1389,8 @@ public sealed unsafe class OralService
                     around = right * (MathF.Cos(angle) * width) + up * MathF.Sin(angle);
                 }
                 var target = centre + around * ring + axis * (along * (1f - fit) + drag * grip - pursed);
+                if(gripping)
+                    target += axis * Grip(b, target, axis, slip, giver, partner) * Math.Clamp(s.LipGrip, 0f, 1f);
                 // Never dragged far (a lip bone far off would pull the chin or cheek into a spike); this bone only,
                 // so nothing hanging from it (chin, cheek) is pulled along.
                 var move = (target - at) * fit;
@@ -1301,8 +1427,18 @@ public sealed unsafe class OralService
             LipDots = dots.ToArray();
         }
 
+        // Path: the teeth tucked up and back behind the lips, as far as the shaft's thickness needs (or as chosen).
+        if(_pathActive && s.Teeth == OralTeeth.Tuck)
+        {
+            var mouthUp = upper >= 0 && lower >= 0
+                ? giver.GetPartialFrame(part, upper).Position - giver.GetPartialFrame(part, lower).Position
+                : Vector3.UnitY;
+            mouthUp -= axis * Vector3.Dot(mouthUp, axis);
+            mouthUp = mouthUp.LengthSquared() > 1e-10f ? Vector3.Normalize(mouthUp) : Norm(Vector3.UnitY - axis * axis.Y);
+            TuckTeeth(giver, part, info, axisPoint, axis, mouthUp, radius, scale, blend * near, _bigness);
+        }
         // Teeth out of sight: shrunk away into the mouth (the shaft would go right through them).
-        if(s.HideTeeth)
+        else if(_pathActive ? s.Teeth == OralTeeth.Hide : s.HideTeeth)
         {
             for(int b = 0; b < info.Count; b++)
             {
@@ -1526,9 +1662,14 @@ public sealed unsafe class OralService
             OpenWidth = Math.Clamp(s.OpenSize, 0.5f, 2f) * Math.Clamp(s.OpenWidth, 0.5f, 2f),
             OpenHeight = Math.Clamp(s.OpenSize, 0.5f, 2f) * Math.Clamp(s.OpenHeight, 0.5f, 2f),
             JawGap = _jawGap,
-            CheekPuff = 0.009f * _bigness * Math.Clamp(s.Cheeks, 0f, 1.5f) * blend,
+            // (Path: fuller the deeper it is in the mouth)
+            CheekPuff = 0.009f * _bigness * Math.Clamp(s.Cheeks, 0f, 1.5f) * blend
+                * (_pathActive && _back > 1e-3f ? 0.4f + 0.6f * Smoother(_inside / _back) : 1f),
             // the lips held by the shaft: pulled out with it on the way out, tucked in on the way in
-            Drag = -Math.Clamp(_depthSpeed * shaft.Length * 0.06f * Math.Clamp(s.LipGrip, 0f, 1f), -0.007f, 0.007f) * blend,
+            // (Path: pushed / pulled by the change in depth, and gripping until they slip)
+            Drag = _pathActive
+                ? -Math.Clamp(_pushPull + _centreGrip, -0.009f, 0.009f) * blend
+                : -Math.Clamp(_depthSpeed * shaft.Length * 0.06f * Math.Clamp(s.LipGrip, 0f, 1f), -0.007f, 0.007f) * blend,
         });
         _lipsHanded = true;
     }

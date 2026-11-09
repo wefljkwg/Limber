@@ -28,6 +28,9 @@ public static class Favorites
 
     public static int Count(string list) => List(list).Count;
 
+    /// <summary>The set itself (to tell it was swapped for another, e.g. by undo or a preset): for caches.</summary>
+    public static object Identity(string list) => List(list);
+
     public static void Toggle(string list, string key)
     {
         var set = List(list);

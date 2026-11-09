@@ -75,7 +75,7 @@ public sealed class Selection
     public unsafe List<ActorRef> ListCharacters()
     {
         var list = new List<ActorRef>();
-        foreach(var gameObject in _objects)
+        foreach(var (gameObject, objName) in Limber.Core.FrameObjects.Of(_objects)) // (perf: the table read once per frame, shared)
         {
             if(gameObject is not ICharacter || gameObject.Address == 0)
                 continue;
@@ -86,12 +86,12 @@ public sealed class Selection
 
             if(ActorSpawner.Current?.IsHelper(gameObject.ObjectIndex) == true)
                 continue; // (an effect's hidden helper)
-            list.Add(ActorRef.From(gameObject));
+            list.Add(new ActorRef(gameObject.Address, gameObject.ObjectIndex, objName)); // (the name already read)
         }
 
         // You first (out of GPose, then in it), then the actors Limber added, other players, NPCs, the rest.
         var kinds = new Dictionary<ushort, Dalamud.Game.ClientState.Objects.Enums.ObjectKind>();
-        foreach(var gameObject in _objects)
+        foreach(var (gameObject, _) in Limber.Core.FrameObjects.Of(_objects)) // (perf: the table read once per frame, shared)
             if(gameObject.Address != 0)
                 kinds[gameObject.ObjectIndex] = gameObject.ObjectKind;
         var made = ActorSpawner.Current?.Made;

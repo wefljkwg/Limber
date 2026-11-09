@@ -65,13 +65,13 @@ public sealed unsafe class BustShapeService
     {
         var all = _settings();
         var list = new List<(nint, ushort, float, bool)>();
-        foreach(var obj in _objects)
+        foreach(var (obj, objName) in FrameObjects.Of(_objects)) // (perf: one read of the table per frame, shared)
         {
             if(obj is not Dalamud.Game.ClientState.Objects.Types.ICharacter || obj.Address == 0)
                 continue;
             if(!Limber.Koi.Safety.AdultAllowed(obj.Address))
                 continue;
-            string name = obj.Name.TextValue;
+            string name = objName;
             var s = name.Length > 0 && all.TryGetValue(name, out var mine) ? mine : Default;
             if(!s.Enabled)
                 continue;

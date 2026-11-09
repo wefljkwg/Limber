@@ -106,6 +106,12 @@ public sealed class CollisionSettings
     // Testicles: how far squeezing (thighs, hands, props from both sides) slides the whole sac out of the way.
     public float SacSlide { get; set; } = 1f;
 
+    /// <summary>Physics steps per frame (at 60 fps; as many per second at any frame rate). Collisions are worked out
+    /// in every step, so fast arms and hands don't pass through between frames.</summary>
+    public int Substeps { get; set; } = 4;
+    /// <summary>The fastest (m/s) a point may wobble relative to the body (stops wild flicks after hard hits).</summary>
+    public float MaxSpeed { get; set; } = 10f;
+
     public CollisionSettings Clone() => (CollisionSettings)MemberwiseClone();
 
     public static CollisionSettings TesticleDefaults() => new() { OwnArms = false, Thighs = true, ThighSize = 1f, Friction = 0.15f, Softness = 0.3f };

@@ -283,13 +283,10 @@ public unsafe struct ActorSkeleton
             var handle = (byte*)partial->SkeletonResourceHandle;
             if(handle != null)
             {
-                ulong length = *(ulong*)(handle + 0x48 + 0x10), capacity = *(ulong*)(handle + 0x48 + 0x18);
-                if(length > 0 && length < 512)
-                {
-                    byte* text = capacity >= 16 ? *(byte**)(handle + 0x48) : handle + 0x48;
-                    if(text != null)
-                        file = System.IO.Path.GetFileName(System.Text.Encoding.UTF8.GetString(text, (int)length).Split('|')[^1]);
-                }
+                // (copied: the skeleton file's resource may be let go of meanwhile)
+                var path = SafeMemory.ReadStdString((nint)(handle + 0x48), 511);
+                if(path.Length > 0)
+                    file = System.IO.Path.GetFileName(path.Split('|')[^1]);
             }
             int bone = info.IndexOf(name);
             if(bone < 0)

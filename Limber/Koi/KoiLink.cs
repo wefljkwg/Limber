@@ -67,7 +67,9 @@ public sealed unsafe class KoiLink : IDisposable
         if (Config.SyncEnabled && Sync.RelayConfigured)
             Sync.ConnectRelay();
 
-        Framework.Update += OnFrameworkUpdate;
+        // (an error is logged once in a while instead of every frame; see Core/StageGuard)
+        _guardedUpdate = Limber.Core.StageGuard.Wrap("the Koikatsu link", OnFrameworkUpdate, canStop: false);
+        Framework.Update += _guardedUpdate;
     }
 
     /// <summary>Fix anything an old or hand-edited config could get wrong. Fails safe.</summary>
@@ -269,6 +271,8 @@ public sealed unsafe class KoiLink : IDisposable
         }
     }
 
+    private IFramework.OnUpdateDelegate? _guardedUpdate;
+
     /// <summary>
     /// Runs on the framework thread: resolve each link's actor here, where the object table is safe to
     /// read, and hand only a snapshot of raw pointers to the skeleton hook (which re-validates them).
@@ -373,7 +377,8 @@ public sealed unsafe class KoiLink : IDisposable
 
     public void Dispose()
     {
-        Framework.Update -= OnFrameworkUpdate;
+        if(_guardedUpdate != null)
+            Framework.Update -= _guardedUpdate;
         Sync.Dispose();
         Receiver.Dispose();
         Config.Enabled = false;

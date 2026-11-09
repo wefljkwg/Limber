@@ -48,7 +48,9 @@ public sealed unsafe class RigService : IDisposable
         _log = log;
         _config = config;
 
-        _framework.Update += OnFrameworkUpdate;
+        // (an error is logged once in a while instead of every frame; see Core/StageGuard)
+        _guardedUpdate = Limber.Core.StageGuard.Wrap("Limber posing (characters coming and going)", OnFrameworkUpdate, canStop: false);
+        _framework.Update += _guardedUpdate;
     }
 
     // ---- Public API for the UI (lock Sync around anything that touches rigs or goals)
@@ -238,6 +240,8 @@ public sealed unsafe class RigService : IDisposable
     }
 
     // ---- Main-thread housekeeping
+
+    private IFramework.OnUpdateDelegate? _guardedUpdate;
 
     private void OnFrameworkUpdate(IFramework framework)
     {
@@ -1149,6 +1153,7 @@ public sealed unsafe class RigService : IDisposable
 
     public void Dispose()
     {
-        _framework.Update -= OnFrameworkUpdate;
+        if(_guardedUpdate != null)
+            _framework.Update -= _guardedUpdate;
     }
 }

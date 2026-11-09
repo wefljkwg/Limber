@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Dalamud.Plugin.Services;
+using Limber.Core;
 
 namespace Limber.Rig;
 
@@ -94,11 +95,11 @@ public sealed class SizeChangeService
             return;
         }
         var list = new List<(nint, ushort, SizeChangeSettings)>();
-        foreach(var obj in _objects)
+        foreach(var (obj, objName) in FrameObjects.Of(_objects)) // (perf: one read of the table per frame, shared)
         {
             if(obj == null || obj.Address == 0)
                 continue;
-            string name = obj.Name.TextValue;
+            string name = objName;
             if(name.Length == 0 || !all.TryGetValue(name, out var s))
                 continue;
             if(!Limber.Koi.Safety.AdultAllowed(obj.Address))

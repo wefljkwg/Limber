@@ -209,7 +209,8 @@ public static unsafe class BustShapes
                 if(NextLook.TryGetValue(address, out var next) && now < next)
                     continue;
                 NextLook[address] = now + 1000;
-                var drawObject = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address)->DrawObject;
+                // (copied: a character in the list may have left since)
+                var drawObject = Limber.Core.SafeMemory.ReadPointer((nint)(&((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address)->DrawObject));
                 var files = new List<string>();
                 if(drawObject != 0)
                     foreach(var (_, file) in LiveMesh.ModelFiles(drawObject))
@@ -258,7 +259,7 @@ public static unsafe class BustShapes
                 {
                     if(NextTry.TryGetValue(file, out var when) && now < when)
                         continue;
-                    var drawObject = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)owner)->DrawObject;
+                    var drawObject = Limber.Core.SafeMemory.ReadPointer((nint)(&((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)owner)->DrawObject));
                     if(drawObject == 0)
                         continue;
                     // (not again for a while if it doesn't take: finding the buffer is the costly part)

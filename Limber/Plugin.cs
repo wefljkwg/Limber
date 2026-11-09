@@ -68,11 +68,14 @@ public sealed class Plugin : IDalamudPlugin
     private readonly SizeChangeService _sizeChange;
     private readonly Limber.Rig.HideMounts _hideMounts = new();
     private readonly Limber.Rig.ClimaxService _climax;
+    private readonly Limber.Rig.SkinEffectsService _skinEffects;
+    private readonly Limber.Rig.EngineLayerService _engineLayer;
     private readonly Limber.Rig.LimberPoses _limberPoses = new();
     private readonly BustShapeService _bust;
     private readonly BallThrobService _ballThrob;
     private readonly SymmetryService _symmetry;
     private readonly RagdollService _ragdoll = new();
+    private Limber.Rig.GamePhysics? _gamePhysics;
     private readonly FacePosingService _facePosing;
     private GlobalPresetService? _globalPresets;
     private FacePosingTab? _faceTab;
@@ -89,10 +92,11 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PropOverlay _propOverlay;
     private readonly MainWindow _mainWindow;
     private readonly WindowSystem _windows = new("Limber");
-    private DateTime _lastDrawError = DateTime.MinValue;
 
     public Plugin()
     {
+        // (Limber's latest log lines also kept in memory, for Settings > Advanced > Copy diagnostics)
+        Log = new LimberLog(Log);
         _config = LoadConfig();
         _config.Ik ??= new RigSettings();
         _config.Ik.StopLimberAnimations(); // (Limber Animations never start by themselves)
@@ -128,6 +132,12 @@ public sealed class Plugin : IDalamudPlugin
             _housing = new Limber.BodyRig.HousingProps(DataManager, Log);
             _effects = new Limber.BodyRig.Effects(DataManager, SigScanner, GameInterop, Log);
             _climax = new Limber.Rig.ClimaxService(ObjectTable, _config.Ik);
+            // Skin effects and the engine animation layer: never on by themselves (off whenever Limber starts).
+            foreach(var s in (_config.Ik.SkinEffects ??= new()).Values) s.Enabled = false;
+            (_config.Ik.EngineLayer ??= new()).Enabled = false;
+            _skinEffects = new Limber.Rig.SkinEffectsService(ObjectTable, () => _config.Ik.SkinEffects ??= new(), () => _config.PluginEnabled && _config.Ik.SkinEffectsHook);
+            _engineLayer = new Limber.Rig.EngineLayerService(() => _config.Ik.EngineLayer ??= new());
+            Limber.Rig.WorldCollision.Settings = () => _config.Ik.WorldCollision ??= new();
             _motions = new MotionService(_rigs, ObjectTable, ClientState, GameGui, () => _config.Ik.Motions ??= new());
             _rigs.MotionFor = _motions.For;
             _oral = new OralService(_rigs, ObjectTable, ClientState, () => _config.Ik.Oral ??= new());
@@ -345,12 +355,23 @@ public sealed class Plugin : IDalamudPlugin
             _freeze.Allowed = () => ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             Limber.BodyShape.BodyShapeBuild.SetWorkDir(PluginInterface.ConfigDirectory.FullName);
             _bodyShape.KeepFeet = () => _config.Ik.BodyShapeKeepFeet;
+            _gamePhysics = new Limber.Rig.GamePhysics(SigScanner, Log, () => _config.Ik.GamePhysics ??= new Limber.Rig.GamePhysicsSettings());
+            _gamePhysics.LimberOn = () => _hook.BeforeRunning && (ClientState.IsGPosing || _config.Ik.WorkOutsideGPose);
+            _hook.AddBefore("Limber game physics (before the game's physics)", _gamePhysics.BeforePhysics);
+            _hook.AddFirst("Limber game physics (pose back after the game's physics)", _gamePhysics.AfterPhysics);
+            _hook.AddLast("Limber game physics (end of frame)", _gamePhysics.EndOfFrame);
             _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
                 ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber attached props", _housing.CaptureBones), ("Limber attached effects", _effects.CaptureBones), ("Limber effect helpers", _effects.CopyPoses), ("Limber climax", _climax.UpdateFrame), ("Limber hide mounts", _hideMounts.UpdateFrame), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
                 ("Limber freeze motion (end of frame)", _freeze.CaptureFrame));
+
+            // Which game functions were found (Settings > Advanced): checked once, in the background.
+            Signatures.Link("Posing", () => _hook.Status, () => _hook.IsHooked);
+            Signatures.Link("Effects", () => _effects.Status, () => _effects.Ready);
+            Signatures.Link("Character effects", () => "", () => _effects.ActorReady);
+            Signatures.StartCheck();
 
             var pluginDir = PluginInterface.AssemblyLocation.DirectoryName ?? ".";
             _video = new VideoTab(_koi, pluginDir, PluginInterface.ConfigDirectory.FullName);
@@ -398,6 +419,8 @@ public sealed class Plugin : IDalamudPlugin
             }
             _mainWindow.EffectsTab = new EffectsTab(_effects, _selection);
             _mainWindow.ClimaxTab = new ClimaxTab(_climax, _selection, _config.Ik) { Housing = _housing };
+            _mainWindow.SkinEffectsTab = new SkinEffectsTab(_selection, _config.Ik, _skinEffects);
+            _mainWindow.EngineLayerTab = new EngineLayerTab(_selection, _config.Ik, _engineLayer);
             _mainWindow.LimberAnimationsTab.BallThrob = _ballThrob;
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
             _mainWindow.LimberPosesTab = new LimberPosesTab(_selection, _config.Ik, _limberPoses, _actors) { Rigs = _rigs };
@@ -593,6 +616,7 @@ public sealed class Plugin : IDalamudPlugin
             _actors.CheckPriorityHook();
             perf.Mark("actor hook check");
             _spawner.Update();
+            _gamePhysics?.Refresh();
             try
             {
                 _followers?.Update((float)Math.Min(framework.UpdateDelta.TotalSeconds, 0.1));
@@ -616,6 +640,15 @@ public sealed class Plugin : IDalamudPlugin
             perf.Mark("housing props");
             _effects.Update(here);
             _climax.Update(here && _config.PluginEnabled && _config.ShowClimaxTab);
+            try
+            {
+                _skinEffects.Update(here, framework.UpdateDelta.TotalSeconds);
+                _engineLayer.Update(here, framework.UpdateDelta.TotalSeconds, _selection.Actor.IsSet ? _selection.Actor.Address : 0);
+            }
+            catch(Exception e)
+            {
+                Log.Debug(e, "Limber: skin effects / engine layer");
+            }
             // (the liquid drawn by the game: its carrier placed where the liquid is)
             var look = _config.Ik.ClimaxLook ??= new();
             bool liquid = here && _config.PluginEnabled && _climax.Centre != null;
@@ -658,11 +691,8 @@ public sealed class Plugin : IDalamudPlugin
         }
         catch (Exception e)
         {
-            if(DateTime.UtcNow - _lastDrawError > TimeSpan.FromSeconds(10))
-            {
-                _lastDrawError = DateTime.UtcNow;
-                Log.Error(e, "Limber: error listing characters for the soft body");
-            }
+            // (logged once in a while, with the part it happened after; Settings > Advanced lists it)
+            StageGuard.For("framework", "Limber's frame update", canStop: false).Failed(e, "after " + Limber.Core.Perf.LastMark);
         }
 
         foreach (var update in new Action[] { _video.Update, _live.Update })
@@ -673,11 +703,7 @@ public sealed class Plugin : IDalamudPlugin
             }
             catch (Exception e)
             {
-                if(DateTime.UtcNow - _lastDrawError > TimeSpan.FromSeconds(10))
-                {
-                    _lastDrawError = DateTime.UtcNow;
-                    Log.Error(e, "Limber: error playing video motion");
-                }
+                StageGuard.For("framework", "video motion", canStop: false).Failed(e);
             }
         }
     }
@@ -866,6 +892,7 @@ public sealed class Plugin : IDalamudPlugin
     private void DrawFrame()
     {
         var perf = new Limber.Core.Perf.Clock("draw");
+        Limber.Core.FrameObjects.NewFrame(); // (perf: the object table is read once this frame, see FrameObjects)
         try
         {
             _selection.Update();
@@ -978,11 +1005,8 @@ public sealed class Plugin : IDalamudPlugin
         }
         catch(Exception e)
         {
-            if(DateTime.UtcNow - _lastDrawError > TimeSpan.FromSeconds(10))
-            {
-                _lastDrawError = DateTime.UtcNow;
-                Log.Error(e, "Limber: error drawing handles");
-            }
+            // (logged once in a while, with the part it happened after; Settings > Advanced lists it)
+            StageGuard.For("draw", "handles, overlays and live meshes", canStop: false).Failed(e, "after " + Limber.Core.Perf.LastMark);
         }
 
         // ("Hide Limber window when UI is hidden": the windows wait; the handles follow their own setting)
@@ -1139,6 +1163,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         try
         {
+            _config.WaitForSave(); // (a write still going on a worker thread finishes first)
             lock(FaceDriver.PresetLock)
                 _config.SaveNow();
         }
@@ -1153,6 +1178,8 @@ public sealed class Plugin : IDalamudPlugin
         try { _hook.Running = () => false; } catch { } // (no more bone stages either)
         CameraControl.Dispose();
         try { VoiceSwitcher.ResetAll(); } catch { }
+        try { _engineLayer.Detach(); } catch { } // (off the character's animation list before Limber goes)
+        try { _skinEffects.Dispose(); } catch { } // (skin colour and eyes put back; the wetness hook removed)
         try { ActorVisibility.ShowAll(); } catch { } // (nobody stays invisible after Limber goes)
         try { BodySwap.ClearBodySwaps(); } catch { } // (the body-only swaps taken out of the mod manager)
         try { Limber.Gpu.JointReadout.Dispose(); } catch { }
@@ -1174,6 +1201,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Gpu.SkinCapture.Dispose();
         // Unhook first so nothing runs against the parts being torn down.
         _hook.Dispose();
+        try { _gamePhysics?.Dispose(); } catch { } // (the game's physics values put back)
         _actors.Dispose();
         _followers?.RemoveAll();
         Limber.Koi.Props.KoiPropRuntime.Stop();

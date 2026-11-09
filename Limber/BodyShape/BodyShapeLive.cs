@@ -403,13 +403,34 @@ public sealed class BodyShapeLive
         return r;
     }
 
+    // How deep a bone is (itself counted; 0: none). (perf: from the depths the skeleton's info already keeps, the same
+    // numbers; walking up the parents in every comparison of a sort was a good part of the frame with many changes)
     private static int Depth(SkeletonInfo info, int bone)
     {
-        int d = 0;
-        for (int b = bone; b >= 0 && d < 512; b = info.ParentOf(b))
-            d++;
-        return d;
+        if (bone < 0)
+            return 0;
+        if (bone >= info.Depths.Length)
+            return 1;
+        return Math.Min(info.Depths[bone] + 1, 512);
     }
+
+    // Each bone's children, per skeleton (perf: see Apply).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SkeletonInfo, List<int>[]> ChildLists = new();
+
+    private static List<int>[] ChildrenOf(SkeletonInfo info)
+        => ChildLists.GetValue(info, i =>
+        {
+            var lists = new List<int>[i.Count];
+            for (int b = 0; b < lists.Length; b++)
+                lists[b] = new List<int>();
+            for (int b = 0; b < i.Count; b++)
+            {
+                int parent = i.ParentOf(b);
+                if (parent >= 0 && parent < lists.Length)
+                    lists[parent].Add(b);
+            }
+            return lists;
+        });
 
     // One bone: scaled in its own axes (and stretched), turned and moved; the children it keeps put back as they
     // were, and the next joint of a stretch moved out along the line.
@@ -436,16 +457,25 @@ public sealed class BodyShapeLive
         var deeper = new List<(int Bone, Frame Frame, Vector3 Scale)>();
         if (op.CarryDescendants && !op.HoldChildPlaces && children.Count > 0)
         {
+            // (perf: every bone below those children, walked down from them once, instead of passes over the whole
+            // skeleton until nothing more was found. The same bones; read before anything is written, and put in order
+            // parents first below, as before: bones as deep as each other are never above one another, so the order
+            // among them changes nothing)
+            var below = ChildrenOf(info);
+            var stack = new Stack<int>();
+            foreach (var c in children)
+                stack.Push(c.Bone);
             var under = new HashSet<int>(children.Select(c => c.Bone));
-            bool grew = true;
-            while (grew)
+            while (stack.Count > 0)
             {
-                grew = false;
-                for (int b = 0; b < info.Count; b++)
-                    if (!under.Contains(b) && under.Contains(info.ParentOf(b)))
+                int top = stack.Pop();
+                if (top < 0 || top >= below.Length)
+                    continue;
+                foreach (int b in below[top])
+                    if (under.Add(b))
                     {
-                        under.Add(b); grew = true;
                         deeper.Add((b, skeleton.GetModelFrame(b), skeleton.GetModelScale(b)));
+                        stack.Push(b);
                     }
             }
             deeper.Sort((x, y) => Depth(info, x.Bone).CompareTo(Depth(info, y.Bone)));

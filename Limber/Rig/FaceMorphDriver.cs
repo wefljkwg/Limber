@@ -224,6 +224,13 @@ public sealed unsafe class FaceMorphService
         float outward = Math.Clamp(-m.Speed * 3f, 0f, 1f);  // coming out: the vacuum pulls hardest
         float deep = Smooth((depth - 0.55f) / 0.4f);
         float press = Smooth((depth - 0.85f) / 0.15f);
+        // (Oral's Path style says how deep it really is in the mouth: deep = near the back of the mouth, the throat
+        // past it, the cheeks fuller the further in a big one goes)
+        bool path = m.Inside >= 0f && m.Back > 1e-3f;
+        float fill = path ? Smooth(m.Inside / m.Back) : 0f;
+        float throat = path ? Smooth((m.Inside - m.Back) / MathF.Max(0.02f, 0.5f * m.Back)) : Smooth((depth - 0.6f) / 0.3f);
+        if(path)
+            deep = Smooth((m.Inside / m.Back - 0.6f) / 0.5f);
         // lips stretched round it
         Add("Lips stretched", s.Stretch * (0.3f + 0.7f * big) * blend);
         Add("Lips round (O)", s.Stretch * 0.4f * big * blend);
@@ -235,7 +242,10 @@ public sealed unsafe class FaceMorphService
         Add("Lips forward (pucker)", s.Vacuum * 0.3f * outward * blend);
         Add("VaM: BJ Cheeks - Suck Left", s.Vacuum * (0.3f + 0.7f * outward) * blend);
         Add("VaM: BJ Cheeks - Suck Right", s.Vacuum * (0.3f + 0.7f * outward) * blend);
-        Add("VaM: BJ Lips - Move In-Out", s.Vacuum * (outward - Math.Clamp(m.Speed * 3f, 0f, 1f)) * blend);
+        Add("VaM: BJ Lips - Move In-Out", path ? -s.Vacuum * Math.Clamp(m.PushPull, -1f, 1f) * blend
+            : s.Vacuum * (outward - Math.Clamp(m.Speed * 3f, 0f, 1f)) * blend);
+        if(path)
+            Add("Cheeks puffed", s.Stretch * 0.35f * big * fill * blend);
         // deep: the face long, strained
         Add("Long face", s.Deep * 0.55f * deep * blend);
         Add("Chin down", s.Deep * 0.3f * deep * blend);
@@ -251,7 +261,7 @@ public sealed unsafe class FaceMorphService
         float breath = 0.5f + 0.5f * MathF.Sin((float)(_time * Math.Tau * (1.1 + 0.6 * deep)));
         Add("Nostrils flared", s.Breathing * (0.25f + 0.55f * breath) * (0.6f + 0.4f * deep) * blend);
         Add("VaM: Breathing_NoseIn", s.Breathing * 0.5f * breath * blend);
-        return s.ThroatBulge * Smooth((depth - 0.6f) / 0.3f) * blend;
+        return s.ThroatBulge * throat * blend;
     }
 
     // ---- Bone update stage: the neck swells when it goes down the throat

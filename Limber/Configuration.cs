@@ -210,7 +210,7 @@ public class Configuration : IPluginConfiguration
 
     // Saving writes the whole settings file, so a slider or gizmo dragged (a change every frame) would write it every
     // frame and stutter: a change only marks it, and it's written once things have been still for a moment.
-    private bool _dirty;
+    private volatile bool _dirty;
     private long _dirtyAt;
 
     /// <summary>Counts changes (each Save), so watchers can tell nothing changed without comparing everything.</summary>
@@ -233,10 +233,55 @@ public class Configuration : IPluginConfiguration
         Plugin.PluginInterface.SavePluginConfig(this);
     }
 
+    // (perf) Writing the whole settings file (made into text, then written to disk with a backup) took several ms, up to
+    // tens of ms with a big setup, on the game's main thread: a hitch a moment after every change. It's written on a
+    // worker thread instead, one write at a time, holding the face presets' lock like the main thread did. If a write
+    // fails there (the settings changed while being written), it's simply written again a moment later; after a few
+    // failures in a row it goes back to writing on the main thread, as before.
+    private System.Threading.Tasks.Task? _saving;
+    private volatile int _backgroundFailures;
+
+    /// <summary>Waits (a few seconds at most) for a write on the worker thread to finish (before unloading). Call without
+    /// holding the face presets' lock.</summary>
+    public void WaitForSave()
+    {
+        try
+        {
+            _saving?.Wait(5000);
+        }
+        catch
+        {
+        }
+    }
+
     /// <summary>Framework update: writes the settings once they've been unchanged for a little while.</summary>
     public void SaveIfDue()
     {
-        if(_dirty && Environment.TickCount64 - _dirtyAt > 750)
+        if(!_dirty || Environment.TickCount64 - _dirtyAt <= 750)
+            return;
+        if(_backgroundFailures >= 3)
+        {
             SaveNow();
+            return;
+        }
+        if(_saving is { IsCompleted: false })
+            return;
+        _dirty = false;
+        _saving = System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                lock(Limber.Koi.Posing.FaceDriver.PresetLock)
+                    Plugin.PluginInterface.SavePluginConfig(this);
+                _backgroundFailures = 0;
+            }
+            catch(Exception e)
+            {
+                _backgroundFailures++;
+                Plugin.Log.Debug(e, "Limber: settings write on a worker thread failed; trying again");
+                _dirty = true;
+                _dirtyAt = Environment.TickCount64;
+            }
+        });
     }
 }

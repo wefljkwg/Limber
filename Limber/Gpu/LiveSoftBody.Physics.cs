@@ -24,7 +24,8 @@ public static unsafe partial class LiveSoftBody
 
         /// <summary>The settings one step uses (a copy, so the UI can change them while a step runs).</summary>
         public readonly record struct Tuning(float Strength, float Firm, float Home, float Damp, float ContactKeep, float BreastPush,
-            int Iterations, float Steadiness, float ImprintDepth, float ClingRange, float SideFirm, float MaxBulge, float Carry)
+            int Iterations, float Steadiness, float ImprintDepth, float ClingRange, float SideFirm, float MaxBulge, float Carry,
+            int Substeps = 4, float Friction = 0.5f)
         {
             public static Tuning From(LiveMeshSettings s) => new(
                 Math.Clamp(s.Strength, 0f, 1f),
@@ -39,10 +40,15 @@ public static unsafe partial class LiveSoftBody
                 Math.Clamp(s.ClingRange, 0.2f, 15f) * 0.01f,
                 Math.Clamp(s.SideFirmness, 0f, 1f),
                 Math.Clamp(s.MaxBulge, 0.2f, 10f) * 0.01f,
-                Math.Clamp(s.Carry, 0f, 1f) * Math.Clamp(s.Friction, 0.2f, 1f));
+                Math.Clamp(s.Carry, 0f, 1f) * Math.Clamp(s.Friction, 0.2f, 1f),
+                Math.Clamp(s.Substeps, 1, 8),
+                Math.Clamp(s.Friction, 0f, 1f));
         }
-        // A particle touching nothing moves at most this far a frame (one coming free of a finger eases back).
+        // A particle touching nothing moves at most this far a 60 fps frame (one coming free of a finger eases back);
+        // per substep it's the same per second.
         private const float MaxMove = 0.006f;
+        // Contacts: no bounce back off a collider below this speed (m/s); nothing faster than MaxSpeed (m/s).
+        private const float NoBounceSpeed = 0.2f, MaxSpeed = 2.5f;
         // The fine press-in on top of the particles (the exact shape of what touches): at most this deep, deeper by
         // at most PressRate a frame, easing back out over PressEase seconds.
         private const float PressRate = 0.008f, PressEase = 0.06f;
@@ -59,6 +65,10 @@ public static unsafe partial class LiveSoftBody
         private readonly int[] _clusterStart, _cluster;
         private readonly Quaternion[] _clusterTurn;
         private readonly Vector3[] _x, _v, _target, _before, _acc;
+        // The body's place for each particle at the start and end of this frame (the substeps go between them), and
+        // each touching particle's contact this substep (the way out and how deep it was).
+        private readonly Vector3[] _targetStart, _targetEnd, _hitNormal;
+        private readonly float[] _hitDepth;
         private readonly int[] _count;
         private readonly bool[] _touch;
         // Per mesh, per surface point: how far the fine press-in has it pushed in (eased).
@@ -110,6 +120,10 @@ public static unsafe partial class LiveSoftBody
             _v = new Vector3[_n];
             _target = new Vector3[_n];
             _before = new Vector3[_n];
+            _targetStart = new Vector3[_n];
+            _targetEnd = new Vector3[_n];
+            _hitNormal = new Vector3[_n];
+            _hitDepth = new float[_n];
             _acc = new Vector3[_n];
             _count = new int[_n];
             _touch = new bool[_n];
@@ -561,54 +575,110 @@ public static unsafe partial class LiveSoftBody
             if (reset)
             {
                 Array.Copy(_target, _x, _n);
+                Array.Copy(_target, _targetStart, _n);
                 Array.Clear(_v);
                 _side0.Clear();
                 _lastShape.Clear();
                 _started = true;
             }
+            Array.Copy(_target, _targetEnd, _n);
 
-            float firm = tuning.Firm, home = tuning.Home, damp = tuning.Damp;
+            // Small steps (XPBD style): Substeps a 60 fps frame (the same number per second at any frame rate), each
+            // with its share of the solver passes (Accuracy passes a 60 fps frame in all), collisions in every one.
+            // Everything that used to be "per frame" is per second now: damping, pull back, the move limit, contact grip.
             int iterations = tuning.Iterations;
+            int perFrame = Math.Clamp(tuning.Substeps, 1, 8);
+            int steps = Math.Clamp((int)MathF.Ceiling(dt * 60f * perFrame - 0.01f), 1, 16);
+            float h = dt / steps;
+            int passes = Math.Max(1, (int)MathF.Round(iterations / (float)perFrame));
+            float frameShare = 60f * h; // this substep as a share of a 60 fps frame
+            // (firmness and pull back are per pass: as much in all per 60 fps frame as Accuracy passes used to give)
+            float per = iterations / (float)(perFrame * passes);
+            float firm = 1f - MathF.Pow(1f - Math.Clamp(tuning.Firm, 0f, 0.999f), per);
+            float home = 1f - MathF.Pow(1f - Math.Clamp(tuning.Home, 0f, 0.999f), per);
+            float damp = MathF.Pow(Math.Clamp(tuning.Damp, 0f, 1f), frameShare);
+            float keep = MathF.Pow(Math.Clamp(tuning.ContactKeep, 0f, 1f), frameShare);
+            float maxMove = MaxMove * frameShare;
+            float friction = tuning.Friction;
+            float inv = 1f / MathF.Max(h, 1e-5f);
 
-            Array.Copy(_x, _before, _n);
-            Array.Clear(_touch);
-            for (int i = 0; i < _n; i++)
-                _x[i] += _v[i] * dt;
-            FindPairs();
-
-            for (int iteration = 0; iteration < iterations; iteration++)
+            for (int step = 0; step < steps; step++)
             {
-                ShapeMatch(firm);
+                float frac = (step + 1) / (float)steps;
+                for (int i = 0; i < _n; i++)
+                    _target[i] = Vector3.Lerp(_targetStart[i], _targetEnd[i], frac);
+                Array.Copy(_x, _before, _n);
+                Array.Clear(_touch);
+                Array.Clear(_hitDepth);
+                for (int i = 0; i < _n; i++)
+                    _x[i] += _v[i] * h;
+                if (step == 0)
+                    FindPairs();
+
+                for (int pass = 0; pass < passes; pass++)
+                {
+                    ShapeMatch(firm);
+                    for (int i = 0; i < _n; i++)
+                    {
+                        float hold = _pin[i] + (1f - _pin[i]) * home;
+                        _x[i] += (_target[i] - _x[i]) * hold;
+                    }
+                    Directional(tuning.SideFirm, tuning.MaxBulge);
+                    if (strength > 0f)
+                        Collide(colliders, ids, own, cling, share, strength, tuning.ClingRange, remember: pass == passes - 1,
+                            carry: step == 0 && pass == 0 ? tuning.Carry : 0f);
+                    Breasts(tuning.BreastPush);
+                }
+
                 for (int i = 0; i < _n; i++)
                 {
-                    float hold = _pin[i] + (1f - _pin[i]) * home;
-                    _x[i] += (_target[i] - _x[i]) * hold;
+                    var n = _hitNormal[i];
+                    float depth = _hitDepth[i];
+                    if (!_touch[i])
+                    {
+                        var move = _x[i] - _before[i];
+                        float len = move.Length();
+                        if (len > maxMove)
+                            _x[i] = _before[i] + move * (maxMove / len);
+                    }
+                    else if (depth > 0f && friction > 0f)
+                    {
+                        // Static friction (position level): sliding along the collider by less than the friction times
+                        // how deep it was pushed out this substep is undone (the skin grips instead of creeping).
+                        var d = _x[i] - _before[i];
+                        var along = d - n * Vector3.Dot(d, n);
+                        if (along.Length() < friction * depth * 0.5f)
+                            _x[i] -= along;
+                    }
+                    var v = (_x[i] - _before[i]) * inv;
+                    if (_touch[i] && depth > 0f)
+                    {
+                        // No bounce off at low speed; dynamic friction slows sliding by at most the push it got.
+                        float vn = Vector3.Dot(v, n);
+                        if (vn > 0f && vn < NoBounceSpeed)
+                        {
+                            v -= n * vn;
+                            vn = 0f;
+                        }
+                        var vt = v - n * vn;
+                        float slide = vt.Length();
+                        if (slide > 1e-6f)
+                            v -= vt * (MathF.Min(slide, friction * 0.25f * depth * inv) / slide);
+                    }
+                    // Damping (and the contact's own hold) per second.
+                    v *= damp * (_touch[i] ? keep : 1f);
+                    float speed = v.Length();
+                    if (speed > MaxSpeed)
+                        v *= MaxSpeed / speed;
+                    _v[i] = v;
+                    if (!MathUtil.IsFinite(_v[i]) || !MathUtil.IsFinite(_x[i]))
+                    {
+                        _v[i] = Vector3.Zero;
+                        _x[i] = _target[i];
+                    }
                 }
-                Directional(tuning.SideFirm, tuning.MaxBulge);
-                if (strength > 0f)
-                    Collide(colliders, ids, own, cling, share, strength, tuning.ClingRange, remember: iteration == iterations - 1,
-                        carry: iteration == 0 ? tuning.Carry : 0f);
-                Breasts(tuning.BreastPush);
             }
-
-            float inv = 1f / MathF.Max(dt, 1e-4f);
-            for (int i = 0; i < _n; i++)
-            {
-                if (!_touch[i])
-                {
-                    var move = _x[i] - _before[i];
-                    float len = move.Length();
-                    if (len > MaxMove)
-                        _x[i] = _before[i] + move * (MaxMove / len);
-                }
-                // Friction: what's touching something doesn't keep sliding or bouncing off it.
-                _v[i] = (_x[i] - _before[i]) * (inv * damp * (_touch[i] ? tuning.ContactKeep : 1f));
-                if (!MathUtil.IsFinite(_v[i]))
-                {
-                    _v[i] = Vector3.Zero;
-                    _x[i] = _target[i];
-                }
-            }
+            Array.Copy(_targetEnd, _targetStart, _n);
             for (int k = 0; k < colliders.Length && k < ids.Length; k++)
                 _lastShape[ids[k]] = colliders[k];
             LastMilliseconds = (float)clock.Elapsed.TotalMilliseconds;
@@ -747,6 +817,12 @@ public static unsafe partial class LiveSoftBody
                         var way = have ? was : OwnWay(_target[i], shape, normal);
                         _x[i] = shape.Box ? x + way * shape.Exit(x, way, reach) : c + way * reach;
                         _touch[i] = true;
+                        float pushed = Vector3.Distance(_x[i], x);
+                        if (pushed > _hitDepth[i] && float.IsFinite(pushed))
+                        {
+                            _hitDepth[i] = pushed;
+                            _hitNormal[i] = way;
+                        }
                         if (moved)
                         {
                             float tt = Math.Clamp(t, 0f, 1f);

@@ -63,6 +63,8 @@ public sealed class ExpansionPart
     public float Testicles { get; set; } = 0.5f;
     /// <summary>Seconds to ease in / out when switched on / off.</summary>
     public float Ease { get; set; } = 1f;
+
+    public ExpansionPart Copy() => (ExpansionPart)MemberwiseClone();
 }
 
 /// <summary>One character's expansion (kept by name).</summary>
@@ -80,7 +82,17 @@ public sealed class ExpansionSettings
     [Newtonsoft.Json.JsonIgnore]
     public bool AnyOn => Breasts.Enabled || Butt.Enabled || Penis.Enabled || Belly.Enabled || Pregnant != 0f;
 
-    public ExpansionSettings Copy() => Newtonsoft.Json.JsonConvert.DeserializeObject<ExpansionSettings>(Newtonsoft.Json.JsonConvert.SerializeObject(this))!;
+    // (perf: made every frame for every character with expansion on; it used to go through JSON (text and back), slow and
+    // a heap of garbage each frame, and very slow the first time. Every field is a plain value, so this is the same copy.)
+    public ExpansionSettings Copy()
+    {
+        var c = (ExpansionSettings)MemberwiseClone();
+        c.Breasts = Breasts?.Copy()!;
+        c.Butt = Butt?.Copy()!;
+        c.Penis = Penis?.Copy()!;
+        c.Belly = Belly?.Copy()!;
+        return c;
+    }
 }
 
 /// <summary>
@@ -165,11 +177,11 @@ public sealed unsafe class ExpansionService
             return;
         }
         var list = new List<(nint, ushort, ExpansionSettings)>();
-        foreach(var obj in _objects)
+        foreach(var (obj, objName) in FrameObjects.Of(_objects)) // (perf: one read of the table per frame, shared)
         {
             if(obj == null || obj.Address == 0)
                 continue;
-            string name = obj.Name.TextValue;
+            string name = objName;
             if(name.Length == 0 || !all.TryGetValue(name, out var s))
                 continue;
             if(!Limber.Koi.Safety.AdultAllowed(obj.Address))

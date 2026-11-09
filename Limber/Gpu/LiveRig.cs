@@ -1685,6 +1685,11 @@ public static unsafe class LiveRig
 
         long now = Environment.TickCount64;
         int moving = 0;
+        // (searches no model is claimed by any more: forgotten, their results never used)
+        if (Searches.Count > 0)
+            foreach (var file in Searches.Keys.ToList())
+                if (!claims.ContainsKey(file) || Targets.ContainsKey(file))
+                    Searches.Remove(file);
         // First, the models not found yet are looked for (see below).
         foreach (var (file, (person, snap, model)) in claims)
         {
@@ -1692,19 +1697,42 @@ public static unsafe class LiveRig
                 continue;
             try
             {
+                // (perf) The search runs on a worker thread (it used to hitch the frame for 100+ ms each time); its
+                // result is taken up here once it's done, the same way the search's own result was before.
+                if (Searches.TryGetValue(file, out var search))
+                {
+                    if (!search.Search.Done)
+                        continue;
+                    Searches.Remove(file);
+                    if (search.Owner != person.Address)
+                    {
+                        // (the model went to someone else meanwhile: looked for on them instead, straight away)
+                        NextTry.Remove(file);
+                        continue;
+                    }
+                    int failedBefore = Fails.GetValueOrDefault(file);
+                    var made = Start(person.Address, file, model, search.Search.Take());
+                    if (made == null)
+                    {
+                        Fails[file] = failedBefore + 1;
+                        continue;
+                    }
+                    Targets[file] = made;
+                    continue;
+                }
                 if (NextTry.TryGetValue(file, out var when) && now < when)
                     continue;
-                // (looking for a model's vertices in memory takes a long moment (a visible hitch): a model it keeps
-                // not finding is tried less and less often, down to every 20 seconds, but never given up on)
+                // (looking for a model's vertices in memory takes a long moment: a model it keeps not finding is tried
+                // less and less often, down to every 20 seconds, but never given up on)
                 int failed = Fails.GetValueOrDefault(file);
                 NextTry[file] = now + Math.Min(20000L, 1000L << Math.Min(failed, 5));
-                var made = Start(person.Address, file, model);
-                if (made == null)
+                var started = StartSearch(person.Address, file);
+                if (started == null)
                 {
                     Fails[file] = failed + 1;
                     continue;
                 }
-                Targets[file] = made;
+                Searches[file] = (person.Address, started);
             }
             catch (Exception e)
             {
@@ -1992,13 +2020,24 @@ public static unsafe class LiveRig
         ToFree.Add((copy.Buffer, Environment.TickCount64));
     }
 
-    private static Target? Start(nint owner, string file, ModelPlan model)
+    // Model searches running on worker threads, by file (and the character each was started for).
+    private static readonly Dictionary<string, (nint Owner, LiveMesh.Search Search)> Searches = new();
+
+    private static LiveMesh.Search? StartSearch(nint owner, string file)
     {
         var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)owner;
         if (obj == null || obj->DrawObject == null)
             return null;
-        var log = new List<string>();
-        foreach (var found in LiveMesh.Probe((nint)obj->DrawObject, log, f => f == file))
+        return LiveMesh.ProbeInBackground((nint)obj->DrawObject, file, owner);
+    }
+
+    // The model's vertex buffer among the ones a search found (render thread).
+    private static Target? Start(nint owner, string file, ModelPlan model, List<LiveMesh.Found> founds)
+    {
+        var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)owner;
+        if (obj == null || obj->DrawObject == null)
+            return null;
+        foreach (var found in founds)
         {
             if (!found.IsVertex || found.Desc.ByteWidth != model.Original.Length)
                 continue;
@@ -2043,12 +2082,17 @@ public static unsafe class LiveRig
         NextCopy.Clear();
         foreach (var file in Targets.Keys.ToList())
             Drop(file);
+        Searches.Clear();
         NextTry.Clear();
         Fails.Clear();
         People.Clear();
         VirtualRigs.Clear();
         Status = "";
     }
+
+    // (perf: Deform's per-bone inverses, kept from frame to frame)
+    private static Matrix4x4[] _inverse = [];
+    private static bool[] _hasInverse = [];
 
     /// <summary>
     /// The lattice's vertices where this frame's bones put them: each one's rest spot moved so that the game, skinning
@@ -2060,8 +2104,14 @@ public static unsafe class LiveRig
     {
         var m = snap.Skin;
         // Each bone's own inverse (the turn and size only), once a frame: most vertices are on one bone of their own.
-        var inverse = new Matrix4x4[m.Length];
-        var hasInverse = new bool[m.Length];
+        // (perf: kept from frame to frame instead of made anew each time; Deform only runs on the render thread)
+        if (_inverse.Length < m.Length)
+        {
+            _inverse = new Matrix4x4[m.Length];
+            _hasInverse = new bool[m.Length];
+        }
+        var inverse = _inverse;
+        var hasInverse = _hasInverse;
         for (int s = 0; s < m.Length; s++)
         {
             var linear = m[s];

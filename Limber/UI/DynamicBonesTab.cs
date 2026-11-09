@@ -79,6 +79,16 @@ public sealed class DynamicBonesTab
         changed |= Slider("Weight", () => s.Weight, v => s.Weight = v, "How much it hangs down when it isn't hard.", 2f);
         changed |= Slider("Inertia", () => s.Inertia, v => s.Inertia = v, "How much the body's speeding up and turning swings it (0%: moves with the body).");
         changed |= Slider("Stiffness", () => s.Stiffness, v => s.Stiffness = v, "How much it resists bending at each joint: higher keeps its shape and swings as one piece from the base (no warping when it's heavy or soft); lower lets it curl and fold.");
+        int substeps = s.Substeps;
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderInt("Steps a frame###dyn_substeps", ref substeps, 1, 8))
+        {
+            s.Substeps = substeps;
+            changed = true;
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Small physics steps each frame (at 60 fps; the same number per second at any frame rate), so it "
+                + "swings and hangs the same at 60 and 144 fps. More: smoother, a little slower.");
         ImGui.TextDisabled("While this character is Oral's partner, the shaft stays as posed (the mouth follows it).");
 
         // Each bone on its own.

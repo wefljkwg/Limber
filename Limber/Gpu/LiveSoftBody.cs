@@ -29,6 +29,7 @@ public sealed class LiveMeshSettings
     public float MaxBulge { get; set; } = 2f;      // cm: how far skin may swell out past where the body puts it
     public float Smoothing { get; set; } = 0.5f;   // how smooth dents look (shape kept, nothing shrinks)
     public float Carry { get; set; } = 0.7f;       // how much skin is carried along by what touches it as that moves
+    public int Substeps { get; set; } = 2;         // physics steps a frame (at 60 fps; as many a second at any frame rate)
     // The older skin-only dent.
     public float Spread { get; set; } = 3f;
     public float Bulge { get; set; } = 0.6f;

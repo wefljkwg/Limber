@@ -32,6 +32,16 @@ public sealed class AnimationsTab
 
     public AnimationsTab(Selection selection) => _selection = selection;
 
+    // (perf) The kinds, groups and animations found, worked out again only when the list, the search, a filter or the
+    // favourites change (see Draw); they were worked out from every animation each frame.
+    private IReadOnlyList<Animations.Entry>? _kindsFor;
+    private int _kindsCount;
+    private List<string> _kinds = new(), _groups = new();
+    private Dictionary<string, int> _kindCounts = new();
+    private List<Animations.Entry>? _found;
+    private (string, bool, string, string, int) _foundKey;
+    private object? _foundFavSet;
+
     public void Draw()
     {
         var actor = _selection.Actor;
@@ -139,19 +149,30 @@ public sealed class AnimationsTab
                 + "collection). If the game already has the animation loaded, play another one first, then this one again.");
 
         // Filter: by what kind of animation it is (in plain words), the key's own group, and a search.
-        var kinds = all.Select(e => e.Kind).Distinct().OrderBy(g => g == "Other" ? "~" : g).ToList();
+        // (perf: the kinds, groups and the list found are worked out again only when the list or a filter changes, not
+        // every frame: thousands of animations searched by text each frame)
+        if(!ReferenceEquals(_kindsFor, all) || _kindsCount != all.Count)
+        {
+            _kindsFor = all;
+            _kindsCount = all.Count;
+            _kinds = all.Select(e => e.Kind).Distinct().OrderBy(g => g == "Other" ? "~" : g).ToList();
+            _groups = all.Select(e => e.Group).Distinct().OrderBy(g => g).ToList();
+            _kindCounts = all.GroupBy(e => e.Kind).ToDictionary(g => g.Key, g => g.Count());
+            _found = null;
+        }
+        var kinds = _kinds;
         ImGui.SetNextItemWidth(170 * ImGuiHelpers.GlobalScale);
         if(ImGui.BeginCombo("Kind###anim_kind", _kind.Length == 0 ? "(all)" : _kind))
         {
             if(ImGui.Selectable("(all)###anim_kind_all", _kind.Length == 0))
                 _kind = "";
             foreach(var g in kinds)
-                if(ImGui.Selectable($"{g}  ({all.Count(e => e.Kind == g)})###anim_kind_{g}", g == _kind))
+                if(ImGui.Selectable($"{g}  ({_kindCounts.GetValueOrDefault(g)})###anim_kind_{g}", g == _kind))
                     _kind = g;
             ImGui.EndCombo();
         }
         ImGui.SameLine();
-        var groups = all.Select(e => e.Group).Distinct().OrderBy(g => g).ToList();
+        var groups = _groups;
         ImGui.SetNextItemWidth(130 * ImGuiHelpers.GlobalScale);
         if(ImGui.BeginCombo("Key group###anim_group", _group.Length == 0 ? "(all)" : _group))
         {
@@ -176,27 +197,36 @@ public sealed class AnimationsTab
             ImGui.SetTooltip("Right-click an animation to add it to (or take it out of) your favourites.");
 
         var words = _search.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        bool Matches(Animations.Entry e)
+        var favSet = Favorites.Identity("animations");
+        int favCount = Favorites.Count("animations");
+        var foundKey = (_search, _favOnly, _kind, _group, favCount);
+        if(_found == null || foundKey != _foundKey || !ReferenceEquals(favSet, _foundFavSet))
         {
-            foreach(var w in words)
+            bool Matches(Animations.Entry e)
             {
-                if(ushort.TryParse(w.TrimStart('#'), out var id) && e.Id == id)
-                    continue;
-                if(e.Key.Contains(w, StringComparison.OrdinalIgnoreCase) || e.Name.Contains(w, StringComparison.OrdinalIgnoreCase)
-                   || e.Described.Contains(w, StringComparison.OrdinalIgnoreCase) || e.Kind.Contains(w, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                return false;
+                foreach(var w in words)
+                {
+                    if(ushort.TryParse(w.TrimStart('#'), out var id) && e.Id == id)
+                        continue;
+                    if(e.Key.Contains(w, StringComparison.OrdinalIgnoreCase) || e.Name.Contains(w, StringComparison.OrdinalIgnoreCase)
+                       || e.Described.Contains(w, StringComparison.OrdinalIgnoreCase) || e.Kind.Contains(w, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    return false;
+                }
+                return true;
             }
-            return true;
+            // (a number typed: that animation first)
+            _found = all.Where(e => (!_favOnly || Favorites.Has("animations", e.Key))
+                                      && (_kind.Length == 0 || e.Kind == _kind)
+                                      && (_group.Length == 0 || e.Group == _group)
+                                      && Matches(e))
+                .OrderByDescending(e => words.Length == 1 && ushort.TryParse(words[0].TrimStart('#'), out var n) && e.Id == n)
+                .ThenBy(e => e.Name.Length > 0 ? 0 : e.Described.Length > 0 ? 1 : 2)
+                .Take(400).ToList();
+            _foundKey = foundKey;
+            _foundFavSet = favSet;
         }
-        // (a number typed: that animation first)
-        var list = all.Where(e => (!_favOnly || Favorites.Has("animations", e.Key))
-                                  && (_kind.Length == 0 || e.Kind == _kind)
-                                  && (_group.Length == 0 || e.Group == _group)
-                                  && Matches(e))
-            .OrderByDescending(e => words.Length == 1 && ushort.TryParse(words[0].TrimStart('#'), out var n) && e.Id == n)
-            .ThenBy(e => e.Name.Length > 0 ? 0 : e.Described.Length > 0 ? 1 : 2)
-            .Take(400).ToList();
+        var list = _found;
         if(_status.Length > 0)
             ImGui.TextDisabled(_status);
         ImGui.TextDisabled($"{list.Count}{(list.Count == 400 ? "+" : "")} found. Double-click to play.");
@@ -212,44 +242,59 @@ public sealed class AnimationsTab
             if(!table.Success)
                 return;
             var draw = ImGui.GetWindowDrawList();
-            foreach(var e in list)
-            {
-                ImGui.TableNextColumn();
-                var start = ImGui.GetCursorScreenPos();
-                float width = ImGui.GetContentRegionAvail().X;
-                bool picked = ImGui.Selectable($"###anim_{e.Id}", false, ImGuiSelectableFlags.AllowDoubleClick, new System.Numerics.Vector2(width, cellHeight));
-                if(ImGui.IsItemHovered())
-                    ImGui.SetTooltip((e.Name.Length > 0 ? e.Name + "\n" : "") + (e.Described.Length > 0 ? e.Described + "\n" : "")
-                        + $"{e.Key}  (#{e.Id}, {e.Kind})\nDouble-click to play.  Right-click: favourite.");
-                if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
-                    Favorites.Toggle("animations", e.Key);
-                if(picked && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            // (perf: only the rows on screen are drawn, up to 400 icons and their text were drawn every frame)
+            int rows = (list.Count + columns - 1) / columns;
+            var clipper = ImGui.ImGuiListClipper();
+            clipper.Begin(rows);
+            while(clipper.Step())
+                for(int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++)
                 {
-                    _status = Animations.PlayFrom(actor.Address, actor.ObjectIndex, e.Id, _startFrozen, _speed,
-                        _race < 0 ? (ushort)0 : Animations.Races[_race].Body);
+                    ImGui.TableNextRow();
+                    for(int col = 0; col < columns; col++)
+                    {
+                        int index = row * columns + col;
+                        if(index >= list.Count)
+                            break;
+                        var e = list[index];
+                        ImGui.TableSetColumnIndex(col);
+                        var start = ImGui.GetCursorScreenPos();
+                        float width = ImGui.GetContentRegionAvail().X;
+                        bool picked = ImGui.Selectable($"###anim_{e.Id}", false, ImGuiSelectableFlags.AllowDoubleClick, new System.Numerics.Vector2(width, cellHeight));
+                        if(ImGui.IsItemHovered())
+                            ImGui.SetTooltip((e.Name.Length > 0 ? e.Name + "\n" : "") + (e.Described.Length > 0 ? e.Described + "\n" : "")
+                                + $"{e.Key}  (#{e.Id}, {e.Kind})\nDouble-click to play.  Right-click: favourite.");
+                        if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                            Favorites.Toggle("animations", e.Key);
+                        if(picked && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                        {
+                            _status = Animations.PlayFrom(actor.Address, actor.ObjectIndex, e.Id, _startFrozen, _speed,
+                                _race < 0 ? (ushort)0 : Animations.Races[_race].Body);
+                        }
+                        // The icon, or a plain tile for animations that aren't an emote.
+                        var iconMin = start + new System.Numerics.Vector2(4f * scale, 4f * scale);
+                        var iconMax = iconMin + new System.Numerics.Vector2(iconSize, iconSize);
+                        var wrap = e.Icon != 0 ? GameIcons.Get(e.Icon) : null;
+                        if(wrap != null)
+                            draw.AddImage(wrap.Handle, iconMin, iconMax);
+                        else
+                        {
+                            draw.AddRectFilled(iconMin, iconMax, ImGui.GetColorU32(new System.Numerics.Vector4(0.25f, 0.25f, 0.3f, 1f)), 4f * scale);
+                            string letter = e.Group.Length > 0 ? e.Group[..1].ToUpperInvariant() : "?";
+                            var ts = ImGui.CalcTextSize(letter);
+                            draw.AddText(iconMin + (new System.Numerics.Vector2(iconSize, iconSize) - ts) * 0.5f, ImGui.GetColorU32(new System.Numerics.Vector4(0.7f, 0.7f, 0.75f, 1f)), letter);
+                        }
+                        // Its name and key beside it (cut off at the cell's edge).
+                        var textAt = new System.Numerics.Vector2(iconMax.X + 6f * scale, start.Y + 4f * scale);
+                        draw.PushClipRect(start, start + new System.Numerics.Vector2(width, cellHeight), true);
+                        draw.AddText(textAt, ImGui.GetColorU32(ImGuiCol.Text), e.Shown);
+                        draw.AddText(textAt + new System.Numerics.Vector2(0, ImGui.GetTextLineHeight()), ImGui.GetColorU32(ImGuiCol.TextDisabled), $"#{e.Id}  {e.Key}");
+                        draw.PopClipRect();
+                        if(Favorites.Has("animations", e.Key))
+                            Favorites.DrawStar(draw, new System.Numerics.Vector2(start.X + width - 16f * scale, start.Y + 3f * scale), 12f * scale);
+                    }
                 }
-                // The icon, or a plain tile for animations that aren't an emote.
-                var iconMin = start + new System.Numerics.Vector2(4f * scale, 4f * scale);
-                var iconMax = iconMin + new System.Numerics.Vector2(iconSize, iconSize);
-                var wrap = e.Icon != 0 ? GameIcons.Get(e.Icon) : null;
-                if(wrap != null)
-                    draw.AddImage(wrap.Handle, iconMin, iconMax);
-                else
-                {
-                    draw.AddRectFilled(iconMin, iconMax, ImGui.GetColorU32(new System.Numerics.Vector4(0.25f, 0.25f, 0.3f, 1f)), 4f * scale);
-                    string letter = e.Group.Length > 0 ? e.Group[..1].ToUpperInvariant() : "?";
-                    var ts = ImGui.CalcTextSize(letter);
-                    draw.AddText(iconMin + (new System.Numerics.Vector2(iconSize, iconSize) - ts) * 0.5f, ImGui.GetColorU32(new System.Numerics.Vector4(0.7f, 0.7f, 0.75f, 1f)), letter);
-                }
-                // Its name and key beside it (cut off at the cell's edge).
-                var textAt = new System.Numerics.Vector2(iconMax.X + 6f * scale, start.Y + 4f * scale);
-                draw.PushClipRect(start, start + new System.Numerics.Vector2(width, cellHeight), true);
-                draw.AddText(textAt, ImGui.GetColorU32(ImGuiCol.Text), e.Shown);
-                draw.AddText(textAt + new System.Numerics.Vector2(0, ImGui.GetTextLineHeight()), ImGui.GetColorU32(ImGuiCol.TextDisabled), $"#{e.Id}  {e.Key}");
-                draw.PopClipRect();
-                if(Favorites.Has("animations", e.Key))
-                    Favorites.DrawStar(draw, new System.Numerics.Vector2(start.X + width - 16f * scale, start.Y + 3f * scale), 12f * scale);
-            }
+            clipper.End();
+            clipper.Destroy();
         }
     }
 }

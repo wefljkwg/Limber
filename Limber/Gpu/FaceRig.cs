@@ -82,12 +82,101 @@ public static unsafe class FaceRig
 
     // ---- Start / stop (UI thread)
 
+    // (perf) Starting used to search the face model's memory and build the rig from its file on the render thread, a
+    // hitch of 50-500 ms, repeated every few seconds while it couldn't start. Now: the search on a worker thread, then
+    // the rig built from the file on a worker thread, and only the last step (swapping in a writable copy of the
+    // face's buffer) on the render thread, in Update.
+    private sealed class Starting
+    {
+        public required nint Address;
+        public required Func<string, byte[]?> ReadFile;
+        public LiveMesh.Search? Search;
+        public System.Threading.Tasks.Task<(State? State, LiveMesh.Found? Target, string Report, List<string> Tried, int Found)>? Building;
+        public long Since = Environment.TickCount64;
+        public nint DrawObject;
+    }
+
+    private static Starting? _starting;
+
     public static string Start(nint address, nint drawObject, Func<string, byte[]?> readFile)
     {
+        // (already starting on this character: left to finish, unless it's taking far too long)
+        if(_starting is { } going && going.Address == address && Environment.TickCount64 - going.Since < 15000)
+            return Status;
         Stop();
-        var log = new List<string>();
-        var found = LiveMesh.Probe(drawObject, log, LipMesh.IsFace);
+        var search = LiveMesh.ProbeInBackground(drawObject, LipMesh.IsFace, address);
+        if(search == null)
+            return Status = "Face rig: couldn't find the face model (the face needs to be drawn).";
+        _starting = new Starting { Address = address, DrawObject = drawObject, ReadFile = readFile, Search = search };
+        return Status = "Face rig: looking for the face model...";
+    }
+
+    // Render thread: the start carried on (see Starting).
+    private static void Pump()
+    {
+        var st = _starting;
+        if(st == null)
+            return;
+        if(st.Search != null)
+        {
+            if(!st.Search.Done)
+                return;
+            var found = st.Search.Take();
+            st.Search = null;
+            var readFile = st.ReadFile;
+            st.Building = System.Threading.Tasks.Task.Run(() => BuildFirst(found, readFile));
+            return;
+        }
+        if(st.Building is not { IsCompleted: true } building)
+            return;
+        _starting = null;
+        if(!building.IsCompletedSuccessfully)
+        {
+            Status = "Face rig: " + (building.Exception?.GetBaseException().Message ?? "couldn't start.");
+            return;
+        }
+        var (state, target, report, tried, count) = building.Result;
+        // (the face redrawn while it was being looked for / built: what was found may be freed, so it starts again)
+        if(state != null && target != null && st.DrawObject != 0 && Limber.Core.SafeMemory.ReadPointer(st.Address + 0x100) != st.DrawObject)
+        {
+            Status = "Face rig: the face was drawn again meanwhile; starting over.";
+            return;
+        }
+        if(state != null && target != null)
+        {
+            string which = $"{System.IO.Path.GetFileName(target.File.Replace('|', '/'))} buffer {target.Desc.ByteWidth} bytes ({target.Usage})";
+            state.Address = st.Address;
+            if(target.Desc.Usage == 1) // immutable: an identical writable buffer in its place
+            {
+                state.Replacement = LiveMesh.Replace(target, state.Original);
+                if(state.Replacement == 0)
+                {
+                    tried.Add($"{which}: couldn't put a writable copy in its place");
+                    state = null;
+                }
+            }
+            if(state != null)
+            {
+                _state = state;
+                _pose = null;
+                tried.Add($"{which}: {report}");
+                Plugin.Log.Information("Limber face rig: " + string.Join(" | ", tried));
+                Status = "Face rig: " + report;
+                return;
+            }
+        }
+        Plugin.Log.Information($"Limber face rig: {count} buffers found; " + string.Join(" | ", tried));
+        if(report.Length > 0 && state == null && target == null)
+            Status = "Face rig: " + report;
+        if(Status.Length == 0 || !Status.StartsWith("Face rig:", StringComparison.Ordinal) || Status.EndsWith("looking for the face model...", StringComparison.Ordinal))
+            Status = "Face rig: couldn't find the face model (the face needs to be drawn).";
+    }
+
+    // Worker thread: the rig built from the first face buffer it can be (no game memory or graphics touched here).
+    private static (State?, LiveMesh.Found?, string, List<string>, int) BuildFirst(List<LiveMesh.Found> found, Func<string, byte[]?> readFile)
+    {
         var tried = new List<string>();
+        string last = "";
         foreach(var target in LipMesh.NearestFirst(found.Where(f => f.IsVertex && LipMesh.IsFace(f.File)), readFile))
         {
             string which = $"{System.IO.Path.GetFileName(target.File.Replace('|', '/'))} buffer {target.Desc.ByteWidth} bytes ({target.Usage})";
@@ -96,40 +185,24 @@ public static unsafe class FaceRig
                 var state = Build(target, readFile, out string report);
                 if(state == null)
                 {
-                    Status = "Face rig: " + report;
+                    last = report;
                     tried.Add($"{which}: {report}");
                     continue;
                 }
-                state.Address = address;
-                if(target.Desc.Usage == 1) // immutable: an identical writable buffer in its place
-                {
-                    state.Replacement = LiveMesh.Replace(target, state.Original);
-                    if(state.Replacement == 0)
-                    {
-                        tried.Add($"{which}: couldn't put a writable copy in its place");
-                        continue;
-                    }
-                }
-                _state = state;
-                _pose = null;
-                tried.Add($"{which}: {report}");
-                Plugin.Log.Information("Limber face rig: " + string.Join(" | ", tried));
-                return Status = "Face rig: " + report;
+                return (state, target, report, tried, found.Count);
             }
             catch(Exception e)
             {
-                Status = "Face rig: " + e.Message;
+                last = e.Message;
                 tried.Add($"{which}: {e.Message}");
             }
         }
-        Plugin.Log.Information($"Limber face rig: {found.Count} buffers found; " + string.Join(" | ", tried));
-        if(Status.Length == 0 || !Status.StartsWith("Face rig:", StringComparison.Ordinal))
-            Status = "Face rig: couldn't find the face model (the face needs to be drawn).";
-        return Status;
+        return (null, null, last, tried, found.Count);
     }
 
     public static void Stop()
     {
+        _starting = null;
         var state = _state;
         _state = null;
         _pose = null;
@@ -403,6 +476,7 @@ public static unsafe class FaceRig
 
     public static void Update()
     {
+        Pump();
         var state = _state;
         if(state == null)
             return;

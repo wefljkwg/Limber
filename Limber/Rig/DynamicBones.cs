@@ -24,6 +24,9 @@ public sealed class DynamicBoneSettings
     public float Stiffness { get; set; } = 0.4f;
     /// <summary>Each penis bone with its own settings (below) instead of the ones above for all.</summary>
     public bool PerBone { get; set; }
+    /// <summary>Physics steps a frame (at 60 fps; the same number per second at any frame rate): it swings the same
+    /// at 60 and 144 fps.</summary>
+    public int Substeps { get; set; } = 1; // (1 = as before at 60 fps; more steps at lower frame rates either way)
     /// <summary>Per bone (by name): its own hardness, bounce, weight and inertia.</summary>
     public Dictionary<string, DynamicBoneSpring> Bones { get; set; } = new();
 
@@ -68,6 +71,8 @@ public sealed unsafe class DynamicBoneService
     private sealed class Chain
     {
         public Vector3[] P = [], Prev = [];   // in the character's own space (it moves with the character)
+        public Vector3[] PrevTarget = [];      // where the pose put each point last frame (the substeps go between)
+        public float LastStep;                 // the last substep's length (s), to carry speed over a changed step
         public Vector3 LastRoot;               // the character's place (world): its moves push the chain a little
         public Vector3 RootVelocity;           // (world, smoothed)
         public float LastYaw, YawSpeed;        // which way it faces, and how fast it's turning
@@ -100,11 +105,11 @@ public sealed unsafe class DynamicBoneService
             return;
         }
         var list = new List<(nint, ushort, DynamicBoneSettings)>();
-        foreach(var obj in _objects)
+        foreach(var (obj, objName) in FrameObjects.Of(_objects)) // (perf: one read of the table per frame, shared)
         {
             if(obj == null || obj.Address == 0)
                 continue;
-            string name = obj.Name.TextValue;
+            string name = objName;
             if(name.Length == 0 || !settings.TryGetValue(name, out var s) || !s.Enabled)
                 continue;
             if(!Limber.Koi.Safety.AdultAllowed(obj.Address))
@@ -184,7 +189,7 @@ public sealed unsafe class DynamicBoneService
         for(int i = 1; i <= n; i++)
             hard = MathF.Min(hard, Math.Clamp(spring[i].Hardness, 0f, 1f));
         if(!_chains.TryGetValue(address, out var chain) || chain.P.Length != n + 1)
-            _chains[address] = chain = new Chain { P = (Vector3[])target.Clone(), Prev = (Vector3[])target.Clone(), LastRoot = sk.RootPosition, LastTicks = now };
+            _chains[address] = chain = new Chain { P = (Vector3[])target.Clone(), Prev = (Vector3[])target.Clone(), PrevTarget = (Vector3[])target.Clone(), LastRoot = sk.RootPosition, LastTicks = now };
         float dt = Math.Clamp((float)((now - chain.LastTicks) / (double)Stopwatch.Frequency), 1f / 240f, 0.1f);
         chain.LastTicks = now;
         // A jump (teleport, new pose loaded, a long pause) or fully hard: start again from the pose.
@@ -195,13 +200,19 @@ public sealed unsafe class DynamicBoneService
         {
             Array.Copy(target, chain.P, n + 1);
             Array.Copy(target, chain.Prev, n + 1);
+            chain.PrevTarget = (Vector3[])target.Clone();
+            chain.LastStep = 0f;
             chain.LastRoot = root;
             chain.LastYaw = yaw;
             chain.HasMotion = false;
             return;
         }
 
-        float frames = dt * 60f; // (tuned per 60 fps frame)
+        // Small steps: Substeps a 60 fps frame (as many per second at any frame rate). The springs were tuned per
+        // 60 fps frame; each step takes its share of them (per second the same at every frame rate).
+        int steps = Math.Clamp((int)MathF.Ceiling(dt * 60f * Math.Clamp(s.Substeps, 1, 8) - 0.01f), 1, 16);
+        float stepTime = dt / steps;
+        float frames = stepTime * 60f; // (this step as a share of a 60 fps frame)
         var damping = new float[n + 1];
         var elasticity = new float[n + 1];
         var stiffness = new float[n + 1];
@@ -211,8 +222,12 @@ public sealed unsafe class DynamicBoneService
         for(int i = 1; i <= n; i++)
         {
             float h = Math.Clamp(spring[i].Hardness, 0f, 1f);
-            damping[i] = Math.Clamp(0.35f - 0.3f * Math.Clamp(spring[i].Bounce, 0f, 1f), 0.02f, 0.5f);
-            elasticity[i] = Math.Clamp((0.015f + 0.4f * h * h) * frames, 0f, 1f);
+            float d60 = Math.Clamp(0.35f - 0.3f * Math.Clamp(spring[i].Bounce, 0f, 1f), 0.02f, 0.5f);
+            damping[i] = 1f - MathF.Pow(1f - d60, frames);
+            // (the pull back is a spring: a share e60 a 60 fps frame is a stiffness of e60 * 60^2, so a step of
+            // length t pulls e60 * (60 t)^2; it sags and swings the same at any frame rate and number of steps)
+            float e60 = Math.Clamp(0.015f + 0.4f * h * h, 0f, 1f);
+            elasticity[i] = Math.Clamp(e60 * frames * frames, 0f, 1f);
             stiffness[i] = h;
             gravity[i] = new Vector3(0f, -9.8f * Math.Clamp(spring[i].Weight, 0f, 2f) * (1f - h), 0f);
             // How much of the body's own move the chain takes along at once (the rest it catches up on).
@@ -253,66 +268,80 @@ public sealed unsafe class DynamicBoneService
 
         var P = chain.P;
         var Prev = chain.Prev;
-        P[0] = target[0];
-        Prev[0] = target[0];
-        for(int i = 1; i <= n; i++)
+        // The pose's points this substep: between last frame's and this frame's (the root follows them exactly).
+        var from = chain.PrevTarget.Length == n + 1 ? chain.PrevTarget : target;
+        var tgt = new Vector3[n + 1];
+        // (Verlet keeps speed as "the last step's move": scaled when this frame's steps are a different length)
+        float carry = chain.LastStep > 0f ? Math.Clamp(stepTime / chain.LastStep, 0.25f, 4f) : 1f;
+        for(int sub = 0; sub < steps; sub++)
         {
-            float trail = 1f - inert[i]; // (Inertia: how much the body's speeding up / turning pushes it)
-            var push = -accel * (0.35f * trail);
-            // turning: the far end swings out the other way
-            var arm = P[i] - P[0];
-            push += -Vector3.Cross(new Vector3(0f, yawAccel, 0f), arm) * (0.5f * trail);
-            var velocity = (P[i] - Prev[i]) * (1f - damping[i]);
-            Prev[i] = P[i];
-            P[i] += velocity + (gravity[i] + push * (1f - stiffness[i] * 0.7f)) * dt * dt;
-        }
-        for(int i = 1; i <= n; i++)
-        {
-            var restDir = target[i] - target[i - 1];
-            float restLen = restDir.Length();
-            if(restLen < 1e-6f)
+            float frac = (sub + 1) / (float)steps;
+            for(int i = 0; i <= n; i++)
+                tgt[i] = Vector3.Lerp(from[i], target[i], frac);
+            P[0] = tgt[0];
+            Prev[0] = tgt[0];
+            for(int i = 1; i <= n; i++)
             {
-                P[i] = P[i - 1];
-                continue;
+                float trail = 1f - inert[i]; // (Inertia: how much the body's speeding up / turning pushes it)
+                var push = -accel * (0.35f * trail);
+                // turning: the far end swings out the other way
+                var arm = P[i] - P[0];
+                push += -Vector3.Cross(new Vector3(0f, yawAccel, 0f), arm) * (0.5f * trail);
+                var velocity = (P[i] - Prev[i]) * ((1f - damping[i]) * carry);
+                Prev[i] = P[i];
+                P[i] += velocity + (gravity[i] + push * (1f - stiffness[i] * 0.7f)) * (stepTime * stepTime);
             }
-            var rest = P[i - 1] + restDir;
-            // Pulled back toward where the pose wants it...
-            P[i] += (rest - P[i]) * elasticity[i];
-            // ...and never further from it than the stiffness allows...
-            float maxLen = restLen * (1f - stiffness[i]) * 2f;
-            var d = rest - P[i];
-            float len = d.Length();
-            if(len > maxLen && len > 1e-7f)
-                P[i] += d * ((len - maxLen) / len);
-            // ...bending only so far against the piece before it (Stiffness), so the shaft curves smoothly and swings
-            // from the base instead of folding sharply at one joint (which warps the mesh there)...
-            float bendMax = (1f - bendStiff[i]) * 50f + 3f;
-            var want = restDir;
-            if(i >= 2)
+            for(int i = 1; i <= n; i++)
             {
-                var prevRest = target[i - 1] - target[i - 2];
-                var prevNow = P[i - 1] - P[i - 2];
-                if(prevRest.LengthSquared() > 1e-12f && prevNow.LengthSquared() > 1e-12f)
-                    want = Vector3.Transform(restDir, MathUtil.FromTo(Vector3.Normalize(prevRest), Vector3.Normalize(prevNow)));
-            }
-            else
-                bendMax = bendMax * 1.6f + 10f; // (the base swings more freely from the body)
-            var cur = P[i] - P[i - 1];
-            if(cur.LengthSquared() > 1e-12f && want.LengthSquared() > 1e-12f)
-            {
-                float cos = Math.Clamp(Vector3.Dot(Vector3.Normalize(cur), Vector3.Normalize(want)), -1f, 1f);
-                float angle = MathF.Acos(cos) * 180f / MathF.PI;
-                if(angle > bendMax && angle > 1e-3f)
+                var restDir = tgt[i] - tgt[i - 1];
+                float restLen = restDir.Length();
+                if(restLen < 1e-6f)
                 {
-                    var back = Quaternion.Slerp(Quaternion.Identity, MathUtil.FromTo(Vector3.Normalize(cur), Vector3.Normalize(want)), (angle - bendMax) / angle);
-                    P[i] = P[i - 1] + Vector3.Transform(cur, back);
+                    P[i] = P[i - 1];
+                    continue;
                 }
+                var rest = P[i - 1] + restDir;
+                // Pulled back toward where the pose wants it...
+                P[i] += (rest - P[i]) * elasticity[i];
+                // ...and never further from it than the stiffness allows...
+                float maxLen = restLen * (1f - stiffness[i]) * 2f;
+                var d = rest - P[i];
+                float len = d.Length();
+                if(len > maxLen && len > 1e-7f)
+                    P[i] += d * ((len - maxLen) / len);
+                // ...bending only so far against the piece before it (Stiffness), so the shaft curves smoothly and swings
+                // from the base instead of folding sharply at one joint (which warps the mesh there)...
+                float bendMax = (1f - bendStiff[i]) * 50f + 3f;
+                var want = restDir;
+                if(i >= 2)
+                {
+                    var prevRest = tgt[i - 1] - tgt[i - 2];
+                    var prevNow = P[i - 1] - P[i - 2];
+                    if(prevRest.LengthSquared() > 1e-12f && prevNow.LengthSquared() > 1e-12f)
+                        want = Vector3.Transform(restDir, MathUtil.FromTo(Vector3.Normalize(prevRest), Vector3.Normalize(prevNow)));
+                }
+                else
+                    bendMax = bendMax * 1.6f + 10f; // (the base swings more freely from the body)
+                var cur = P[i] - P[i - 1];
+                if(cur.LengthSquared() > 1e-12f && want.LengthSquared() > 1e-12f)
+                {
+                    float cos = Math.Clamp(Vector3.Dot(Vector3.Normalize(cur), Vector3.Normalize(want)), -1f, 1f);
+                    float angle = MathF.Acos(cos) * 180f / MathF.PI;
+                    if(angle > bendMax && angle > 1e-3f)
+                    {
+                        var back = Quaternion.Slerp(Quaternion.Identity, MathUtil.FromTo(Vector3.Normalize(cur), Vector3.Normalize(want)), (angle - bendMax) / angle);
+                        P[i] = P[i - 1] + Vector3.Transform(cur, back);
+                    }
+                }
+                // ...at its own length from the one before (no stretching).
+                var seg = P[i] - P[i - 1];
+                float sl = seg.Length();
+                P[i] = sl > 1e-7f ? P[i - 1] + seg * (restLen / sl) : rest;
             }
-            // ...at its own length from the one before (no stretching).
-            var seg = P[i] - P[i - 1];
-            float sl = seg.Length();
-            P[i] = sl > 1e-7f ? P[i - 1] + seg * (restLen / sl) : rest;
+            carry = 1f;
         }
+        chain.PrevTarget = (Vector3[])target.Clone();
+        chain.LastStep = stepTime;
 
         // The bones turned to point along the chain (root first; turning a bone carries the ones below it).
         for(int i = 0; i < n; i++)

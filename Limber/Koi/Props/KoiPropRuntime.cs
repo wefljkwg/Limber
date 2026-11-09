@@ -46,6 +46,7 @@ public static unsafe class KoiPropRuntime
         public nint VbCopy;
         public byte[] Vertices = [];
         public int Tries, Wait;
+        public LiveMesh.Search? Search; // its buffer being looked for on a worker thread
         public bool Failed, Dirty = true;
         public string Note = "loading";
         // dynamic bone chains: each bone's place now and last step (prefab space), and their lengths
@@ -347,11 +348,26 @@ public static unsafe class KoiPropRuntime
 
     private static void TakeOver(Instance inst, SpawnedProp prop)
     {
-        if(inst.Wait-- > 0)
-            return;
-        inst.Wait = 30;
-        var obj = prop.Objects[0];
-        var found = LiveMesh.ProbeFrom([(nint)obj, (nint)obj->ModelResourceHandle], inst.Path);
+        // (perf: the search runs on a worker thread, taken up here once it's done; it used to hitch the frame each try)
+        List<LiveMesh.Found> found;
+        if(inst.Search != null)
+        {
+            if(!inst.Search.Done)
+                return;
+            found = inst.Search.Take();
+            inst.Search = null;
+        }
+        else
+        {
+            if(inst.Wait-- > 0)
+                return;
+            inst.Wait = 30;
+            var obj = prop.Objects[0];
+            inst.Search = LiveMesh.ProbeFromInBackground([(nint)obj, (nint)obj->ModelResourceHandle], inst.Path);
+            if(inst.Search != null)
+                return;
+            found = new List<LiveMesh.Found>();
+        }
         int size = inst.Layout!.Block.Length;
         uint rounded = (uint)((size + 127) / 128 * 128);
         var vb = found.FirstOrDefault(f => f.IsVertex && f.Desc.ByteWidth == size) ?? found.FirstOrDefault(f => f.IsVertex && f.Desc.ByteWidth == rounded);

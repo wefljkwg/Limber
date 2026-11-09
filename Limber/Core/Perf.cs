@@ -77,6 +77,13 @@ public static class Perf
         }
     }
 
+    /// <summary>
+    /// The last part this thread's clock passed (an error caught later in the same run happened after it: the error
+    /// messages say where).
+    /// </summary>
+    public static string LastMark => (_markArea ?? "?") + ": " + (_markWhat ?? "?");
+    [ThreadStatic] private static string? _markArea, _markWhat;
+
     /// <summary>Times one stretch of work after another: Mark("what") notes the time since the last mark.</summary>
     public struct Clock
     {
@@ -87,6 +94,8 @@ public static class Perf
         {
             _area = area;
             _last = Stopwatch.GetTimestamp();
+            _markArea = area;
+            _markWhat = "start";
         }
 
         public void Mark(string what)
@@ -94,6 +103,8 @@ public static class Perf
             long now = Stopwatch.GetTimestamp();
             Note(_area, what, _last, now);
             _last = now;
+            _markArea = _area;
+            _markWhat = what;
         }
     }
 }

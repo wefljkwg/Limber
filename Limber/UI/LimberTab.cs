@@ -1352,6 +1352,7 @@ public sealed partial class LimberTab
         ImGui.Spacing();
         if(ImGui.CollapsingHeader("Experimental###lmb_live_mesh"))
             DrawLiveMesh();
+        GamePhysicsSection.Draw(_config, _selection.Actor);
     }
 
     // Step 1 of a per-vertex soft body: finding and rewriting the worn models' vertices on the GPU.
@@ -1497,7 +1498,15 @@ public sealed partial class LimberTab
                 live.Accuracy = accuracy;
             if(ImGui.IsItemDeactivatedAfterEdit())
                 _config.Save();
-            Tooltip("Solver passes a step. Higher: firmer contact and less jitter; costs more time (see the ms above).");
+            Tooltip("Solver passes a 60 fps frame, shared out over the steps. Higher: firmer contact and less jitter; costs more time (see the ms above).");
+            int substeps = live.Substeps;
+            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderInt("Steps a frame###lmb_live_substeps", ref substeps, 1, 8))
+                live.Substeps = substeps;
+            if(ImGui.IsItemDeactivatedAfterEdit())
+                _config.Save();
+            Tooltip("Small physics steps each frame (at 60 fps; the same number per second at any frame rate), with "
+                + "collisions in every one: it behaves the same at 60 and 144 fps, and fast hands don't slip through.");
             LiveSlider("Breasts push each other###lmb_live_breastpush", live.BreastPush, v => live.BreastPush = v, 0f, 1f,
                 "How hard the two breasts push on each other where they meet (0: they pass through each other).");
             LiveSlider("Skin margin (mm)###lmb_live_margin", live.SkinMargin, v => live.SkinMargin = v, 0f, 10f,
@@ -1509,7 +1518,7 @@ public sealed partial class LimberTab
             if(ImGui.SmallButton("Defaults###lmb_live_defaults"))
             {
                 var d = new Limber.Gpu.LiveMeshSettings();
-                live.PullBack = d.PullBack; live.Friction = d.Friction; live.Steadiness = d.Steadiness; live.Accuracy = d.Accuracy;
+                live.PullBack = d.PullBack; live.Friction = d.Friction; live.Steadiness = d.Steadiness; live.Accuracy = d.Accuracy; live.Substeps = d.Substeps;
                 live.BreastPush = d.BreastPush; live.SkinMargin = d.SkinMargin; live.ImprintDepth = d.ImprintDepth; live.ClingRange = d.ClingRange;
                 live.Firmness = d.Firmness; live.Bounce = d.Bounce; live.Strength = d.Strength;
                 live.SideFirmness = d.SideFirmness; live.MaxBulge = d.MaxBulge; live.Carry = d.Carry; live.Smoothing = d.Smoothing;
@@ -1731,6 +1740,12 @@ public sealed partial class LimberTab
             if(part == Limber.BodyRig.RigParts.Testicles)
                 Slider("Sac slide###c_slide", col.SacSlide, v => col.SacSlide = v, 0f, 3f,
                     "How far the whole sac slides out of the way when squeezed (thighs together, hands, props), instead of being dented.");
+            float steps = col.Substeps;
+            Slider("Steps a frame###c_substeps", steps, v => col.Substeps = (int)MathF.Round(v), 1f, 8f,
+                "How many small physics steps it takes each frame (at 60 fps; the same number per second at any frame rate). "
+                + "Collisions are worked out in every step, so fast arms and hands don't slip through. More: steadier, a little slower.", "%.0f");
+            Slider("Top speed (m/s)###c_maxspeed", col.MaxSpeed, v => col.MaxSpeed = v, 1f, 30f,
+                "The fastest it may wobble against the body (stops wild flicks after a hard hit).", "%.1f");
         }
 
         ImGui.Spacing();

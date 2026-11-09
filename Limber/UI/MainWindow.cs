@@ -42,6 +42,8 @@ public sealed class MainWindow : Window
     public HousingPropsTab? WorldPropsTab { get; set; }
     public EffectsTab? EffectsTab { get; set; }
     public ClimaxTab? ClimaxTab { get; set; }
+    public SkinEffectsTab? SkinEffectsTab { get; set; }
+    public EngineLayerTab? EngineLayerTab { get; set; }
     public LimberPosesTab? LimberPosesTab { get; set; }
     public EntitiesTab? EntitiesTab { get; set; }
     public KoiImportTab? KoiImportTab { get; set; }
@@ -132,6 +134,7 @@ public sealed class MainWindow : Window
         new("worldprops", "Scene", "World props", "Every prop the game world is built from (event objects, field objects, each region's props), in sections, to place around you.", () => WorldPropsTab?.Draw(), () => WorldPropsTab != null),
         new("effects", "Scene", "Effects", "Every visual effect in the game (spells, auras, markers, tethers, sparkles...), in groups by type, to place around you or put on a character's bone.", () => EffectsTab?.Draw(), () => EffectsTab != null),
         new("climax", "Scene", "Climax", "Invisible emitters that shoot a thick, sticky liquid in spurts, from a character's bone or anywhere: it sticks to bodies, runs, drips and pools (adult characters).", () => ClimaxTab?.Draw(), () => ClimaxTab != null && Cfg.ShowClimaxTab),
+        new("skin", "Scene", "Skin effects", "A wet, sweaty sheen (or wet up to a water line), a flush and wet eyes on a character, fading in and out (adult characters).", () => SkinEffectsTab?.Draw(), () => SkinEffectsTab != null),
         new("renderer", "Scene", "Renderer", "Extra models and bones drawn on the character.", () => _rendererTab.Draw()),
 
         new("link", "Koikatsu", "Koikatsu link", "Pose FFXIV characters live from Koikatsu / KoiPose.", DrawKoikatsuPage),
@@ -143,6 +146,7 @@ public sealed class MainWindow : Window
         new("advanced", "Settings", "Advanced", "Running outside GPose, unfinished pages.", DrawMainAdvanced),
 
         new("video", "Experimental", "Video (not working)", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
+        new("enginelayer", "Experimental", "Engine animation layer", "Untested: a small Limber motion (the hips) played through the game's own animation system, mixed with the emote playing, with a readout of the character's animation layers.", () => EngineLayerTab?.Draw(), () => EngineLayerTab != null),
         new("vlc", "Experimental", "VLC Live", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
     ];
 
@@ -205,6 +209,7 @@ public sealed class MainWindow : Window
                 ["Butt"] = ik.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults(),
                 ["Belly"] = ik.SoftBodyBelly ??= Limber.BodyRig.SoftBodySettings.BellyDefaults(),
                 ["LiveMesh"] = ik.LiveMesh ??= new(),
+                ["GamePhysics"] = ik.GamePhysics ??= new(),
             },
             "collide" => () => new()
             {
@@ -267,7 +272,9 @@ public sealed class MainWindow : Window
             {
                 ["Ragdoll"] = new PresetValues()
                     .Add("Bounce", () => Limber.Rig.RagdollService.Bounce, v => Limber.Rig.RagdollService.Bounce = Math.Clamp(v, 0f, 0.95f))
-                    .Add("Slide", () => Limber.Rig.RagdollService.Slide, v => Limber.Rig.RagdollService.Slide = Math.Clamp(v, 0f, 0.995f)),
+                    .Add("Slide", () => Limber.Rig.RagdollService.Slide, v => Limber.Rig.RagdollService.Slide = Math.Clamp(v, 0f, 0.995f))
+                    .Add("Substeps", () => Limber.Rig.RagdollService.Substeps, v => Limber.Rig.RagdollService.Substeps = Math.Clamp(v, 1, 8)),
+                ["WorldCollision"] = ik.WorldCollision ??= new(),
                 ["Minions"] = new PresetValues()
                     .Add("On", () => ik.FollowersOn, v => ik.FollowersOn = v)
                     .Add("Spacing", () => ik.FollowerSpacing, v => ik.FollowerSpacing = v),
@@ -303,6 +310,12 @@ public sealed class MainWindow : Window
                     .Add("NoCollide", () => ik.CameraNoCollide, v => ik.CameraNoCollide = v)
                     .Add("Offset", () => ik.CameraOffset, v => ik.CameraOffset = v),
             },
+            "skin" => PerCharacter(n => new()
+            {
+                ["SkinEffects"] = For(ik.SkinEffects ??= new(), n),
+                ["Options"] = new PresetValues().Add("StrongerWetness", () => ik.SkinEffectsHook, v => ik.SkinEffectsHook = v),
+            }),
+            "enginelayer" => () => new() { ["EngineLayer"] = ik.EngineLayer ??= new() },
             "climax" => () => new()
             {
                 ["Emitters"] = ik.ClimaxEmitters ??= new(),
@@ -1358,6 +1371,10 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Limber's window disappears while the game UI is hidden (in GPose too) and comes back with it.\n"
                 + "The handles on the character have their own setting (Posing settings > Hide with the game UI).");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        DiagnosticsPanel.Draw(Cfg);
 
         ImGui.Spacing();
         ImGui.Separator();

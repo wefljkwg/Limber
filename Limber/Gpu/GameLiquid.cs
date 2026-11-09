@@ -158,6 +158,11 @@ public static unsafe class GameLiquid
         public byte[] Vertices = [], Indices = [];
         public float Wind = 1f;
         public string Note = "loading";
+        public LiveMesh.Search? Search;        // its buffers being looked for on a worker thread
+        // Per mesh: the triangles and corners the last surface used, and the triangles uploaded last time (perf: only
+        // the parts in use, and what was in use before, are sent to the graphics card, not the whole buffers).
+        public int[] UsedT = [], UsedV = [], SentT = [];
+        public bool SendWhole;
         public string Name => System.IO.Path.GetFileNameWithoutExtension(Path);
     }
 
@@ -328,7 +333,9 @@ public static unsafe class GameLiquid
     private static ClimaxService.Piece[] _take = new ClimaxService.Piece[1024];
     private static readonly LiquidSurface _surface = new();
     private static Task? _job;
-    private static bool _jobDone;
+    private static volatile bool _jobDone;
+    private static int _jobDrawn;
+    private static List<Carrier> _jobCarriers = new();
     private static Vector3 _jobOrigin;
     private static float _dropSize = 0.5f, _coatSpread = 1.4f, _coatThickness = 0.5f;
     private static int _smoothing = 2;
@@ -404,13 +411,14 @@ public static unsafe class GameLiquid
                 _job = null;
                 if(_jobDone)
                 {
-                    int drawn = Write(live);
+                    // (perf: the surface was written into the carriers' copies on the worker thread, right after it was
+                    // made; only the parts of their buffers in use now or before go to the graphics card, and only for
+                    // carriers still in use: one taken away meanwhile has no buffers any more)
+                    int drawn = _jobDrawn;
                     _drawnOrigin = _jobOrigin;
-                    foreach(var c in live)
-                    {
-                        LiveMesh.Upload(c.VbCopy, c.Vb!.Desc, c.Vertices);
-                        LiveMesh.Upload(c.IbCopy, c.Ib!.Desc, c.Indices);
-                    }
+                    foreach(var c in _jobCarriers)
+                        if(live.Contains(c))
+                            UploadUsed(c);
                     int waiting = _carriers.Count(c => !c.Taken && !c.Failed), failed = _carriers.Count(c => c.Failed);
                     Status = $"Drawn by the game: {drawn} of {_surface.TriangleCount} triangles, in {live.Count} carriers (room for {Room}); "
                         + $"cell {_surface.Cell * 1000f:0.0} mm{(_surface.CutShort ? " (cut short: getting coarser)" : "")}"
@@ -427,6 +435,8 @@ public static unsafe class GameLiquid
             maxV = (int)(maxV * 0.85f);
             _jobOrigin = _origin;
             _jobDone = false;
+            var carriers = live;
+            _jobCarriers = carriers;
             _job = Task.Run(() =>
             {
                 for(int i = 0; i < count; i++)
@@ -448,6 +458,19 @@ public static unsafe class GameLiquid
                     }
                 }
                 _surface.Build(pieces, count, spread, thick, maxV, maxT, detail, smooth);
+                // (perf: written into the carriers' copies here too, not on the render thread; nothing else touches
+                // those copies until this job is done)
+                try
+                {
+                    _jobDrawn = Write(carriers);
+                }
+                catch
+                {
+                    // (copies left half written: sent whole next time, so the graphics card has all of them again)
+                    foreach(var c in carriers)
+                        c.SendWhole = true;
+                    throw;
+                }
                 _jobDone = true;
             });
         }
@@ -462,11 +485,26 @@ public static unsafe class GameLiquid
     /// may make them a little after the model has loaded).</summary>
     private static void TakeOver(Carrier c)
     {
-        if(c.Wait-- > 0)
-            return;
-        c.Wait = 30;
-        c.Tries++;
-        var found = LiveMesh.ProbeFrom([(nint)c.Object, (nint)c.Object->ModelResourceHandle], c.Path);
+        // (perf: the search runs on a worker thread, taken up here once it's done; it used to hitch the frame each try)
+        List<LiveMesh.Found> found;
+        if(c.Search != null)
+        {
+            if(!c.Search.Done)
+                return;
+            found = c.Search.Take();
+            c.Search = null;
+        }
+        else
+        {
+            if(c.Wait-- > 0)
+                return;
+            c.Wait = 30;
+            c.Tries++;
+            c.Search = LiveMesh.ProbeFromInBackground([(nint)c.Object, (nint)c.Object->ModelResourceHandle], c.Path);
+            if(c.Search != null)
+                return;
+            found = new List<LiveMesh.Found>();
+        }
         // (the game rounds its buffers up to a multiple of 128 bytes: exactly the size first, else rounded up)
         uint rounded = (c.Info.VertexBlock + 127u) / 128u * 128u;
         c.Vb = found.FirstOrDefault(f => f.IsVertex && f.Desc.ByteWidth == c.Info.VertexBlock)
@@ -521,12 +559,25 @@ public static unsafe class GameLiquid
             _stamp = new int[sf.Positions.Length];
         }
         foreach(var c in live)
+        {
             Array.Clear(c.Indices);
+            if(c.UsedT.Length != c.Meshes.Length)
+            {
+                c.UsedT = new int[c.Meshes.Length];
+                c.UsedV = new int[c.Meshes.Length];
+            }
+            else
+            {
+                Array.Clear(c.UsedT);
+                Array.Clear(c.UsedV);
+            }
+        }
         int t = 0;
         foreach(var c in live)
         {
-            foreach(var mesh in c.Meshes)
+            for(int mi = 0; mi < c.Meshes.Length; mi++)
             {
+                var mesh = c.Meshes[mi];
                 if(t >= sf.TriangleCount)
                     break;
                 _stampNow++;
@@ -556,6 +607,8 @@ public static unsafe class GameLiquid
                     BitConverter.TryWriteBytes(c.Indices.AsSpan(at + 2), (ushort)Corner(b));
                     BitConverter.TryWriteBytes(c.Indices.AsSpan(at + 4), (ushort)Corner(d));
                     usedT++;
+                    c.UsedT[mi] = usedT;
+                    c.UsedV[mi] = usedV;
 
                     int Corner(int g)
                     {
@@ -590,6 +643,50 @@ public static unsafe class GameLiquid
             }
         }
         return t;
+    }
+
+    /// <summary>
+    /// Render thread: a carrier's buffers brought up to date with its copies, after <see cref="Write"/>: per mesh, the
+    /// corners in use, and the triangles in use now or last time (the ones no longer used were folded to nothing in the
+    /// copy and must be on the graphics card too). Everything else is as it was sent before. (Perf: the whole buffers,
+    /// several MB per carrier, were sent each time.)
+    /// </summary>
+    private static void UploadUsed(Carrier c)
+    {
+        if(c.UsedT.Length != c.Meshes.Length)
+            return;
+        if(c.SentT.Length != c.Meshes.Length)
+            c.SentT = new int[c.Meshes.Length];
+        if(c.SendWhole)
+        {
+            c.SendWhole = false;
+            LiveMesh.Upload(c.VbCopy, c.Vb!.Desc, c.Vertices);
+            LiveMesh.Upload(c.IbCopy, c.Ib!.Desc, c.Indices);
+            Array.Copy(c.UsedT, c.SentT, c.SentT.Length);
+            return;
+        }
+        for(int mi = 0; mi < c.Meshes.Length; mi++)
+        {
+            var mesh = c.Meshes[mi];
+            int tris = Math.Max(c.UsedT[mi], c.SentT[mi]);
+            if(tris > 0)
+            {
+                int from = (int)mesh.StartIndex * 2;
+                LiveMesh.UploadRange(c.IbCopy, c.Ib!.Desc, c.Indices, from, from + tris * 6);
+            }
+            c.SentT[mi] = c.UsedT[mi];
+            int corners = c.UsedV[mi];
+            if(corners > 0 && mesh.Elements.Length > 0)
+            {
+                int lo = int.MaxValue, hi = 0;
+                foreach(var (_, at, stride, type) in mesh.Elements)
+                {
+                    lo = Math.Min(lo, at);
+                    hi = Math.Max(hi, at + (corners - 1) * stride + ElementSize(type));
+                }
+                LiveMesh.UploadRange(c.VbCopy, c.Vb!.Desc, c.Vertices, lo, hi);
+            }
+        }
     }
 
     private static int[] _local = [], _stamp = [];

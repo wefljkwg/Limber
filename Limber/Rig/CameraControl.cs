@@ -246,6 +246,8 @@ public static unsafe class CameraControl
     [DllImport("kernel32.dll")]
     private static extern bool VirtualProtect(nint address, nuint size, uint protect, out uint old);
 
+    // The call to the camera's collision test, followed by "if it hit, ..." (also listed in Core/Signatures).
+    internal const string NoCollisionSig = "E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? F3 0F 10 44 24 ?? 41 B7 01";
     private static nint _collisionAt;
     private static byte[]? _collisionOriginal;
     private static bool _collisionTried;
@@ -260,7 +262,7 @@ public static unsafe class CameraControl
             try
             {
                 // (the call to the collision test, followed by "if it hit, ...")
-                if(Plugin.SigScanner.TryScanText("E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? F3 0F 10 44 24 ?? 41 B7 01", out var at))
+                if(Plugin.SigScanner.TryScanText(NoCollisionSig, out var at))
                 {
                     _collisionAt = at;
                     _collisionOriginal = new byte[5];

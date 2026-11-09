@@ -194,16 +194,8 @@ public static unsafe class LiveMesh
     }
 
     // A std::string (MSVC): its text inline when shorter than 16 bytes, otherwise behind a pointer.
-    internal static string StdString(nint at)
-    {
-        ulong length = *(ulong*)(at + 0x10), capacity = *(ulong*)(at + 0x18);
-        if (length == 0 || length > 1024)
-            return "";
-        byte* text = capacity >= 16 ? *(byte**)at : (byte*)at;
-        if (capacity >= 16 && !Readable((nint)text & ~7, (int)length + 8))
-            return "";
-        return System.Text.Encoding.UTF8.GetString(text, (int)length);
-    }
+    // (copied, not read through the pointer: the resource holding it may be let go of meanwhile)
+    internal static string StdString(nint at) => Limber.Core.SafeMemory.ReadStdString(at, 1024);
 
     // ---- Finding the buffers
 
@@ -221,21 +213,25 @@ public static unsafe class LiveMesh
     public static List<(int Slot, string File)> ModelFiles(nint drawObject)
     {
         var list = new List<(int, string)>();
-        if (drawObject == 0 || !Readable(drawObject, 0x100))
+        // (every step copied, not read through the pointers: a character still loading or leaving has its models made
+        // and let go of on the game's other threads while this runs)
+        if (drawObject == 0)
             return list;
         var cb = (CharacterBase*)drawObject;
-        int slots = cb->SlotCount;
-        if (slots <= 0 || slots > 64 || cb->Models == null)
+        if (!Limber.Core.SafeMemory.TryRead<int>((nint)(&cb->SlotCount), out var slots) || slots <= 0 || slots > 64)
+            return list;
+        nint models = Limber.Core.SafeMemory.ReadPointer((nint)(&cb->Models));
+        if (models == 0)
             return list;
         for (int slot = 0; slot < slots; slot++)
         {
-            var model = cb->Models[slot];
-            if (model == null || !Readable((nint)model, 0x180))
+            var model = (Model*)Limber.Core.SafeMemory.ReadPointer(models + slot * 8);
+            if (model == null)
                 continue;
-            var handle = model->ModelResourceHandle;
-            if (handle == null || !Readable((nint)handle, 0x2A0))
+            var handle = Limber.Core.SafeMemory.ReadPointer((nint)(&model->ModelResourceHandle));
+            if (handle == 0)
                 continue;
-            var file = StdString((nint)handle + 0x48);
+            var file = StdString(handle + 0x48);
             if (file.Length > 0)
                 list.Add((slot, file));
         }
@@ -263,110 +259,127 @@ public static unsafe class LiveMesh
         var seen = new HashSet<nint>();
         var queue = new Queue<(nint Address, string Path, int Depth)>();
         var cb = (CharacterBase*)drawObject;
+        // (everything copied before it's looked at, not read through the pointers: this walks memory it doesn't know,
+        // which the game may let go of on its other threads while the search runs)
+        int slotCount = Limber.Core.SafeMemory.Read<int>((nint)(&cb->SlotCount));
+        nint models = Limber.Core.SafeMemory.ReadPointer((nint)(&cb->Models));
+        nint* head = stackalloc nint[6];
         // The models first (and what they point to), then the rest of the character.
-        if (cb->SlotCount > 0 && cb->SlotCount <= 64 && cb->Models != null)
-            for (int slot = 0; slot < cb->SlotCount; slot++)
-                if (cb->Models[slot] != null)
+        if (slotCount > 0 && slotCount <= 64 && models != 0)
+            for (int slot = 0; slot < slotCount; slot++)
+            {
+                nint model = Limber.Core.SafeMemory.ReadPointer(models + slot * 8);
+                if (model == 0)
+                    continue;
+                queue.Enqueue((model, $"Model[{slot}]", 0));
+                // Its bone list: the constant buffer(s) the game hands the graphics card with the bone matrices.
+                if (!Limber.Core.SafeMemory.TryRead<nint>(model + 0x58, out var list) || !Limber.Core.SafeMemory.TryRead<int>(model + 0x60, out var count))
+                    continue;
+                report.Add($"Model[{slot}]: bone list 0x{list:X}, count {count}");
+                // Raw look at the list (what each entry holds), and every buffer object found inside it.
+                var buffers = new List<nint>();
+                int bytes = Math.Clamp(count, 1, 16) * 0x40;
+                var q = new nint[bytes / 8];
+                bool listRead;
+                fixed (nint* to = q)
+                    listRead = Limber.Core.SafeMemory.Copy(list, to, bytes);
+                if (!listRead)
+                    continue;
+                if (slot <= 2)
                 {
-                    var model = cb->Models[slot];
-                    queue.Enqueue(((nint)model, $"Model[{slot}]", 0));
-                    // Its bone list: the constant buffer(s) the game hands the graphics card with the bone matrices.
-                    if (Readable((nint)model, 0x70))
-                    {
-                        nint list = *(nint*)((nint)model + 0x58);
-                        int count = *(int*)((nint)model + 0x60);
-                        report.Add($"Model[{slot}]: bone list 0x{list:X}, count {count}");
-                        // Raw look at the list (what each entry holds), and every buffer object found inside it.
-                        var buffers = new List<nint>();
-                        int bytes = Math.Clamp(count, 1, 16) * 0x40;
-                        if (slot <= 2 && Readable(list, bytes))
-                        {
-                            var q = (nint*)list;
-                            var raw = new System.Text.StringBuilder("  raw:");
-                            for (int i = 0; i < Math.Min(bytes / 8, 24); i++)
-                                raw.Append($" {(ulong)q[i]:X}");
-                            report.Add(raw.ToString());
-                        }
-                        if (Readable(list, bytes))
-                            for (int i = 0; i < bytes / 8; i++)
-                            {
-                                nint value = ((nint*)list)[i];
-                                if (value == 0 || (value & 7) != 0 || value > 0x7FF000000000 || !Readable(value, 0x30))
-                                    continue;
-                                // A constant buffer: a code address first, a plausible size at +0x20.
-                                int size = *(int*)(value + 0x20);
-                                if (*(nint*)value > 0x7FF000000000 && size > 0 && size <= 0x40000 && size % 16 == 0)
-                                    buffers.Add(value);
-                            }
-                        foreach (var buffer in buffers)
-                        {
-                            if (!Readable(buffer, 0x30))
-                                continue;
-                            var cbuffer = (ConstantBuffer*)buffer;
-                            nint source = (nint)cbuffer->UnsafeSourcePointer;
-                            report.Add($"  buffer 0x{buffer:X}: {cbuffer->ByteSize} bytes, flags 0x{cbuffer->Flags:X}, data 0x{source:X}");
-                            if (source == 0 || cbuffer->ByteSize <= 0 || cbuffer->ByteSize > 0x40000 || !Readable(source, Math.Min(cbuffer->ByteSize, 48)))
-                                continue;
-                            var f = (float*)source;
-                            report.Add($"    first: {f[0]:0.###} {f[1]:0.###} {f[2]:0.###} {f[3]:0.###} | {f[4]:0.###} {f[5]:0.###} {f[6]:0.###} {f[7]:0.###} | {f[8]:0.###} {f[9]:0.###} {f[10]:0.###} {f[11]:0.###}");
-                            // The patterns, searched in the whole buffer (offset / 48 = which bone of this model it is).
-                            int n = cbuffer->ByteSize / 4;
-                            if (!Readable(source, n * 4))
-                                continue;
-                            foreach (var (label, values) in targets)
-                                for (int i = 0; i + 12 <= n; i++)
-                                {
-                                    bool match = true;
-                                    for (int k = 0; k < 12 && match; k++)
-                                        match = float.IsNaN(values[k]) || MathF.Abs(f[i + k] - values[k]) <= tolerance;
-                                    if (match)
-                                        report.Add($"    MATCH {label} at +0x{i * 4:X} (bone {i / 12}, {i % 12} floats in)");
-                                }
-                        }
-                    }
+                    var raw = new System.Text.StringBuilder("  raw:");
+                    for (int i = 0; i < Math.Min(bytes / 8, 24); i++)
+                        raw.Append($" {(ulong)q[i]:X}");
+                    report.Add(raw.ToString());
                 }
+                for (int i = 0; i < bytes / 8; i++)
+                {
+                    nint value = q[i];
+                    if (value == 0 || (value & 7) != 0 || value > 0x7FF000000000)
+                        continue;
+                    // A constant buffer: a code address first, a plausible size at +0x20.
+                    if (!Limber.Core.SafeMemory.Copy(value, head, 0x30))
+                        continue;
+                    int size = *(int*)((byte*)head + 0x20);
+                    if (head[0] > 0x7FF000000000 && size > 0 && size <= 0x40000 && size % 16 == 0)
+                        buffers.Add(value);
+                }
+                foreach (var buffer in buffers)
+                {
+                    if (!Limber.Core.SafeMemory.TryRead<ConstantBuffer>(buffer, out var cbuffer))
+                        continue;
+                    nint source = (nint)cbuffer.UnsafeSourcePointer;
+                    report.Add($"  buffer 0x{buffer:X}: {cbuffer.ByteSize} bytes, flags 0x{cbuffer.Flags:X}, data 0x{source:X}");
+                    if (source == 0 || cbuffer.ByteSize < 48 || cbuffer.ByteSize > 0x40000)
+                        continue;
+                    // The whole buffer copied, then searched (offset / 48 = which bone of this model it is).
+                    int n = cbuffer.ByteSize / 4;
+                    var f = new float[n];
+                    bool read;
+                    fixed (float* to = f)
+                        read = Limber.Core.SafeMemory.Copy(source, to, n * 4);
+                    if (!read)
+                        continue;
+                    report.Add($"    first: {f[0]:0.###} {f[1]:0.###} {f[2]:0.###} {f[3]:0.###} | {f[4]:0.###} {f[5]:0.###} {f[6]:0.###} {f[7]:0.###} | {f[8]:0.###} {f[9]:0.###} {f[10]:0.###} {f[11]:0.###}");
+                    foreach (var (label, values) in targets)
+                        for (int i = 0; i + 12 <= n; i++)
+                        {
+                            bool match = true;
+                            for (int k = 0; k < 12 && match; k++)
+                                match = float.IsNaN(values[k]) || MathF.Abs(f[i + k] - values[k]) <= tolerance;
+                            if (match)
+                                report.Add($"    MATCH {label} at +0x{i * 4:X} (bone {i / 12}, {i % 12} floats in)");
+                        }
+                }
+            }
         queue.Enqueue((drawObject, "CharacterBase", 0));
         int blocks = 0, hits = 0;
+        var block = new byte[Window];
         while (queue.Count > 0 && blocks++ < MaxBlocks && hits < maxHits)
         {
             var (at, path, depth) = queue.Dequeue();
             if (!seen.Add(at) || !Readable(at, 16))
                 continue;
-            // How much of this block can be read (up to the window).
+            // How much of this block can be read (up to the window), copied before it's searched.
             int length = 16;
             while (length < Window && Readable(at, length * 2))
                 length *= 2;
-            var floats = (float*)at;
-            int count = length / 4;
-            foreach (var (label, values) in targets)
-            {
-                if (values.Length != 12)
-                    continue;
-                for (int i = 0; i + 12 <= count && hits < maxHits; i++)
-                {
-                    // (a NaN in the pattern matches anything: a part that may be measured from somewhere else)
-                    if (!float.IsNaN(values[0]) && MathF.Abs(floats[i] - values[0]) > tolerance)
-                        continue;
-                    bool match = true;
-                    for (int k = 1; k < 12 && match; k++)
-                        match = float.IsNaN(values[k]) || MathF.Abs(floats[i + k] - values[k]) <= tolerance;
-                    if (match && float.IsNaN(values[0]) && !float.IsFinite(floats[i]))
-                        match = false;
-                    if (!match)
-                        continue;
-                    report.Add($"{label}: {path} +0x{i * 4:X} (block 0x{at:X}, depth {depth})");
-                    hits++;
-                }
-            }
-            if (depth >= Depth)
+            if (!Limber.Core.SafeMemory.Copy(at, block, 0, length))
                 continue;
-            int scan = Math.Min(length, Pointers);
-            for (int off = 0; off + 8 <= scan; off += 8)
+            fixed (byte* copied = block)
             {
-                nint value = *(nint*)(at + off);
-                if (value == 0 || (value & 7) != 0 || seen.Contains(value) || !Readable(value, 16))
+                var floats = (float*)copied;
+                int count = length / 4;
+                foreach (var (label, values) in targets)
+                {
+                    if (values.Length != 12)
+                        continue;
+                    for (int i = 0; i + 12 <= count && hits < maxHits; i++)
+                    {
+                        // (a NaN in the pattern matches anything: a part that may be measured from somewhere else)
+                        if (!float.IsNaN(values[0]) && MathF.Abs(floats[i] - values[0]) > tolerance)
+                            continue;
+                        bool match = true;
+                        for (int k = 1; k < 12 && match; k++)
+                            match = float.IsNaN(values[k]) || MathF.Abs(floats[i + k] - values[k]) <= tolerance;
+                        if (match && float.IsNaN(values[0]) && !float.IsFinite(floats[i]))
+                            match = false;
+                        if (!match)
+                            continue;
+                        report.Add($"{label}: {path} +0x{i * 4:X} (block 0x{at:X}, depth {depth})");
+                        hits++;
+                    }
+                }
+                if (depth >= Depth)
                     continue;
-                queue.Enqueue((value, $"{path}+0x{off:X}", depth + 1));
+                int scan = Math.Min(length, Pointers);
+                for (int off = 0; off + 8 <= scan; off += 8)
+                {
+                    nint value = *(nint*)(copied + off);
+                    if (value == 0 || (value & 7) != 0 || seen.Contains(value) || !Readable(value, 16))
+                        continue;
+                    queue.Enqueue((value, $"{path}+0x{off:X}", depth + 1));
+                }
             }
         }
         report.Add($"Searched {blocks} memory blocks, {hits} match(es).");
@@ -375,21 +388,34 @@ public static unsafe class LiveMesh
 
     public static List<Found> Probe(nint drawObject, List<string> log, Func<string, bool>? onlyFiles = null)
     {
-        var found = new List<Found>();
         var cls = BufferClass();
         if (cls == 0)
         {
             log.Add("Couldn't make a test buffer (no Direct3D device?).");
-            return found;
+            return new List<Found>();
         }
+        return ProbeCore(drawObject, log, onlyFiles, cls, describe: true);
+    }
+
+    // (perf) The search itself, safe to run on a worker thread when describe is false: every read of the game's memory
+    // goes through Copy (a character freed meanwhile makes it fail, never crash), and no Direct3D call is made on the
+    // buffers found (their descriptions are read later, on the render thread, by Search.Take). The search reads
+    // thousands of blocks one system call at a time and took 100+ ms: on the render thread that was a visible hitch,
+    // repeated every few seconds while a model wasn't found.
+    private static List<Found> ProbeCore(nint drawObject, List<string> log, Func<string, bool>? onlyFiles, nint cls, bool describe)
+    {
+        var found = new List<Found>();
         if (drawObject == 0 || !Readable(drawObject, 0x100))
         {
             log.Add("No character model.");
             return found;
         }
         var cb = (CharacterBase*)drawObject;
-        int slots = cb->SlotCount;
-        if (slots <= 0 || slots > 64 || cb->Models == null)
+        int slots = 0;
+        FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model** models = null;
+        if (!Copy((nint)(&cb->SlotCount), &slots, sizeof(int)) || !Copy((nint)(&cb->Models), &models, 8))
+            slots = 0;
+        if (slots <= 0 || slots > 64 || models == null)
         {
             log.Add("The character has no model slots.");
             return found;
@@ -399,7 +425,7 @@ public static unsafe class LiveMesh
         for (int slot = 0; slot < slots; slot++)
         {
             FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model* model;
-            if (!Copy((nint)(cb->Models + slot), &model, 8) || model == null || !Readable((nint)model, 0x180))
+            if (!Copy((nint)(models + slot), &model, 8) || model == null || !Readable((nint)model, 0x180))
                 continue;
             FFXIVClientStructs.FFXIV.Client.System.Resource.Handle.ModelResourceHandle* handle;
             if (!Copy((nint)(&model->ModelResourceHandle), &handle, 8))
@@ -436,7 +462,7 @@ public static unsafe class LiveMesh
                                 known.Holders.Add(at + off);
                             continue;
                         }
-                        var desc = GetDesc(value);
+                        var desc = describe ? GetDesc(value) : default;
                         var entry = new Found(slot, file, $"{path}+0x{off:X}", at + off, value, desc);
                         entry.Holders.Add(at + off);
                         found.Add(entry);
@@ -456,10 +482,16 @@ public static unsafe class LiveMesh
     /// </summary>
     public static List<Found> ProbeFrom(nint[] roots, string file)
     {
-        var found = new List<Found>();
         var cls = BufferClass();
         if (cls == 0)
-            return found;
+            return new List<Found>();
+        return ProbeFromCore(roots, file, cls, describe: true);
+    }
+
+    // (perf) See ProbeCore: worker-thread safe when describe is false.
+    private static List<Found> ProbeFromCore(nint[] roots, string file, nint cls, bool describe)
+    {
+        var found = new List<Found>();
         var regions = new Regions();
         nint* chunk = stackalloc nint[ScanBytes / 8];
         var seen = new HashSet<nint>();
@@ -490,7 +522,7 @@ public static unsafe class LiveMesh
                             known.Holders.Add(at + off);
                         continue;
                     }
-                    var entry = new Found(0, file, $"{path}+0x{off:X}", at + off, value, GetDesc(value));
+                    var entry = new Found(0, file, $"{path}+0x{off:X}", at + off, value, describe ? GetDesc(value) : default);
                     entry.Holders.Add(at + off);
                     found.Add(entry);
                 }
@@ -500,6 +532,80 @@ public static unsafe class LiveMesh
         }
         return found;
     }
+
+    // ---- Searching on a worker thread
+
+    /// <summary>
+    /// A search for a model's buffers running on a worker thread (perf: the search took long enough to hitch the frame,
+    /// and was repeated every few seconds while a model wasn't found). Start it with <see cref="ProbeInBackground"/> or
+    /// <see cref="ProbeFromInBackground"/>; once <see cref="Done"/>, <see cref="Take"/> on the render thread gives what
+    /// <see cref="Probe"/> / <see cref="ProbeFrom"/> would have.
+    /// </summary>
+    public sealed class Search
+    {
+        private readonly System.Threading.Tasks.Task<List<Found>> _task;
+        private readonly nint _owner, _draw, _class;
+
+        internal Search(System.Threading.Tasks.Task<List<Found>> task, nint owner = 0, nint draw = 0, nint cls = 0)
+        {
+            _task = task;
+            _owner = owner;
+            _draw = draw;
+            _class = cls;
+        }
+
+        /// <summary>The character the search was started for still has the same model (not redrawn meanwhile: a
+        /// redraw frees the buffers found, and freed memory can still hold the old pointers).</summary>
+        public bool StillDrawn => _owner == 0 || Limber.Core.SafeMemory.ReadPointer(_owner + 0x100) == _draw;
+
+        public bool Done => _task.IsCompleted;
+
+        /// <summary>Render thread, once done: the buffers found, each described now; only those still where they were
+        /// found (one let go of meanwhile is left out rather than asked about). Empty if the search failed.</summary>
+        public List<Found> Take()
+        {
+            var list = new List<Found>();
+            if (!_task.IsCompletedSuccessfully || !StillDrawn)
+                return list;
+            foreach (var f in _task.Result)
+            {
+                if (!Limber.Core.SafeMemory.TryRead<nint>(f.Holder, out var held) || held != f.Buffer)
+                    continue;
+                // (still a buffer object: asked about only then, never through a pointer to something else)
+                if (_class != 0 && (!Limber.Core.SafeMemory.TryRead<nint>(f.Buffer, out var vt) || vt != _class))
+                    continue;
+                list.Add(f with { Desc = GetDesc(f.Buffer) }); // (keeps the same Holders list)
+            }
+            return list;
+        }
+    }
+
+    /// <summary>Starts <see cref="Probe"/> for one model file on a worker thread (render thread; null if it can't start).</summary>
+    public static Search? ProbeInBackground(nint drawObject, string file, nint owner = 0) => ProbeInBackground(drawObject, f => f == file, owner);
+
+    /// <summary>Starts <see cref="Probe"/> for the model files picked on a worker thread (render thread; null if it can't
+    /// start). <paramref name="onlyFiles"/> is called on the worker thread.</summary>
+    public static Search? ProbeInBackground(nint drawObject, Func<string, bool> onlyFiles, nint owner = 0)
+    {
+        var cls = BufferClass();
+        if (cls == 0 || drawObject == 0)
+            return null;
+        return new Search(OnOwnThread(() => ProbeCore(drawObject, new List<string>(), onlyFiles, cls, describe: false)), owner, drawObject, cls);
+    }
+
+    /// <summary>Starts <see cref="ProbeFrom"/> on a worker thread (render thread; null if it can't start).</summary>
+    public static Search? ProbeFromInBackground(nint[] roots, string file)
+    {
+        var cls = BufferClass();
+        if (cls == 0)
+            return null;
+        return new Search(OnOwnThread(() => ProbeFromCore(roots, file, cls, describe: false)), 0, 0, cls);
+    }
+
+    // (a thread of its own: a search takes a while, and shouldn't hold up the shared worker threads others wait on)
+    private static System.Threading.Tasks.Task<List<Found>> OnOwnThread(Func<List<Found>> search)
+        => System.Threading.Tasks.Task.Factory.StartNew(search, System.Threading.CancellationToken.None,
+            System.Threading.Tasks.TaskCreationOptions.LongRunning, System.Threading.Tasks.TaskScheduler.Default);
 
     // ---- Shared by the wobble test and the live soft body
 

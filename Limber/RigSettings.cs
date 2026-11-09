@@ -214,6 +214,15 @@ public sealed class RigSettings
     // Bone scale page: per character (by name), per bone.
     public Dictionary<string, Dictionary<string, Limber.BodyShape.BoneScaleEntry>> BoneScales { get; set; } = new();
 
+    /// <summary>Real floors for the ragdoll (Extras): the game's world collision and its filter.</summary>
+    public Limber.Rig.WorldCollisionSettings WorldCollision { get; set; } = new();
+    /// <summary>Skin effects (wet sheen, flush, wet eyes; Skin effects page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.SkinEffectSettings> SkinEffects { get; set; } = new();
+    /// <summary>Skin effects: the stronger wetness (hooks the game's wetness function).</summary>
+    public bool SkinEffectsHook { get; set; }
+    /// <summary>Engine animation layer (experimental page).</summary>
+    public Limber.Rig.EngineLayerSettings EngineLayer { get; set; } = new();
+
     // The page the main window shows (its left-hand list).
     public string UiPage { get; set; } = "start";
     /// <summary>The actor list window is open.</summary>
@@ -221,6 +230,9 @@ public sealed class RigSettings
     public bool BodyShapeKeepFeet { get; set; } = true;
     // Body Shape tab: build again by itself a moment after a detail slider is let go.
     public bool BodyShapeAutoBuild { get; set; }
+
+    /// <summary>Body physics page: improvements to the game's own physics (hair, clothes, body-mod bones).</summary>
+    public Limber.Rig.GamePhysicsSettings GamePhysics { get; set; } = new();
 
     // Which part the Body rig tab shows ("breasts" / "testicles" / "butt").
     public string RigPartKey { get; set; } = "breasts";

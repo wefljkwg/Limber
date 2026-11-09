@@ -106,6 +106,13 @@ public sealed unsafe class SoftBody
 
     // This character's collision settings while it's simulated (Body > Physics collisions), and who it is.
     private CollisionSettings _col = new();
+    // Collisions inside the substeps: the share of a 60 fps frame one Collide call stands for (scales friction so
+    // the total per second is what it was at 60 fps), and 1 / the substep's length (static friction). Both 0 for the
+    // last pass after the substeps (push out only: friction was already given in the substeps).
+    private float _frictionShare = 1f, _invStep;
+    private bool _countHits = true;
+    // Below this speed (m/s) into a collider nothing bounces back off it (no low-speed jitter), whatever Rebound says.
+    private const float NoBounceSpeed = 0.3f;
     private nint _self;
 
     private readonly Dictionary<nint, State> _states = new();
@@ -150,6 +157,11 @@ public sealed unsafe class SoftBody
     /// <summary>How hard props push the bones (1 = all the way out, 0 = not at all).</summary>
     public Func<float> BoneStrength = () => 1f;
     private float _boneStrength = 1f;
+    private float _contactShare = 1f; // (this run's share of a frame's contact push; see Shared)
+
+    // A per-frame amount (0..1) as one run's share of it: the same total after all of a frame's runs.
+    private float Shared(float perFrame)
+        => perFrame >= 1f ? 1f : perFrame <= 0f ? 0f : 1f - MathF.Pow(1f - perFrame, _contactShare);
     private PropWorld[] _props = [];
     // How far the skin sits beyond a grid point (the bones are just inside the surface): props collide with
     // that, so they meet the skin instead of passing through it to reach the bones.
@@ -833,8 +845,15 @@ public sealed unsafe class SoftBody
                 continue;
             }
 
-            int steps = advance ? Math.Clamp((int)MathF.Ceiling(dt / MaxStep), 1, MaxSteps) : 0;
+            // Substeps: at least Steps per frame (at 60 fps; as many per second at any frame rate), never longer than
+            // MaxStep. Collisions are solved inside every substep (fast arms no longer pass through between them).
+            int perFrame = Math.Clamp(_col.Substeps, 1, 8);
+            int steps = advance ? Math.Clamp(Math.Max((int)MathF.Ceiling(dt / MaxStep), (int)MathF.Ceiling(dt * 60f * perFrame - 0.01f)), 1, MaxSteps) : 0;
+            // Contacts now run in every step and once more at the end: each run takes its share of a frame's push, so
+            // soft contacts (Softness, Strength below 1, bone strength) feel as they did with one run a frame.
+            _contactShare = 1f / (steps + 1);
             float h = steps > 0 ? dt / steps : 0f;
+            float maxSpeed = Math.Clamp(_col.MaxSpeed, 0.5f, 100f);
 
             // ---- 1. Swing (the whole breast)
             if (steps > 0)
@@ -871,8 +890,9 @@ public sealed unsafe class SoftBody
                     breast.SwingVelocity += force * h;
                     breast.SwingVelocity = tipVelocity + (breast.SwingVelocity - tipVelocity) * swingKeep;
                     breast.Swing += breast.SwingVelocity * h;
+                    // (at the limit it loses speed: half per 1/120 s, as it did with the old fixed steps)
                     if (LimitSwing(at, tip, ref breast.Swing, maxAngle, maxSquash))
-                        breast.SwingVelocity = tipVelocity + (breast.SwingVelocity - tipVelocity) * 0.5f;
+                        breast.SwingVelocity = tipVelocity + (breast.SwingVelocity - tipVelocity) * MathF.Pow(0.5f, h * 120f);
                 }
                 breast.PrevTip = restTip;
                 breast.PrevPivot = pivot;
@@ -1013,13 +1033,25 @@ public sealed unsafe class SoftBody
                     breast.Velocity[a] += f;
                     breast.Velocity[b] -= f;
                 }
+                _frictionShare = 60f * h;
+                _invStep = 1f / h;
+                _countHits = false;
                 for (int i = 0; i < Side; i++)
                 {
                     var goalVelocity = (breast.Goal[i] - breast.PrevGoal[i]) / dt;
-                    breast.Velocity[i] = goalVelocity + (breast.Velocity[i] - goalVelocity) * keep;
+                    var relative = (breast.Velocity[i] - goalVelocity) * keep;
+                    // Velocity cap (relative to where the body carries it): no wild flicks after a hard hit.
+                    float speed = relative.Length();
+                    if (speed > maxSpeed)
+                        relative *= maxSpeed / speed;
+                    breast.Velocity[i] = goalVelocity + relative;
                     breast.Position[i] += breast.Velocity[i] * h;
+                    Collide(breast, i, floor, s.Collisions);
                 }
             }
+            _frictionShare = 0f;
+            _invStep = 0f;
+            _countHits = true;
 
             for (int i = 0; i < Side; i++)
             {
@@ -1562,11 +1594,13 @@ public sealed unsafe class SoftBody
                 }
             }
             var pushed = PushOutFully(p, rest, prop.Shape, radius, ref velocity, side);
-            _propHits++;
+            if (_countHits)
+                _propHits++;
             if (prop.Gap(pushed, out _, out var now) > 1e-6f)
                 breast.PropSide[key] = now;
-            p += (pushed - p) * _boneStrength;
-            breast.Velocity[i] += (velocity - breast.Velocity[i]) * _boneStrength;
+            float strength = Shared(_boneStrength);
+            p += (pushed - p) * strength;
+            breast.Velocity[i] += (velocity - breast.Velocity[i]) * strength;
         }
         if (!bodyColliders)
         {
@@ -1930,7 +1964,7 @@ public sealed unsafe class SoftBody
             if (dist >= radius && !(side is { } before && dist > 1e-6f && Vector3.Dot(n, before) < -0.2f && dist < radius * 2f + 0.02f))
                 continue;
             var pushed = PushOutFully(p, p, prop.Shape, radius, ref none, side);
-            p += (pushed - p) * _boneStrength;
+            p += (pushed - p) * Shared(_boneStrength);
         }
         return p;
     }
@@ -1952,13 +1986,23 @@ public sealed unsafe class SoftBody
         float soft = Math.Clamp(_col.Softness, 0f, 1f);
         if (soft > 0f)
             k *= MathF.Min(1f, depth / (soft * 0.02f));
+        k = Shared(k);
         // (what's not pushed out keeps some of its speed into it: it sinks in rather than stopping)
         velocity = before + (velocity - before) * k;
         float into = Vector3.Dot(before, normal);
-        if (into < 0f)
+        // Bounces back only when it hit fast: slow contact never bounces (no jitter while resting on something).
+        if (into < -NoBounceSpeed)
             velocity -= normal * (into * Math.Clamp(_col.Rebound, 0f, 1f) * k);
         var along = velocity - normal * Vector3.Dot(velocity, normal);
-        velocity -= along * (Math.Clamp(_col.Friction, 0f, 1f) * k);
+        float friction = Math.Clamp(_col.Friction, 0f, 1f);
+        // Static friction: sliding slower than the push it just got (speed into it + how deep it was, per substep)
+        // times the friction is held still (it grips); faster, it slides, slowed by the friction for the time this
+        // call stands for (per second the same as one 60 fps frame used to give).
+        float pushSpeed = MathF.Max(0f, -into) + depth * _invStep;
+        if (_invStep > 0f && friction > 0f && along.Length() < friction * pushSpeed * 0.5f)
+            velocity -= along * k;
+        else if (_frictionShare > 0f)
+            velocity -= along * ((1f - MathF.Pow(1f - friction, _frictionShare)) * k);
         return p + move * k;
     }
 

@@ -28,7 +28,13 @@ public sealed class BoneUpdateHook : IDisposable
     // Every detour delegate handed to the game stays referenced for the plugin's lifetime (at most MaxRehooks + 1).
     private readonly List<UpdateBonesDelegate> _detours = [];
     private (string Name, Action Run)[] _stages = [];
-    private DateTime[] _lastStageError = [];
+    // (each stage's errors: logged once in a while, and a stage that keeps failing is switched off on its own)
+    private StageGuard.Part[] _guards = [];
+    // Stages run BEFORE the game's own update (its bone physics): the only moment no physics worker thread is
+    // running, so it's where the game's physics settings may be written. Added with AddBefore before Start.
+    private (string Name, Action Run)[] _before = [];
+    private DateTime[] _lastBeforeError = [];
+    private readonly List<(string Name, Action Run)> _addedBefore = [], _addedFirst = [], _addedLast = [];
 
     private readonly byte[] _entryBytes = new byte[16];
     private readonly byte[] _entryCheck = new byte[16];
@@ -40,6 +46,8 @@ public sealed class BoneUpdateHook : IDisposable
     public Func<bool> Running = () => true;
 
     public string Status { get; private set; }
+    /// <summary>While a "before" stage runs: whether Limber is on (the stages run either way).</summary>
+    public bool BeforeRunning { get; private set; } = true;
     public bool IsHooked => _hook != null;
 
     public BoneUpdateHook(IGameInteropProvider interop, ISigScanner scanner, IFramework framework, IPluginLog log)
@@ -72,6 +80,15 @@ public sealed class BoneUpdateHook : IDisposable
         }
     }
 
+    /// <summary>A stage run before the game's own bone update (and its physics) each frame. Call before Start.</summary>
+    public void AddBefore(string name, Action run) => _addedBefore.Add((name, run));
+
+    /// <summary>A stage run first after the game's update, before all of Start's stages. Call before Start.</summary>
+    public void AddFirst(string name, Action run) => _addedFirst.Add((name, run));
+
+    /// <summary>A stage run last, after all of Start's stages. Call before Start.</summary>
+    public void AddLast(string name, Action run) => _addedLast.Add((name, run));
+
     // Install the hook. Stages run in the given order, each one isolated from the others' errors.
     public void Start(params (string Name, Action Run)[] stages)
     {
@@ -79,8 +96,13 @@ public sealed class BoneUpdateHook : IDisposable
             return;
         _started = true;
 
+        stages = [.. _addedFirst, .. stages, .. _addedLast];
+        // (logged only, never switched off: many stages work in pairs - one puts something on, a later one takes it back
+        // off - and stopping just one of a pair would let its change pile up frame after frame)
+        _guards = Array.ConvertAll(stages, s => StageGuard.For("bone update", s.Name, canStop: false));
         _stages = stages;
-        _lastStageError = new DateTime[stages.Length];
+        _before = [.. _addedBefore];
+        _lastBeforeError = new DateTime[_before.Length];
 
         if(_address != 0)
             CreateHook();
@@ -124,6 +146,39 @@ public sealed class BoneUpdateHook : IDisposable
 
     private nint Detour(UpdateBonesDelegate original, nint a1)
     {
+        var before = _before;
+        if(before.Length > 0)
+        {
+            bool runBefore;
+            try
+            {
+                runBefore = Running();
+            }
+            catch
+            {
+                runBefore = true;
+            }
+            // (each stage decides for itself what to do when Limber is off, e.g. put the game's values back)
+            for(int i = 0; i < before.Length; i++)
+            {
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                try
+                {
+                    BeforeRunning = runBefore;
+                    before[i].Run();
+                    Perf.Note("bone update", before[i].Name, started, System.Diagnostics.Stopwatch.GetTimestamp());
+                }
+                catch(Exception e)
+                {
+                    if(DateTime.UtcNow - _lastBeforeError[i] > TimeSpan.FromSeconds(10))
+                    {
+                        _lastBeforeError[i] = DateTime.UtcNow;
+                        _log.Error(e, $"Limber: error in {before[i].Name}");
+                    }
+                }
+            }
+        }
+
         // Always let the game (and anything hooked before us) do its own update first, exactly once.
         var result = original(a1);
 
@@ -140,8 +195,12 @@ public sealed class BoneUpdateHook : IDisposable
             return result;
 
         var stages = _stages;
-        for(int i = 0; i < stages.Length; i++)
+        var guards = _guards;
+        for(int i = 0; i < stages.Length && i < guards.Length; i++)
         {
+            // (a stage that kept failing is skipped for the session: Settings > Advanced shows it and can restart it)
+            if(guards[i].Stopped)
+                continue;
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
@@ -150,12 +209,8 @@ public sealed class BoneUpdateHook : IDisposable
             }
             catch(Exception e)
             {
-                // This runs every frame; log a failing stage at most every 10 seconds.
-                if(DateTime.UtcNow - _lastStageError[i] > TimeSpan.FromSeconds(10))
-                {
-                    _lastStageError[i] = DateTime.UtcNow;
-                    _log.Error(e, $"Limber: error in {stages[i].Name}");
-                }
+                // This runs every frame: logged at most every 10 seconds, and switched off if it keeps failing.
+                guards[i].Failed(e);
             }
         }
 

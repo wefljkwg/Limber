@@ -106,20 +106,20 @@ public sealed unsafe class LookAtService
         }
         // Everyone by name (in GPose a character and their GPose copy share a name).
         var byName = new Dictionary<string, List<(nint, ushort)>>();
-        foreach(var obj in _objects)
+        foreach(var (obj, objName) in FrameObjects.Of(_objects)) // (perf: one read of the table per frame, shared)
         {
-            if(obj is not ICharacter || obj.Address == 0 || obj.Name.TextValue.Length == 0)
+            if(obj is not ICharacter || obj.Address == 0 || objName.Length == 0)
                 continue;
-            if(!byName.TryGetValue(obj.Name.TextValue, out var same))
-                byName[obj.Name.TextValue] = same = new();
+            if(!byName.TryGetValue(objName, out var same))
+                byName[objName] = same = new();
             same.Add((obj.Address, obj.ObjectIndex));
         }
         var list = new List<Target>();
-        foreach(var obj in _objects)
+        foreach(var (obj, objName) in FrameObjects.Of(_objects)) // (perf: one read of the table per frame, shared)
         {
             if(obj is not ICharacter || obj.Address == 0)
                 continue;
-            string name = obj.Name.TextValue;
+            string name = objName;
             if(name.Length == 0 || !all.TryGetValue(name, out var s) || !s.Enabled)
                 continue;
             nint other = 0; ushort otherIndex = 0;

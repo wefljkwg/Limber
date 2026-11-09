@@ -105,9 +105,14 @@ public sealed class OralTab
                 "How far down they stay at the shallowest.");
             changed |= Slider("Variation", "", () => s.Variation * 100f, v => s.Variation = v / 100f, 0f, 100f, "%.0f%%",
                 "0%: every stroke the same. Higher: each stroke has its own depth and pace, with the odd pause at the deep end.");
-            changed |= Slider("Partner moves", "", () => s.PartnerMoves * 100f, v => s.PartnerMoves = v / 100f, 0f, 100f, "%.0f%%",
-                "How much the partner's shaft moves along: it tilts up as the mouth goes deeper and is tugged by the lips on the way out.");
+            if(s.Style == OralStyle.Classic)
+                changed |= Slider("Partner moves", "", () => s.PartnerMoves * 100f, v => s.PartnerMoves = v / 100f, 0f, 100f, "%.0f%%",
+                    "How much the partner's shaft moves along: it tilts up as the mouth goes deeper and is tugged by the lips on the way out.");
         }
+
+        // ---- How the mouth and the shaft meet
+        if(Section("How they meet", true))
+            changed |= DrawMeeting(s);
 
         // ---- Head
         if(Section("Head", true))
@@ -118,8 +123,9 @@ public sealed class OralTab
                 "With a big shaft the head tips back (chin up) to take it straighter: this many degrees at the biggest.");
             changed |= Slider("Nod", "°", () => s.Nod, v => s.Nod = v, 0f, 15f, "%.0f",
                 "How much the head nods with each stroke.");
-            changed |= Slider("Follow the bend", "", () => s.FollowBend * 100f, v => s.FollowBend = v / 100f, 0f, 100f, "%.0f%%",
-                "0%: the head lines up with the shaft as a whole. Higher: it also turns with the shaft's bend where the lips are.");
+            if(s.Style == OralStyle.Classic)
+                changed |= Slider("Follow the bend", "", () => s.FollowBend * 100f, v => s.FollowBend = v / 100f, 0f, 100f, "%.0f%%",
+                    "0%: the head lines up with the shaft as a whole. Higher: it also turns with the shaft's bend where the lips are.");
             changed |= Slider("Mouth up / down", "mm", () => s.OffsetUp * 1000f, v => s.OffsetUp = v / 1000f, -30f, 30f, "%.1f",
                 "Moves the head so the mouth lines up with the shaft, if it sits a little high or low.");
             changed |= Slider("Mouth left / right", "mm", () => s.OffsetRight * 1000f, v => s.OffsetRight = v / 1000f, -30f, 30f, "%.1f",
@@ -176,13 +182,29 @@ public sealed class OralTab
                     "With a big shaft the cheeks fill out to make room.");
             changed |= Slider("Suction", "", () => s.Suction * 100f, v => s.Suction = v / 100f, 0f, 100f, "%.0f%%",
                 "Cheeks drawn in on the way out.");
-            bool teeth = s.HideTeeth;
-            if(ImGui.Checkbox("Hide the teeth###oral_teeth", ref teeth))
+            if(s.Style == OralStyle.Path)
             {
-                s.HideTeeth = teeth;
-                changed = true;
+                string[] teethNames = ["Tucked behind the lips", "Hidden", "Left as they are"];
+                int teethMode = Math.Clamp((int)s.Teeth, 0, teethNames.Length - 1);
+                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                if(ImGui.Combo("Teeth###oral_teeth_mode", ref teethMode, teethNames, teethNames.Length))
+                {
+                    s.Teeth = (OralTeeth)teethMode;
+                    changed = true;
+                }
+                Tooltip("Tucked: the teeth move up and back behind the lips, as far as the shaft's thickness needs, so they stay "
+                    + "in the mouth without poking through it. Hidden: shrunk away (the older way). Left: not touched.");
             }
-            Tooltip("Shrinks the teeth away into the mouth while it runs, so they don't show or poke through.");
+            else
+            {
+                bool teeth = s.HideTeeth;
+                if(ImGui.Checkbox("Hide the teeth###oral_teeth", ref teeth))
+                {
+                    s.HideTeeth = teeth;
+                    changed = true;
+                }
+                Tooltip("Shrinks the teeth away into the mouth while it runs, so they don't show or poke through.");
+            }
         }
 
         // ---- The shaft
@@ -269,6 +291,85 @@ public sealed class OralTab
     }
 
     private string _benchNote = "";
+
+    // The quick choices for how the two meet (Path settings only; everything else stays as it is).
+    private static readonly (string Name, string Tip, float Head, float Turn, float Shaft)[] Meetings =
+    [
+        ("Balanced", "The head comes 40% of the way and turns 60%; the shaft bends into the mouth for the rest. The default.", 0.4f, 0.6f, 1f),
+        ("Head leads", "The head does most of the moving; the shaft only bends a little.", 0.8f, 0.9f, 1f),
+        ("Shaft leads", "The head barely moves; the shaft bends to the mouth (good when the giver's pose matters most).", 0.15f, 0.35f, 1f),
+    ];
+
+    private bool DrawMeeting(OralSettings s)
+    {
+        bool changed = false;
+        for(int i = 0; i < Meetings.Length; i++)
+        {
+            var m = Meetings[i];
+            if(i > 0)
+                ImGui.SameLine();
+            if(ImGui.SmallButton($"{m.Name}###oral_meet_{i}"))
+            {
+                s.Style = OralStyle.Path;
+                s.HeadShare = m.Head;
+                s.HeadTurnShare = m.Turn;
+                s.ShaftFollows = m.Shaft;
+                changed = true;
+            }
+            Tooltip(m.Tip);
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Classic###oral_meet_classic"))
+        {
+            s.Style = OralStyle.Classic;
+            changed = true;
+        }
+        Tooltip("The older way: the head moves all the way onto the shaft and the shaft barely moves (the neck takes any mismatch).");
+
+        string[] styles = ["Classic: the head does all the work", "Path: the shaft bends into the mouth"];
+        int style = Math.Clamp((int)s.Style, 0, styles.Length - 1);
+        ImGui.SetNextItemWidth(300 * ImGuiHelpers.GlobalScale);
+        if(ImGui.Combo("Style###oral_style", ref style, styles, styles.Length))
+        {
+            s.Style = (OralStyle)style;
+            changed = true;
+        }
+        Tooltip("Path: the head only comes part of the way and the partner's shaft bends to meet the mouth, following a path "
+            + "through it (lips, behind the teeth, the back of the mouth, the throat), so the neck isn't bent out of shape. "
+            + "Classic: as before.");
+        if(s.Style != OralStyle.Path)
+            return changed;
+
+        changed |= Slider("Head comes", "", () => s.HeadShare * 100f, v => s.HeadShare = v / 100f, 0f, 100f, "%.0f%%",
+            "How much of the way the head moves to the shaft. The shaft bends to make up the rest.");
+        changed |= Slider("Head turns", "", () => s.HeadTurnShare * 100f, v => s.HeadTurnShare = v / 100f, 0f, 100f, "%.0f%%",
+            "How much the head turns to face straight down the shaft. The shaft bends at the lips for the rest.");
+        changed |= Slider("Shaft bends", "", () => s.ShaftFollows * 100f, v => s.ShaftFollows = v / 100f, 0f, 100f, "%.0f%%",
+            "How much the partner's shaft bends to follow the path through the mouth (0%: it stays as posed).");
+        changed |= Slider("Most bend", "°", () => s.MaxShaftBend, v => s.MaxShaftBend = v, 5f, 80f, "%.0f",
+            "The most the shaft swings or bends at any one joint. When it would need more, the head comes further instead.");
+        changed |= Slider("Tip speed", "m/s", () => s.TipSpeed, v => s.TipSpeed = v, 0.1f, 5f, "%.1f",
+            "How fast the shaft's bend may change, so it never jumps (lower is smoother but can lag behind the mouth).");
+        changed |= Slider("Mouth depth", "", () => s.MouthDepth * 100f, v => s.MouthDepth = v / 100f, 50f, 150f, "%.0f%%",
+            "How deep the mouth is, from the lips to the back (100% = about 8 cm on an average face).");
+        bool throat = s.Throat;
+        if(ImGui.Checkbox("Down the throat###oral_throat", ref throat))
+        {
+            s.Throat = throat;
+            changed = true;
+        }
+        Tooltip("On: it can go on past the back of the mouth, down the throat (the neck swells with Face morphs on). "
+            + "Off: it stops at the back of the mouth, however deep the strokes are set.");
+        changed |= Slider("Lips push / pull", "", () => s.PushPull * 100f, v => s.PushPull = v / 100f, 0f, 100f, "%.0f%%",
+            "How much the lips are pushed in on the way in and pulled out on the way out.");
+        changed |= Slider("Grip before slipping", "mm", () => s.GripSlip * 1000f, v => s.GripSlip = v / 1000f, 1f, 20f, "%.1f",
+            "With Lip grip: how far the lips hold on and stretch with the shaft before they slip along it.");
+        if(_oral.GirthInfo.Length > 0)
+            ImGui.TextDisabled(_oral.GirthInfo);
+        if(_oral.Running)
+            ImGui.TextDisabled($"The shaft turns {_oral.ShaftSwing:0}° at its base to meet the mouth.");
+        return changed;
+    }
 
     private static bool Section(string title, bool open)
     {
