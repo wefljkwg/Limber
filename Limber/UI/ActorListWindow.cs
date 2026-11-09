@@ -168,7 +168,7 @@ public sealed class ActorListWindow : Window
                 }
             }
         }
-        if(ImGui.IsItemHovered())
+        if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(_spawner.CanAdd ? "A new actor (a copy of you) a step in front of you, chosen at once." : "Enter GPose to add actors.");
     }
 }

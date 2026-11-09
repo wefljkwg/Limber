@@ -273,6 +273,7 @@ public static unsafe class Animations
         c->Timeline.TimelineSequencer.SetSlotSpeed(1, 1f);
         c->Timeline.TimelineSequencer.PlayTimeline(3);
         Restarts.RemoveAll(r => r.Address == address);
+        Holds.RemoveAll(h => h.Address == address);
         Restarts.Add(new Pending { Address = address, Index = index, Id = id, Frames = 2, Frozen = frozen, Speed = speed });
         Played[address] = (index, id);
         return frozen ? $"Starting {KeyOf(id)} (held on its first frame)." : $"Playing {KeyOf(id)} from the start.";
@@ -389,6 +390,7 @@ public static unsafe class Animations
         Played.Remove(address);
         Paused.Remove(address);
         Restarts.RemoveAll(r => r.Address == address);
+        Holds.RemoveAll(h => h.Address == address);
         c->Timeline.TimelineSequencer.PlayTimeline(back == 0 ? (ushort)3 : back);
         SetSpeed(address, index, 1f);
         return "Back to its own animation.";

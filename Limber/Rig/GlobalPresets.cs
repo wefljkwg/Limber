@@ -50,7 +50,7 @@ public sealed class GlobalPresetService
         foreach(var preset in _config.GlobalPresets ?? new())
             foreach(var part in LimberAnimationParts)
             {
-                changed |= preset.Parts.Remove(part);
+                changed |= preset.Parts?.Remove(part) ?? false;
                 preset.Off?.Remove(part);
             }
         if(changed)

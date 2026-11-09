@@ -253,11 +253,11 @@ public sealed class MainWindow : Window
             "move" => () => _limberTab.ChosenActor is { IsSet: true } a && _limberTab.Actors is { } moves ? new()
             {
                 ["Move"] = new PresetValues()
-                    .Add("Move", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Move, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Move = v)
-                    .Add("Turn", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn = v)
-                    .Add("Facing", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Facing, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Facing = v)
-                    .Add("Scale", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale = Math.Clamp(v, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale))
-                    .Add("KeepWhileMoving", () => moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving, v => moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving = v),
+                    .Add("Move", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Move, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Move = v; })
+                    .Add("Turn", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Turn = v; })
+                    .Add("Facing", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Facing, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Facing = v; })
+                    .Add("Scale", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Scale = Math.Clamp(v, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale); })
+                    .Add("KeepWhileMoving", () => moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving = v; }),
             } : null,
             "voice" => () => _limberTab.ChosenActor is { IsSet: true } a ? new()
             {
@@ -336,7 +336,7 @@ public sealed class MainWindow : Window
                     .Add("HandleSize", () => ik.HandleSize, v => ik.HandleSize = v)
                     .Add("ShowAllBones", () => ik.ShowAllBones, v => ik.ShowAllBones = v)
                     .Add("ShowFaceBones", () => ik.ShowFaceBones, v => ik.ShowFaceBones = v)
-                    .Add("ShowRigBones", () => ik.ShowRigBones, v => ik.ShowRigBones = v)
+                    .Add("ShowRigBones", () => ik.ShowRigBones, v => { ik.ShowRigBones = v; Limber.Rig.HandleCatalog.ShowRigBones = v; })
                     .Add("ShowRotationGizmo", () => ik.ShowRotationGizmo, v => ik.ShowRotationGizmo = v)
                     .Add("HideHandlesWithGameUi", () => ik.HideHandlesWithGameUi, v => ik.HideHandlesWithGameUi = v)
                     .Add("GizmoScale", () => ik.GizmoScale, v => ik.GizmoScale = v)

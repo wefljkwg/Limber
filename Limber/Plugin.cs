@@ -94,6 +94,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         _config = LoadConfig();
+        _config.Ik ??= new RigSettings();
         _config.Ik.StopLimberAnimations(); // (Limber Animations never start by themselves)
         HandleCatalog.ShowRigBones = _config.Ik.ShowRigBones;
         // Hotkeys saved by 0.36 (ImGui key numbers): back to the defaults.

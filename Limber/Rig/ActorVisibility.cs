@@ -26,6 +26,8 @@ public static unsafe class ActorVisibility
             return;
         Hidden[address] = index;
         *(int*)&go->RenderFlags |= ModelHidden;
+        // (GPose actors don't act on the flag alone: taken out of drawing too, the way a redraw does it)
+        go->DisableDraw();
     }
 
     public static void Show(nint address, ushort index)
@@ -33,7 +35,10 @@ public static unsafe class ActorVisibility
         Hidden.Remove(address);
         var go = Get(address, index);
         if(go != null)
+        {
             *(int*)&go->RenderFlags &= ~ModelHidden;
+            go->EnableDraw();
+        }
     }
 
     public static void Toggle(nint address, ushort index)

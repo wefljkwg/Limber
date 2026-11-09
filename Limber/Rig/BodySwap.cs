@@ -14,7 +14,7 @@ namespace Limber.Rig;
 /// </summary>
 public static unsafe class BodySwap
 {
-    private sealed record Before(AppearanceData Look, float Scale, float Factor);
+    private sealed record Before(ushort Index, AppearanceData Look, float Scale, float Factor);
 
     private static readonly Dictionary<nint, Before> Swapped = new();
 
@@ -34,6 +34,8 @@ public static unsafe class BodySwap
             return "Couldn't read the character.";
         if(now.Customize[2] == 4)
             return "Changing a child's body isn't allowed.";
+        if(IsBodySwapped(address))
+            return "Swap the body back first.";
         if(now.Customize[0] == race && now.Customize[4] == tribe)
             return "It's that race and clan already.";
 
@@ -42,7 +44,7 @@ public static unsafe class BodySwap
         if(!Swapped.TryGetValue(address, out var before))
         {
             float scale = moves?.Get(address)?.Scale ?? 1f;
-            before = new Before(now.Copy(), scale, 1f);
+            before = new Before(index, now.Copy(), scale, 1f);
         }
 
         var look = now.Copy();
@@ -77,7 +79,9 @@ public static unsafe class BodySwap
                 offset.Scale = Math.Clamp(baseScale * factor, ActorTransforms.MinScale, ActorTransforms.MaxScale);
             }
         Swapped[address] = before with { Factor = factor };
-        if(keepHeight)
+        if(!keepHeight)
+            Checks.Remove(address);
+        else
             Checks[address] = new Check { Index = index, HeightBefore = heightBefore, OldFactor = oldFactor, Moves = moves };
         return keepHeight ? $"Swapped (same height: scaled {factor:0.###}x)." : "Swapped.";
     }
@@ -114,10 +118,29 @@ public static unsafe class BodySwap
         public int Frames;
     }
     private static readonly Dictionary<nint, Check> Checks = new();
+    private static int _pruneFrames;
 
     /// <summary>Framework update.</summary>
     public static void Tick()
     {
+        // Characters that left (GPose ended, actor removed): forgotten, and a body-only swap taken out of the mod
+        // manager (it would go on changing every character of that race in the collection).
+        if(++_pruneFrames >= 60)
+        {
+            _pruneFrames = 0;
+            foreach(var (address, swap) in new List<KeyValuePair<nint, BodyOnly>>(BodySwaps))
+                if(Get(address, swap.Index) == null)
+                {
+                    RemoveMod(swap.Collection, swap.Tag);
+                    BodySwaps.Remove(address);
+                }
+            foreach(var (address, b) in new List<KeyValuePair<nint, Before>>(Swapped))
+                if(Get(address, b.Index) == null)
+                {
+                    Swapped.Remove(address);
+                    Checks.Remove(address);
+                }
+        }
         if(Checks.Count == 0)
             return;
         foreach(var (address, check) in new List<KeyValuePair<nint, Check>>(Checks))
@@ -154,7 +177,7 @@ public static unsafe class BodySwap
 
     private const string BodyTag = "Limber body swap";
     private const int BodyPriority = 98;
-    private sealed record BodyOnly(Guid Collection, string Tag, ushort Own, ushort Body);
+    private sealed record BodyOnly(Guid Collection, string Tag, ushort Index, ushort Own, ushort Body);
     private static readonly Dictionary<nint, BodyOnly> BodySwaps = new();
 
     public static bool IsBodySwapped(nint address) => BodySwaps.ContainsKey(address);
@@ -176,7 +199,7 @@ public static unsafe class BodySwap
     private static readonly string[] ResidentAnimations =
     [
         "resident/idle", "resident/move_a", "resident/move_b", "resident/move_c", "resident/move_d", "resident/jump",
-        "resident/action", "resident/emote", "resident/face", "resident/mount", "resident/other",
+        "resident/action", "resident/emote", "resident/mount", "resident/other",
     ];
 
     public static string SwapBodyOnly(nint address, ushort index, byte race, byte tribe)
@@ -199,6 +222,10 @@ public static unsafe class BodySwap
         if(own == body)
             return "That's its own body already.";
 
+        // (a body swapped before: taken out first, so the files below are what the collection itself gives)
+        if(BodySwaps.Remove(address, out var previous))
+            RemoveMod(previous.Collection, previous.Tag);
+
         // Every body file this race asks for -> the other race's (as the collection would give that race).
         var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string o = $"c{own:D4}", t = $"c{body:D4}";
@@ -215,16 +242,12 @@ public static unsafe class BodySwap
             Map($"chara/human/{o}/obj/body/b0001/model/{o}b0001_{part}.mdl", $"chara/human/{t}/obj/body/b0001/model/{t}b0001_{part}.mdl");
             Map($"chara/equipment/e0000/model/{o}e0000_{part}.mdl", $"chara/equipment/e0000/model/{t}e0000_{part}.mdl");
         }
-        // The gear worn: the new race's version has priority. (Where this race has no model of its own the game asks for
-        // the shared one instead, so that one is given the new race's too.)
+        // The gear worn: the new race's version has priority. (Where this race has no model of its own the game uses
+        // another race's, which isn't touched: that would change it for every race wearing it.)
         for(int i = 0; i < GearSlots.Length; i++)
         {
             ushort set = (ushort)(now.Gear[GearSlots[i]] & 0xFFFF);
-            string to = $"chara/equipment/e{set:D4}/model/{t}e{set:D4}_{GearParts[i]}.mdl";
-            Map($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl", to);
-            string shared = sex == 1 ? "c0201" : "c0101";
-            if(!Plugin.DataManager.FileExists($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl") && shared != t)
-                Map($"chara/equipment/e{set:D4}/model/{shared}e{set:D4}_{GearParts[i]}.mdl", to);
+            Map($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl", $"chara/equipment/e{set:D4}/model/{t}e{set:D4}_{GearParts[i]}.mdl");
         }
         // Body animations (the face's stay this race's).
         string Anim(string code, string key) => $"chara/human/{code}/animation/a0001/bt_common/{key}.pap";
@@ -241,8 +264,6 @@ public static unsafe class BodySwap
             if(!got.Item1)
                 return "The mod manager doesn't know this character right now.";
             collection = got.Item3.Item1;
-            if(BodySwaps.TryGetValue(address, out var old))
-                RemoveMod(old.Collection, old.Tag);
             int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
                 .InvokeFunc($"{BodyTag} {index}", collection, paths, "", BodyPriority);
             if(result != 0)
@@ -252,7 +273,7 @@ public static unsafe class BodySwap
         {
             return "The mod manager isn't reachable: " + e.Message;
         }
-        BodySwaps[address] = new BodyOnly(collection, $"{BodyTag} {index}", own, body);
+        BodySwaps[address] = new BodyOnly(collection, $"{BodyTag} {index}", index, own, body);
         Appearance.Redraw(index);
         return $"Body swapped ({paths.Count} files): head, hair and face kept.";
     }
@@ -269,9 +290,19 @@ public static unsafe class BodySwap
     /// <summary>Every body-only swap taken away (Limber unloading).</summary>
     public static void ClearBodySwaps()
     {
-        foreach(var swap in BodySwaps.Values)
+        foreach(var (address, swap) in new List<KeyValuePair<nint, BodyOnly>>(BodySwaps))
+        {
             RemoveMod(swap.Collection, swap.Tag);
+            if(Get(address, swap.Index) != null)
+                Appearance.Redraw(swap.Index);
+        }
         BodySwaps.Clear();
+        // Whole-body swaps back to their own race too (sizes are Limber's own, gone with it).
+        foreach(var (address, b) in new List<KeyValuePair<nint, Before>>(Swapped))
+            if(Get(address, b.Index) != null)
+                SwapBack(address, b.Index, null);
+        Swapped.Clear();
+        Checks.Clear();
     }
 
     private static void RemoveMod(Guid collection, string tag)
