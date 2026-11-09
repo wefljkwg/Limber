@@ -45,7 +45,19 @@ public sealed class GlobalPresetService
     {
         _config = config;
         _objects = objects;
+        // Presets saved before Limber Animations were taken out of them: those parts dropped.
+        bool changed = false;
+        foreach(var preset in _config.GlobalPresets ?? new())
+            foreach(var part in LimberAnimationParts)
+            {
+                changed |= preset.Parts.Remove(part);
+                preset.Off?.Remove(part);
+            }
+        if(changed)
+            _config.Save();
     }
+
+    private static readonly string[] LimberAnimationParts = ["Throbbing", "Testicle throbbing", "Twerking", "Ahegao", "Expansion"];
 
     private static readonly JsonSerializerSettings Json = new()
     {
@@ -58,11 +70,8 @@ public sealed class GlobalPresetService
     {
         var c = _config;
         (string, IDictionary, Type) P<T>(string part, Dictionary<string, T> d) => (part, d, typeof(T));
-        yield return P("Throbbing", c.Throb ??= new());
-        yield return P("Testicle throbbing", c.BallThrob ??= new());
-        yield return P("Twerking", c.Twerk ??= new());
-        yield return P("Ahegao", c.Ahegao ??= new());
-        yield return P("Expansion", c.Expansion ??= new());
+        // (Limber Animations - throbbing, twerking, ahegao, expansion - aren't in global presets: they have their own
+        // presets on the Limber Animations page, and never start by themselves)
         yield return P("Dynamic Bones", c.DynamicBones ??= new());
         yield return P("Look at", c.LookAt ??= new());
         yield return P("Face Posing", c.FacePoses ??= new());

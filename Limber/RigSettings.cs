@@ -231,4 +231,27 @@ public sealed class RigSettings
     public void Initialize(Action save) => _save = save;
 
     public void Save() => _save?.Invoke();
+
+    /// <summary>
+    /// Limber Animations (throbbing, testicle throbbing, twerking, ahegao, expansion growth) never start by themselves:
+    /// switched off when Limber loads, whatever they were when it closed. Their settings are kept.
+    /// </summary>
+    public void StopLimberAnimations()
+    {
+        foreach(var s in (Throb ??= new()).Values)
+            s.Enabled = false;
+        foreach(var s in (BallThrob ??= new()).Values)
+            s.Enabled = false;
+        foreach(var s in (Twerk ??= new()).Values)
+            s.Enabled = false;
+        foreach(var s in (Ahegao ??= new()).Values)
+            s.Enabled = false;
+        foreach(var s in (Expansion ??= new()).Values)
+        {
+            s.Breasts.Enabled = false;
+            s.Butt.Enabled = false;
+            s.Penis.Enabled = false;
+            s.Belly.Enabled = false;
+        }
+    }
 }
