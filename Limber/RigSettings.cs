@@ -216,6 +216,8 @@ public sealed class RigSettings
 
     // The page the main window shows (its left-hand list).
     public string UiPage { get; set; } = "start";
+    /// <summary>The actor list window is open.</summary>
+    public bool ShowActorList { get; set; }
     public bool BodyShapeKeepFeet { get; set; } = true;
     // Body Shape tab: build again by itself a moment after a detail slider is let go.
     public bool BodyShapeAutoBuild { get; set; }

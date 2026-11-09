@@ -72,6 +72,7 @@ public sealed class GlobalPresetService
         yield return P("Symmetry", c.Symmetry ??= new());
         yield return P("Height growth", c.SizeChange ??= new());
         yield return P("Breast size", c.BustShapes ??= new());
+        yield return P("Face morphs", c.FaceMorphs ??= new());
     }
 
     /// <summary>What a character has that a preset would hold (the pages with settings for them).</summary>

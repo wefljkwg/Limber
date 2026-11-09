@@ -212,6 +212,197 @@ public sealed class MainWindow : Window
                 ["Belly"] = (ik.SoftBodyBelly ??= Limber.BodyRig.SoftBodySettings.BellyDefaults()).Collide ??= Limber.BodyRig.CollisionSettings.BellyDefaults(),
             },
             "oral" => () => new() { ["Oral"] = ik.Oral ??= new() },
+
+            // Every other page with settings (2026-11-09: "everything in Limber has presets").
+            "facemorphs" => PerCharacter(n => new() { ["FaceMorphs"] = For(ik.FaceMorphs ??= new(), n) }),
+            "bust" => PerCharacter(n => new() { ["BustShape"] = For(ik.BustShapes ??= new(), n) }),
+            "shape" => PerCharacter(n => new()
+            {
+                ["Shape"] = For(ik.BodyShapes ??= new(), n),
+                ["Options"] = new PresetValues()
+                    .Add("Preview", () => ik.BodyShapePreview, v => ik.BodyShapePreview = v)
+                    .Add("KeepFeet", () => ik.BodyShapeKeepFeet, v => ik.BodyShapeKeepFeet = v)
+                    .Add("AutoBuild", () => ik.BodyShapeAutoBuild, v => ik.BodyShapeAutoBuild = v),
+            }),
+            "limberposes" => PerCharacter(n => new()
+            {
+                ["Fk"] = For(ik.FkPoses ??= new(), n),
+                ["Options"] = new PresetValues().Add("Freeze", () => ik.LimberPoseFreeze, v => ik.LimberPoseFreeze = v),
+            }),
+            "animations" => AnimationsTab is not { } anim ? null : () => new()
+            {
+                ["Animations"] = new PresetValues()
+                    .Add("Speed", () => anim.Speed, v => anim.Speed = v)
+                    .Add("StartFrozen", () => anim.StartFrozen, v => anim.StartFrozen = v)
+                    .Add("Race", () => anim.Race, v => anim.Race = v)
+                    .Add("Group", () => anim.Group, v => anim.Group = v)
+                    .Add("Kind", () => anim.Kind, v => anim.Kind = v)
+                    .Add("FavouritesOnly", () => anim.FavouritesOnly, v => anim.FavouritesOnly = v)
+                    .Add("Search", () => anim.Search, v => anim.Search = v),
+            },
+            "move" => () => _limberTab.ChosenActor is { IsSet: true } a && _limberTab.Actors is { } moves ? new()
+            {
+                ["Move"] = new PresetValues()
+                    .Add("Move", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Move, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Move = v)
+                    .Add("Turn", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn = v)
+                    .Add("Facing", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Facing, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Facing = v)
+                    .Add("Scale", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale, v => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale = Math.Clamp(v, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale))
+                    .Add("KeepWhileMoving", () => moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving, v => moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving = v),
+            } : null,
+            "voice" => () => _limberTab.ChosenActor is { IsSet: true } a ? new()
+            {
+                ["Voice"] = new PresetValues().Add("Voice", () => Limber.Rig.VoiceSwitcher.Current(a.Address, a.ObjectIndex), v => Limber.Rig.VoiceSwitcher.Set(a.Address, a.ObjectIndex, v)),
+            } : null,
+            "extras" => () => new()
+            {
+                ["Ragdoll"] = new PresetValues()
+                    .Add("Bounce", () => Limber.Rig.RagdollService.Bounce, v => Limber.Rig.RagdollService.Bounce = Math.Clamp(v, 0f, 0.95f))
+                    .Add("Slide", () => Limber.Rig.RagdollService.Slide, v => Limber.Rig.RagdollService.Slide = Math.Clamp(v, 0f, 0.995f)),
+                ["Minions"] = new PresetValues()
+                    .Add("On", () => ik.FollowersOn, v => ik.FollowersOn = v)
+                    .Add("Spacing", () => ik.FollowerSpacing, v => ik.FollowerSpacing = v),
+                ["MinionList"] = ik.Followers ??= new(),
+                ["Mounts"] = new PresetValues()
+                    .Add("Hide", () => ik.HideMounts, v => ik.HideMounts = v)
+                    .Add("OnlyTicked", () => ik.HideMountsOnlyTicked, v => ik.HideMountsOnlyTicked = v)
+                    .Add("Characters", () => ik.HideMountsCharacters ?? new(), v => ik.HideMountsCharacters = v),
+            },
+            "entities" => () => new()
+            {
+                ["Minions"] = new PresetValues()
+                    .Add("On", () => ik.FollowersOn, v => ik.FollowersOn = v)
+                    .Add("Spacing", () => ik.FollowerSpacing, v => ik.FollowerSpacing = v),
+                ["MinionList"] = ik.Followers ??= new(),
+            },
+            "appearance" => () => new()
+            {
+                ["Options"] = new PresetValues()
+                    .Add("Live", () => ik.AppearanceLive, v => ik.AppearanceLive = v)
+                    .Add("Keep", () => ik.AppearanceKeep, v => ik.AppearanceKeep = v),
+            },
+            "camera" => () => new()
+            {
+                ["Camera"] = new PresetValues()
+                    .Add("Unlock", () => ik.CameraUnlock, v => ik.CameraUnlock = v)
+                    .Add("MinDistance", () => ik.CameraMinDistance, v => ik.CameraMinDistance = v)
+                    .Add("MaxDistance", () => ik.CameraMaxDistance, v => ik.CameraMaxDistance = v)
+                    .Add("MinFoV", () => ik.CameraMinFoV, v => ik.CameraMinFoV = v)
+                    .Add("MaxFoV", () => ik.CameraMaxFoV, v => ik.CameraMaxFoV = v)
+                    .Add("MinPitch", () => ik.CameraMinPitch, v => ik.CameraMinPitch = v)
+                    .Add("MaxPitch", () => ik.CameraMaxPitch, v => ik.CameraMaxPitch = v)
+                    .Add("NoCollide", () => ik.CameraNoCollide, v => ik.CameraNoCollide = v)
+                    .Add("Offset", () => ik.CameraOffset, v => ik.CameraOffset = v),
+            },
+            "climax" => () => new()
+            {
+                ["Emitters"] = ik.ClimaxEmitters ??= new(),
+                ["Look"] = ik.ClimaxLook ??= new(),
+            },
+            "devices" => () => new()
+            {
+                ["Props"] = ik.Props ??= new(),
+                ["Motions"] = ik.Motions ??= new(),
+                ["Options"] = new PresetValues()
+                    .Add("BoneStrength", () => ik.PropBoneStrength, v => ik.PropBoneStrength = v)
+                    .Add("HandColliderSize", () => ik.HandColliderSize, v => ik.HandColliderSize = v)
+                    .Add("WiresShown", () => ik.PropWiresShown, v => ik.PropWiresShown = v)
+                    .Add("WiresAlways", () => ik.PropWiresAlways, v => ik.PropWiresAlways = v)
+                    .Add("ShowBodyColliders", () => ik.ShowBodyColliders, v => ik.ShowBodyColliders = v)
+                    .Add("Gizmo", () => ik.PropGizmo, v => ik.PropGizmo = v)
+                    .Add("GizmoMove", () => ik.PropGizmoMove, v => ik.PropGizmoMove = v)
+                    .Add("GizmoWorldAxes", () => ik.PropGizmoWorldAxes, v => ik.PropGizmoWorldAxes = v),
+            },
+            "koiimport" => () => new()
+            {
+                ["Import"] = new PresetValues()
+                    .Add("Folder", () => ik.KoikatsuFolder ?? "", v => ik.KoikatsuFolder = v)
+                    .Add("MaxTexture", () => ik.KoiPropsMaxTexture, v => ik.KoiPropsMaxTexture = v),
+            },
+            "pose" or "settings" => () => new()
+            {
+                ["Posing"] = new PresetValues()
+                    .Add("ShowHandles", () => ik.ShowHandles, v => ik.ShowHandles = v)
+                    .Add("HandleMode", () => ik.HandleMode, v => ik.HandleMode = v)
+                    .Add("HandleSize", () => ik.HandleSize, v => ik.HandleSize = v)
+                    .Add("ShowAllBones", () => ik.ShowAllBones, v => ik.ShowAllBones = v)
+                    .Add("ShowFaceBones", () => ik.ShowFaceBones, v => ik.ShowFaceBones = v)
+                    .Add("ShowRigBones", () => ik.ShowRigBones, v => ik.ShowRigBones = v)
+                    .Add("ShowRotationGizmo", () => ik.ShowRotationGizmo, v => ik.ShowRotationGizmo = v)
+                    .Add("HideHandlesWithGameUi", () => ik.HideHandlesWithGameUi, v => ik.HideHandlesWithGameUi = v)
+                    .Add("GizmoScale", () => ik.GizmoScale, v => ik.GizmoScale = v)
+                    .Add("GizmoMove", () => ik.GizmoMove, v => ik.GizmoMove = v)
+                    .Add("GizmoWorldAxes", () => ik.GizmoWorldAxes, v => ik.GizmoWorldAxes = v)
+                    .Add("FkOnlyThisBone", () => ik.FkOnlyThisBone, v => ik.FkOnlyThisBone = v)
+                    .Add("HipsMoveAlone", () => ik.HipsMoveAlone, v => ik.HipsMoveAlone = v)
+                    .Add("BoneScaleMirror", () => ik.BoneScaleMirror, v => ik.BoneScaleMirror = v),
+            },
+            "hotkeys" => () => new()
+            {
+                ["Hotkeys"] = new PresetValues()
+                    .Add("UndoHotkeys", () => ik.UndoHotkeys, v => ik.UndoHotkeys = v)
+                    .Add("Undo", () => ik.UndoKey, v => ik.UndoKey = v)
+                    .Add("Redo", () => ik.RedoKey, v => ik.RedoKey = v)
+                    .Add("Open", () => ik.OpenKey, v => ik.OpenKey = v),
+            },
+            "advanced" => () => new()
+            {
+                ["Advanced"] = new PresetValues()
+                    .Add("WorkOutsideGPose", () => ik.WorkOutsideGPose, v => ik.WorkOutsideGPose = v)
+                    .Add("ShowBust", () => Cfg.ShowBustTab, v => Cfg.ShowBustTab = v)
+                    .Add("ShowVideo", () => Cfg.ShowVideoTab, v => Cfg.ShowVideoTab = v)
+                    .Add("ShowOral", () => Cfg.ShowOralTab, v => Cfg.ShowOralTab = v)
+                    .Add("ShowClimax", () => Cfg.ShowClimaxTab, v => Cfg.ShowClimaxTab = v)
+                    .Add("ShowVlc", () => Cfg.ShowVlcTab, v => Cfg.ShowVlcTab = v)
+                    .Add("HideWindowWithGameUi", () => Cfg.HideWindowWithGameUi, v => Cfg.HideWindowWithGameUi = v),
+            },
+            "link" => () => new()
+            {
+                ["Link"] = new PresetValues()
+                    .Add("DriveTorso", () => Cfg.DriveTorso, v => Cfg.DriveTorso = v)
+                    .Add("DriveHead", () => Cfg.DriveHead, v => Cfg.DriveHead = v)
+                    .Add("DriveArms", () => Cfg.DriveArms, v => Cfg.DriveArms = v)
+                    .Add("DriveHands", () => Cfg.DriveHands, v => Cfg.DriveHands = v)
+                    .Add("DriveLegs", () => Cfg.DriveLegs, v => Cfg.DriveLegs = v)
+                    .Add("DriveGenitals", () => Cfg.DriveGenitals, v => Cfg.DriveGenitals = v)
+                    .Add("DriveBreasts", () => Cfg.DriveBreasts, v => Cfg.DriveBreasts = v)
+                    .Add("BreastStrength", () => Cfg.BreastStrength, v => Cfg.BreastStrength = v)
+                    .Add("DriveFace", () => Cfg.DriveFace, v => Cfg.DriveFace = v)
+                    .Add("ExpressionMode", () => Cfg.ExpressionMode, v => Cfg.ExpressionMode = v)
+                    .Add("ApplyRootHeight", () => Cfg.ApplyRootHeight, v => Cfg.ApplyRootHeight = v)
+                    .Add("ApplyRootHorizontal", () => Cfg.ApplyRootHorizontal, v => Cfg.ApplyRootHorizontal = v)
+                    .Add("MirrorLeftRight", () => Cfg.MirrorLeftRight, v => Cfg.MirrorLeftRight = v)
+                    .Add("FlipFacing", () => Cfg.FlipFacing, v => Cfg.FlipFacing = v)
+                    .Add("Smoothing", () => Cfg.Smoothing, v => Cfg.Smoothing = v)
+                    .Add("HeadPitchOffset", () => Cfg.HeadPitchOffset, v => Cfg.HeadPitchOffset = v)
+                    .Add("Interpolate", () => Cfg.Interpolate, v => Cfg.Interpolate = v)
+                    .Add("TimeoutSeconds", () => Cfg.TimeoutSeconds, v => Cfg.TimeoutSeconds = v),
+            },
+            "video" => () => new()
+            {
+                ["Video"] = new PresetValues()
+                    .Add("TrackFingers", () => Cfg.VideoTrackFingers, v => Cfg.VideoTrackFingers = v)
+                    .Add("GuessHiddenLimbs", () => Cfg.VideoGuessHiddenLimbs, v => Cfg.VideoGuessHiddenLimbs = v)
+                    .Add("MaxFps", () => Cfg.VideoMaxFps, v => Cfg.VideoMaxFps = v)
+                    .Add("Smoothing", () => Cfg.VideoSmoothing, v => Cfg.VideoSmoothing = v)
+                    .Add("People", () => Cfg.VideoPeople, v => Cfg.VideoPeople = v)
+                    .Add("SwapSides", () => Cfg.VideoSwapSides, v => Cfg.VideoSwapSides = v)
+                    .Add("Mirror", () => Cfg.VideoMirror, v => Cfg.VideoMirror = v)
+                    .Add("Loop", () => Cfg.VideoLoop, v => Cfg.VideoLoop = v)
+                    .Add("Speed", () => Cfg.VideoSpeed, v => Cfg.VideoSpeed = v)
+                    .Add("LoopBlend", () => Cfg.VideoLoopBlend, v => Cfg.VideoLoopBlend = v)
+                    .Add("StaticCamera", () => Cfg.GvhmrStaticCamera, v => Cfg.GvhmrStaticCamera = v),
+            },
+            "vlc" => () => new()
+            {
+                ["Live"] = new PresetValues()
+                    .Add("Nlf", () => Cfg.LiveNlf, v => Cfg.LiveNlf = v)
+                    .Add("People", () => Cfg.LivePeople, v => Cfg.LivePeople = v)
+                    .Add("SwapSides", () => Cfg.LiveSwapSides, v => Cfg.LiveSwapSides = v)
+                    .Add("Fingers", () => Cfg.LiveFingers, v => Cfg.LiveFingers = v)
+                    .Add("GuessHiddenLimbs", () => Cfg.LiveGuessHiddenLimbs, v => Cfg.LiveGuessHiddenLimbs = v)
+                    .Add("Mirror", () => Cfg.LiveMirror, v => Cfg.LiveMirror = v)
+                    .Add("Smoothing", () => Cfg.LiveSmoothing, v => Cfg.LiveSmoothing = v),
+            },
             _ => null,
         };
     }
@@ -295,6 +486,15 @@ public sealed class MainWindow : Window
         _limberTab.DrawFreezeToggle();
         ImGui.SameLine();
         _limberTab.DrawUndoRedo();
+        ImGui.SameLine();
+        bool actorList = Cfg.Ik.ShowActorList;
+        if (ImGui.Checkbox("Actor list###limber_actor_list_toggle", ref actorList))
+        {
+            Cfg.Ik.ShowActorList = actorList;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A small window listing every character: click to choose one, hide or show them, remove Limber's actors.");
         if (!Cfg.PluginEnabled)
             ImGui.TextColored(Warn, "Limber is off: nothing is posed, simulated or linked.");
         else if (!Plugin.ClientState.IsGPosing && !(Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose))

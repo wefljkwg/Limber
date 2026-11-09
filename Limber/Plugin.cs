@@ -413,6 +413,7 @@ public sealed class Plugin : IDalamudPlugin
             foreach(var pageWindow in _mainWindow.PageWindows())
                 _windows.AddWindow(pageWindow);
             _windows.AddWindow(syncHelp);
+            _windows.AddWindow(new ActorListWindow(_selection, _config.Ik, _spawner));
             var physicsHelp = new BodyPhysicsHelpWindow();
             _windows.AddWindow(physicsHelp);
             limberTab.ShowPhysicsHelp = () => physicsHelp.IsOpen = true;
@@ -582,6 +583,7 @@ public sealed class Plugin : IDalamudPlugin
             lock(FaceDriver.PresetLock)
                 _config.SaveIfDue();
             Limber.Rig.Animations.Tick();
+            Limber.Rig.ActorVisibility.Update();
             _props.ApplyResults();
             perf.Mark("prop results");
             _actors.CheckPriorityHook();
@@ -1147,6 +1149,7 @@ public sealed class Plugin : IDalamudPlugin
         try { _hook.Running = () => false; } catch { } // (no more bone stages either)
         CameraControl.Dispose();
         try { VoiceSwitcher.ResetAll(); } catch { }
+        try { ActorVisibility.ShowAll(); } catch { } // (nobody stays invisible after Limber goes)
         PluginInterface.UiBuilder.Draw -= OnDraw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleWindow;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleWindow;

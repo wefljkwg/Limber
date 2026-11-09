@@ -280,12 +280,14 @@ public static unsafe class Animations
 
     public static void Pause(nint address, ushort index)
     {
+        Holds.RemoveAll(h => h.Address == address);
         SetSpeed(address, index, 0f);
         Paused[address] = index;
     }
 
     public static void Resume(nint address, ushort index, float speed)
     {
+        Holds.RemoveAll(h => h.Address == address);
         SetSpeed(address, index, speed <= 0f ? 1f : speed);
         Paused.Remove(address);
     }
@@ -304,14 +306,74 @@ public static unsafe class Animations
                 continue;
             c->Timeline.BaseOverride = p.Id;
             c->Timeline.TimelineSequencer.PlayTimeline(p.Id);
-            Seek(p.Address, p.Index, 0f);
-            if(p.Frozen)
-                Pause(p.Address, p.Index);
-            else
+            Hold(p.Address, p.Index, p.Id, p.Frozen, p.Speed);
+        }
+        TickHolds();
+    }
+
+    // ---- Starting held on the first frame
+    //
+    // PlayTimeline only queues the animation: the game starts it a frame or more later, and starting it sets the
+    // slot's speed back to normal. Pausing straight away paused the old animation (and the new one then played on),
+    // so "Start frozen" did nothing. Now the hold waits until the new animation is the one running, puts it at its
+    // start, sets the speed, and keeps that for a few more frames in case the game sets it again.
+
+    private sealed class Held
+    {
+        public nint Address;
+        public ushort Index, Id;
+        public bool Frozen;
+        public float Speed;
+        public int Wait = 60;   // frames to wait for the animation to start
+        public int Keep = 6;    // frames to keep it once it has
+    }
+    private static readonly List<Held> Holds = new();
+
+    /// <summary>Plays <paramref name="id"/> and starts it held on its first frame (frozen) or at the given speed.</summary>
+    public static string PlayFrom(nint address, ushort index, ushort id, bool frozen, float speed, ushort raceBody = 0)
+    {
+        string status = raceBody == 0 ? Play(address, index, id) : PlayAsRace(address, index, id, raceBody);
+        Hold(address, index, id, frozen, speed);
+        return frozen ? status.TrimEnd('.') + " (held on its first frame)." : status;
+    }
+
+    private static void Hold(nint address, ushort index, ushort id, bool frozen, float speed)
+    {
+        Holds.RemoveAll(h => h.Address == address);
+        Holds.Add(new Held { Address = address, Index = index, Id = id, Frozen = frozen, Speed = speed <= 0f ? 1f : speed });
+        if(frozen)
+            Paused[address] = index;
+        else
+            Paused.Remove(address);
+    }
+
+    private static void TickHolds()
+    {
+        for(int i = Holds.Count - 1; i >= 0; i--)
+        {
+            var h = Holds[i];
+            var c = Get(h.Address, h.Index);
+            if(c == null)
             {
-                SetSpeed(p.Address, p.Index, p.Speed <= 0f ? 1f : p.Speed);
-                Paused.Remove(p.Address);
+                Holds.RemoveAt(i);
+                continue;
             }
+            bool started = c->Timeline.TimelineSequencer.TimelineIds[0] == h.Id;
+            if(!started && --h.Wait > 0)
+                continue;
+            if(!started && c->Timeline.BaseOverride != h.Id)
+            {
+                // (it never started: the play didn't take, so whatever is playing is left alone)
+                Holds.RemoveAt(i);
+                if(h.Frozen)
+                    Paused.Remove(h.Address);
+                continue;
+            }
+            if(h.Keep == 6)
+                Seek(h.Address, h.Index, 0f);
+            SetSpeed(h.Address, h.Index, h.Frozen ? 0f : h.Speed);
+            if(--h.Keep <= 0)
+                Holds.RemoveAt(i);
         }
     }
 

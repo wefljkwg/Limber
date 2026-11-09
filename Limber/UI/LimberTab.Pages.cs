@@ -229,7 +229,68 @@ public sealed partial class LimberTab
                 _poseStatus = Limber.Rig.Animations.Play(actor.Address, actor.ObjectIndex, anim.Id);
             Tooltip("Plays the game animation the pose was saved on (untick Freeze motion to see it move).");
         }
+        DrawPosePresets(actor);
         ImGui.Spacing();
+    }
+
+    // ---- Pose presets: whole poses kept in Limber by name (like pose files, without the file picker)
+
+    private const string PoseLibrary = "pose-library";
+    private string _posePresetName = "";
+    private Tuple<string, string>? _pendingPosePreset; // (name, pose) read in the bone update, saved here
+
+    private void DrawPosePresets(ActorRef actor)
+    {
+        var all = _config.Presets ??= new();
+        if(!all.TryGetValue(PoseLibrary, out var poses))
+            all[PoseLibrary] = poses = new();
+        if(System.Threading.Interlocked.Exchange(ref _pendingPosePreset, null) is { } done)
+        {
+            poses[done.Item1] = done.Item2;
+            _config.Save();
+            _poseStatus = $"Pose saved as \"{done.Item1}\".";
+        }
+        SeparatorText("Pose presets");
+        using(ImRaii.Disabled(!actor.IsSet || Freeze == null))
+        {
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.InputTextWithHint("###limber_pose_preset_name", "Preset name", ref _posePresetName, 48);
+            ImGui.SameLine();
+            if(ImGui.Button("Save pose###limber_pose_preset_save") && Freeze != null && _posePresetName.Trim().Length > 0)
+            {
+                string name = _posePresetName.Trim();
+                _poseStatus = "Reading the pose...";
+                Freeze.Export(actor.Address, actor.ObjectIndex, (json, error) =>
+                {
+                    if(json == null)
+                        _poseStatus = error;
+                    else
+                        _pendingPosePreset = Tuple.Create(name, json.ToString(Newtonsoft.Json.Formatting.None));
+                });
+                _posePresetName = "";
+            }
+            Tooltip(poses.ContainsKey(_posePresetName.Trim()) ? "Saves over the pose with this name." : "Keeps the chosen character's pose (body, face and hair) in Limber under this name.");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            using var combo = ImRaii.Combo("###limber_pose_preset_load", poses.Count == 0 ? "No poses yet" : "Load a pose...");
+            if(combo.Success)
+            {
+                string? remove = null;
+                foreach(var (name, text) in poses.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    if(ImGui.Selectable($"{name}###limber_pose_preset_{name}") && actor.IsSet)
+                        ImportSolo(actor, text, _importPositions);
+                    Tooltip("Click to put it on the chosen character (Freeze motion goes on).  Ctrl + right-click to delete it.");
+                    if(ImGui.IsItemClicked(ImGuiMouseButton.Right) && ImGui.GetIO().KeyCtrl)
+                        remove = name;
+                }
+                if(remove != null)
+                {
+                    poses.Remove(remove);
+                    _config.Save();
+                }
+            }
+        }
     }
 
     // ---- Duo pose files

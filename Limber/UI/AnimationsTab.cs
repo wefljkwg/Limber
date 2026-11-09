@@ -19,6 +19,15 @@ public sealed class AnimationsTab
     private int _race = -1; // index into Animations.Races; -1 = the character's own
     private float _speed = 1f;
     private bool _startFrozen;
+
+    // (for the page's presets)
+    public float Speed { get => _speed; set => _speed = Math.Clamp(value, 0f, 2f); }
+    public bool StartFrozen { get => _startFrozen; set => _startFrozen = value; }
+    public int Race { get => _race; set => _race = value >= -1 && value < Animations.Races.Length ? value : -1; }
+    public string Group { get => _group; set => _group = value ?? ""; }
+    public string Kind { get => _kind; set => _kind = value ?? ""; }
+    public bool FavouritesOnly { get => _favOnly; set => _favOnly = value; }
+    public string Search { get => _search; set => _search = value ?? ""; }
     private string _status = "";
 
     public AnimationsTab(Selection selection) => _selection = selection;
@@ -216,18 +225,8 @@ public sealed class AnimationsTab
                     Favorites.Toggle("animations", e.Key);
                 if(picked && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 {
-                    _status = _race < 0
-                        ? Animations.Play(actor.Address, actor.ObjectIndex, e.Id)
-                        : Animations.PlayAsRace(actor.Address, actor.ObjectIndex, e.Id, Animations.Races[_race].Body);
-                    if(_startFrozen)
-                    {
-                        Animations.Seek(actor.Address, actor.ObjectIndex, 0f);
-                        Animations.Pause(actor.Address, actor.ObjectIndex);
-                    }
-                    else
-                    {
-                        Animations.Resume(actor.Address, actor.ObjectIndex, _speed);
-                    }
+                    _status = Animations.PlayFrom(actor.Address, actor.ObjectIndex, e.Id, _startFrozen, _speed,
+                        _race < 0 ? (ushort)0 : Animations.Races[_race].Body);
                 }
                 // The icon, or a plain tile for animations that aren't an emote.
                 var iconMin = start + new System.Numerics.Vector2(4f * scale, 4f * scale);

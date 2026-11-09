@@ -44,8 +44,9 @@ public static class PresetBar
             if(ImGui.Button($"Save preset###preset_save_{key}") && now != null && name.Trim().Length > 0)
             {
                 var o = new JObject();
+                var serializer = JsonSerializer.Create(Json);
                 foreach(var (part, value) in now)
-                    o[part] = JToken.FromObject(value, JsonSerializer.Create(Json));
+                    o[part] = value is PresetValues values ? values.Save(serializer) : JToken.FromObject(value, serializer);
                 mine[name.Trim()] = o.ToString(Formatting.None);
                 config.Save();
                 Names[key] = "";
@@ -92,8 +93,15 @@ public static class PresetBar
             {
                 if(o[part] is not { } token)
                     continue;
+                if(target is PresetValues values)
+                {
+                    values.Load(token, JsonSerializer.Create(Json));
+                    continue;
+                }
                 if(target is System.Collections.IDictionary dict)
                     dict.Clear();
+                else if(target is System.Collections.IList list)
+                    list.Clear();
                 JsonConvert.PopulateObject(token.ToString(Formatting.None), target, Json);
             }
         }
