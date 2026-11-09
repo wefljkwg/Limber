@@ -144,6 +144,162 @@ public static unsafe class BodySwap
         }
     }
 
+    // ---- Body only: the head (face, hair, ears, horns) stays this race's; the body becomes the other race's
+    //
+    // The character keeps its own race, so its face, hair, ears and face animations stay its own. Through the mod
+    // manager, every file the game asks for the body is given the other race's instead (what the collection would give
+    // that race, body mods included): the body skeleton and its physics, the nude body, the body / hands / legs / feet
+    // of the gear worn, and the body animations. It's per collection, so every character of this race sharing the
+    // collection gets the body too. One redraw.
+
+    private const string BodyTag = "Limber body swap";
+    private const int BodyPriority = 98;
+    private sealed record BodyOnly(Guid Collection, string Tag, ushort Own, ushort Body);
+    private static readonly Dictionary<nint, BodyOnly> BodySwaps = new();
+
+    public static bool IsBodySwapped(nint address) => BodySwaps.ContainsKey(address);
+
+    /// <summary>The body id (101 Midlander man ... 1801 Viera woman) for a race, clan and sex.</summary>
+    public static ushort BodyCode(byte race, byte tribe, byte sex)
+    {
+        int pair = race switch
+        {
+            1 => tribe == 2 ? 3 : 1,
+            2 => 5, 3 => 11, 4 => 7, 5 => 9, 6 => 13, 7 => 15, 8 => 17,
+            _ => 0,
+        };
+        return pair == 0 ? (ushort)0 : (ushort)((pair + (sex == 1 ? 1 : 0)) * 100 + 1);
+    }
+
+    private static readonly string[] GearParts = ["top", "glv", "dwn", "sho"]; // body, hands, legs, feet
+    private static readonly int[] GearSlots = [1, 2, 3, 4];
+    private static readonly string[] ResidentAnimations =
+    [
+        "resident/idle", "resident/move_a", "resident/move_b", "resident/move_c", "resident/move_d", "resident/jump",
+        "resident/action", "resident/emote", "resident/face", "resident/mount", "resident/other",
+    ];
+
+    public static string SwapBodyOnly(nint address, ushort index, byte race, byte tribe)
+    {
+        var c = Get(address, index);
+        if(c == null)
+            return "The character isn't there.";
+        var now = Appearance.Read(address, index);
+        if(now == null)
+            return "Couldn't read the character.";
+        if(now.Customize[2] == 4)
+            return "Changing a child's body isn't allowed.";
+        if(IsSwapped(address))
+            return "Swap the whole body back first.";
+        byte sex = now.Customize[1];
+        ushort own = BodyCode(now.Customize[0], now.Customize[4], sex);
+        ushort body = BodyCode(race, tribe, sex);
+        if(own == 0 || body == 0)
+            return "Can't tell which race that is.";
+        if(own == body)
+            return "That's its own body already.";
+
+        // Every body file this race asks for -> the other race's (as the collection would give that race).
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string o = $"c{own:D4}", t = $"c{body:D4}";
+        void Map(string from, string to)
+        {
+            if(paths.ContainsKey(from) || !Plugin.DataManager.FileExists(to))
+                return;
+            paths[from] = Resolve(to, index);
+        }
+        Map($"chara/human/{o}/skeleton/base/b0001/skl_{o}b0001.sklb", $"chara/human/{t}/skeleton/base/b0001/skl_{t}b0001.sklb");
+        Map($"chara/human/{o}/skeleton/base/b0001/phy_{o}b0001.phyb", $"chara/human/{t}/skeleton/base/b0001/phy_{t}b0001.phyb");
+        foreach(var part in GearParts)
+        {
+            Map($"chara/human/{o}/obj/body/b0001/model/{o}b0001_{part}.mdl", $"chara/human/{t}/obj/body/b0001/model/{t}b0001_{part}.mdl");
+            Map($"chara/equipment/e0000/model/{o}e0000_{part}.mdl", $"chara/equipment/e0000/model/{t}e0000_{part}.mdl");
+        }
+        // The gear worn: the new race's version has priority. (Where this race has no model of its own the game asks for
+        // the shared one instead, so that one is given the new race's too.)
+        for(int i = 0; i < GearSlots.Length; i++)
+        {
+            ushort set = (ushort)(now.Gear[GearSlots[i]] & 0xFFFF);
+            string to = $"chara/equipment/e{set:D4}/model/{t}e{set:D4}_{GearParts[i]}.mdl";
+            Map($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl", to);
+            string shared = sex == 1 ? "c0201" : "c0101";
+            if(!Plugin.DataManager.FileExists($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl") && shared != t)
+                Map($"chara/equipment/e{set:D4}/model/{shared}e{set:D4}_{GearParts[i]}.mdl", to);
+        }
+        // Body animations (the face's stay this race's).
+        string Anim(string code, string key) => $"chara/human/{code}/animation/a0001/bt_common/{key}.pap";
+        foreach(var key in ResidentAnimations)
+            Map(Anim(o, key), Anim(t, key));
+        foreach(var e in Animations.All)
+            if(e.Key.Length > 0)
+                Map(Anim(o, e.Key), Anim(t, e.Key));
+
+        Guid collection;
+        try
+        {
+            var got = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index);
+            if(!got.Item1)
+                return "The mod manager doesn't know this character right now.";
+            collection = got.Item3.Item1;
+            if(BodySwaps.TryGetValue(address, out var old))
+                RemoveMod(old.Collection, old.Tag);
+            int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
+                .InvokeFunc($"{BodyTag} {index}", collection, paths, "", BodyPriority);
+            if(result != 0)
+                return $"The mod manager didn't take the swap (it said {result}).";
+        }
+        catch(Exception e)
+        {
+            return "The mod manager isn't reachable: " + e.Message;
+        }
+        BodySwaps[address] = new BodyOnly(collection, $"{BodyTag} {index}", own, body);
+        Appearance.Redraw(index);
+        return $"Body swapped ({paths.Count} files): head, hair and face kept.";
+    }
+
+    public static string SwapBodyBack(nint address, ushort index)
+    {
+        if(!BodySwaps.Remove(address, out var swap))
+            return "Not swapped.";
+        RemoveMod(swap.Collection, swap.Tag);
+        Appearance.Redraw(index);
+        return "Its own body again.";
+    }
+
+    /// <summary>Every body-only swap taken away (Limber unloading).</summary>
+    public static void ClearBodySwaps()
+    {
+        foreach(var swap in BodySwaps.Values)
+            RemoveMod(swap.Collection, swap.Tag);
+        BodySwaps.Clear();
+    }
+
+    private static void RemoveMod(Guid collection, string tag)
+    {
+        try
+        {
+            Plugin.PluginInterface.GetIpcSubscriber<string, Guid, int, int>("Penumbra.RemoveTemporaryMod.V5").InvokeFunc(tag, collection, BodyPriority);
+        }
+        catch
+        {
+            // (the mod manager is gone: its temporary mods went with it)
+        }
+    }
+
+    // What the character's collection gives for a game path (a mod's file, or the game's own path if none).
+    private static string Resolve(string gamePath, ushort index)
+    {
+        try
+        {
+            var got = Plugin.PluginInterface.GetIpcSubscriber<string, int, string>("Penumbra.ResolveGameObjectPath.V5").InvokeFunc(gamePath, index);
+            return string.IsNullOrEmpty(got) ? gamePath : got;
+        }
+        catch
+        {
+            return gamePath;
+        }
+    }
+
     /// <summary>Forgets characters that left the scene.</summary>
     public static void Forget(nint address) => Swapped.Remove(address);
 

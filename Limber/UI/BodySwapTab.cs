@@ -17,6 +17,7 @@ public sealed class BodySwapTab
     public int Race { get; set; } = 0;     // index into Appearance.Races
     public int Clan { get; set; } = 0;     // 0 or 1
     public bool KeepHeight { get; set; } = true;
+    public bool BodyOnly { get; set; }
 
     public BodySwapTab(Selection selection, ActorTransforms? moves)
     {
@@ -32,9 +33,9 @@ public sealed class BodySwapTab
             ImGui.TextDisabled("Choose a character at the top of the window.");
             return;
         }
-        ImGui.TextWrapped("The chosen character becomes another race for real: the game loads that race's whole skeleton "
-            + "(body, face, hair, headgear) with its physics, and every model (body, face, ears, tail). Everything else about "
-            + "its look stays. It's drawn again to do it (a moment).");
+        ImGui.TextWrapped("Whole character: it becomes the other race for real (its whole skeleton with physics, every model and "
+            + "animation). Body only: its body (skeleton, physics, gear and body animations) becomes the other race's while the "
+            + "head, face and hair stay its own. Either way it's drawn again (a moment).");
         ImGui.Spacing();
 
         var races = Appearance.Races;
@@ -57,20 +58,40 @@ public sealed class BodySwapTab
                     Clan = clan = i;
             ImGui.EndCombo();
         }
-        bool keep = KeepHeight;
-        if(ImGui.Checkbox("Keep the same height###swap_keep", ref keep))
-            KeepHeight = keep;
+        if(ImGui.RadioButton("Whole character###swap_whole", !BodyOnly))
+            BodyOnly = false;
         if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("On: the character stays the same size in metres (Limber scales the new body to match).\n"
-                + "Off: the new race's own size for the same Height slider (a Lalafell stays small, a Roegadyn tall).");
+            ImGui.SetTooltip("Everything becomes the new race: body, head, face, hair, ears, tail, and all its animations.");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Body only###swap_body_only", BodyOnly))
+            BodyOnly = true;
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Only the body becomes the new race: its body skeleton and physics, the body, the gear worn on it (the new\n"
+                + "race's version) and the body animations. The head, face, hair, ears, horns and face animations stay its own.\n"
+                + "Every character of this race using the same mod collection gets the body too.");
+
+        if(!BodyOnly)
+        {
+            bool keep = KeepHeight;
+            if(ImGui.Checkbox("Keep the same height###swap_keep", ref keep))
+                KeepHeight = keep;
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("On: the character stays the same size in metres (Limber scales the new body to match).\n"
+                    + "Off: the new race's own size for the same Height slider (a Lalafell stays small, a Roegadyn tall).");
+        }
 
         if(ImGui.Button("Swap body###swap_go", new System.Numerics.Vector2(160 * ImGuiHelpers.GlobalScale, 0)))
-            _status = BodySwap.Swap(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe, KeepHeight, _moves);
+            _status = BodyOnly
+                ? BodySwap.SwapBodyOnly(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe)
+                : BodySwap.Swap(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe, KeepHeight, _moves);
         ImGui.SameLine();
-        using(ImRaii.Disabled(!BodySwap.IsSwapped(actor.Address)))
+        bool swapped = BodySwap.IsSwapped(actor.Address) || BodySwap.IsBodySwapped(actor.Address);
+        using(ImRaii.Disabled(!swapped))
         {
             if(ImGui.Button("Swap back###swap_back"))
-                _status = BodySwap.SwapBack(actor.Address, actor.ObjectIndex, _moves);
+                _status = BodySwap.IsBodySwapped(actor.Address)
+                    ? BodySwap.SwapBodyBack(actor.Address, actor.ObjectIndex)
+                    : BodySwap.SwapBack(actor.Address, actor.ObjectIndex, _moves);
         }
         if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip("Its own race, clan and size again.");
@@ -89,6 +110,7 @@ public sealed class BodySwapTab
             ImGui.TextDisabled(_status);
         ImGui.Spacing();
         ImGui.TextDisabled("Hairstyles only some races have may not show on another race (the hair goes back when you swap back).\n"
-            + "Body mods follow the mod manager's setup for the new race.");
+            + "Body mods follow the mod manager's setup for the new race.\n"
+            + "Body only: the neck join may show a gap between very different races; Body shape sliders still work on the new body.");
     }
 }
