@@ -64,7 +64,6 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ThrobService _throb;
     private readonly LookAtService _lookAt;
     private readonly TwerkService _twerk;
-    private readonly ReactionMotionService _reactionMotions;
     private readonly ExpansionService _expansion;
     private readonly SizeChangeService _sizeChange;
     private readonly Limber.Rig.HideMounts _hideMounts = new();
@@ -145,7 +144,6 @@ public sealed class Plugin : IDalamudPlugin
             _throb = new ThrobService(ObjectTable, () => _config.Ik.Throb ??= new()) { InOral = a => _oral.IsPartner(a) };
             _fk = new FkService(ObjectTable, () => _config.Ik.FkPoses ??= new());
             _twerk = new TwerkService(ObjectTable, () => _config.Ik.Twerk ??= new());
-            _reactionMotions = new ReactionMotionService(ObjectTable, () => _config.Ik.ReactionMotions ??= new());
             _expansion = new ExpansionService(ObjectTable, () => _config.Ik.Expansion ??= new());
             _sizeChange = new SizeChangeService(ObjectTable, () => _config.Ik.SizeChange ??= new(), _actors);
             _bust = new BustShapeService(ObjectTable, () => _config.Ik.BustShapes ??= new());
@@ -362,7 +360,7 @@ public sealed class Plugin : IDalamudPlugin
             _hook.AddBefore("Limber game physics (before the game's physics)", _gamePhysics.BeforePhysics);
             _hook.AddFirst("Limber game physics (pose back after the game's physics)", _gamePhysics.AfterPhysics);
             _hook.AddLast("Limber game physics (end of frame)", _gamePhysics.EndOfFrame);
-            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber reactions", _reactionMotions.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
@@ -425,7 +423,6 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.EngineLayerTab = new EngineLayerTab(_selection, _config.Ik, _engineLayer);
             _mainWindow.LimberAnimationsTab.BallThrob = _ballThrob;
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
-            _mainWindow.ReactionsTab = new ReactionsTab(_selection, _config.Ik, _rigs, _reactionMotions);
             _mainWindow.LimberPosesTab = new LimberPosesTab(_selection, _config.Ik, _limberPoses, _actors) { Rigs = _rigs };
             _timeline = new TimelineService(ObjectTable, _config.Ik, _rigs, _actors);
             _mainWindow.TimelineTab = new TimelineTab(_selection, _config.Ik, _timeline);
@@ -926,7 +923,6 @@ public sealed class Plugin : IDalamudPlugin
                 _motions.Draw();
                 _oral.DrawGuide(GameGui);
                 _mainWindow?.ClimaxTab?.DrawOverlay(GameGui);
-                _mainWindow?.ReactionsTab?.DrawOverlay(GameGui);
                 perf.Mark("handles and overlays");
                 Limber.Gpu.LiveMesh.Update(); // render thread, before the frame is presented
                 perf.Mark("live mesh");
@@ -945,7 +941,6 @@ public sealed class Plugin : IDalamudPlugin
                 _throb.Refresh();
                 _lookAt.Refresh();
                 _twerk.Refresh();
-                _reactionMotions.Refresh();
                 _ahegao.Refresh();
                 _expansion.Refresh();
                 _sizeChange.Refresh();
@@ -985,7 +980,6 @@ public sealed class Plugin : IDalamudPlugin
                 _throb.Clear();
                 _lookAt.Clear();
                 _twerk.Clear();
-                _reactionMotions.Clear();
                 _ahegao.Clear();
                 _expansion.Clear();
                 _sizeChange.Clear();
