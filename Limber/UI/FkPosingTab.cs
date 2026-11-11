@@ -32,11 +32,24 @@ public sealed class FkPosingTab
     private FkBoneSettings? _clipboard;
     private string _note = "";
 
+    // The pose before Rest pose, per character (FK, IK pins and motion devices), so it can be put back.
+    private sealed class BeforeRest
+    {
+        public FkPoseSettings? Fk;
+        public Goal[]? Ik;
+        public List<MotionProp> Motions = new();
+        public string RestedFk = "";   // the FK pose right after resting (pressing Rest again unchanged keeps the first)
+    }
+    private readonly Dictionary<string, BeforeRest> _beforeRest = new();
+
     // Undo per character (whole FK pose copies).
     private readonly Dictionary<string, List<FkPoseSettings>> _undo = new(), _redo = new();
 
     /// <summary>The scene's dots (for Pin / Let go: the same pins as the IK Posing page).</summary>
     public HandleOverlay? Overlay { get; set; }
+
+    /// <summary>The motion devices (turned back on with the pose from before a rest pose).</summary>
+    public MotionService? Motions { get; set; }
 
     public FkPosingTab(Selection selection, RigService rigs, FkService fk, RigSettings config)
     {
@@ -313,11 +326,18 @@ public sealed class FkPosingTab
         ImGui.SameLine();
         if(ImGui.Button("Rest pose###fk_rest_all") && hasSnapshot)
         {
+            SaveBeforeRest(actor, null, null);
             Checkpoint(name);
             int n = RestAll(name, actor, snapshot!);
-            _note = $"{n} bones put in the skeleton's rest pose.";
+            NoteRested(name);
+            _note = $"{n} bones put in the skeleton's rest pose. \"Back to the pose before\" puts the old pose back.";
         }
         Tooltip("Every bone to the skeleton's own rest pose (the pose the model is built in).");
+        ImGui.SameLine();
+        using(ImRaii.Disabled(!HasBeforeRest(name)))
+            if(ImGui.Button("Back to the pose before###fk_unrest"))
+                _note = RestoreBeforeRest(actor, Motions);
+        Tooltip("Puts back the pose this character had before Rest pose was pressed (FK, IK pins and motions).");
         ImGui.SameLine();
         if(ImGui.Button("Clear FK###fk_clear") && pose != null)
         {
@@ -412,6 +432,7 @@ public sealed class FkPosingTab
         {
             Checkpoint(name);
             int n = RestAll(name, actor, snapshot);
+            NoteRested(name);
             return n > 0 ? $"{n} bones put in the rest pose." : "The rest pose isn't read yet: press it again in a moment.";
         }
         int i = snapshot.IndexOf(bone);
@@ -425,7 +446,83 @@ public sealed class FkPosingTab
         entry.Enabled = true;
         _eulerBone = null;
         _config.Save();
+        NoteRested(name);
         return $"{HandleCatalog.Label(bone)} put in the rest pose.";
+    }
+
+    /// <summary>
+    /// Keeps this character's pose (FK, and the IK pins and motion devices the IK page's Rest pose lets go of) before a
+    /// rest pose. Pressing Rest pose again with nothing changed since keeps the first one (the real original).
+    /// </summary>
+    public void SaveBeforeRest(ActorRef actor, Goal[]? ik, List<MotionProp>? motions)
+    {
+        string name = actor.Name ?? "";
+        if(name.Length == 0)
+            return;
+        string now = All.TryGetValue(name, out var pose) ? FkText(pose) : "";
+        if(_beforeRest.TryGetValue(name, out var old) && old.RestedFk == now)
+        {
+            // (still in the rest pose from before: keep the original; add anything IK held since)
+            if(ik is { Length: > 0 })
+                old.Ik = ik;
+            if(motions is { Count: > 0 })
+                old.Motions.AddRange(motions);
+            return;
+        }
+        _beforeRest[name] = new BeforeRest
+        {
+            Fk = pose?.Copy(),
+            Ik = ik,
+            Motions = motions ?? new(),
+        };
+    }
+
+    // After resting: what FK holds now (so a second press can tell nothing changed).
+    private void NoteRested(string name)
+    {
+        if(_beforeRest.TryGetValue(name, out var b))
+            b.RestedFk = All.TryGetValue(name, out var pose) ? FkText(pose) : "";
+    }
+
+    private static string FkText(FkPoseSettings pose)
+    {
+        try
+        {
+            return Newtonsoft.Json.JsonConvert.SerializeObject(pose);
+        }
+        catch
+        {
+            return Guid.NewGuid().ToString(); // (can't compare: treated as changed)
+        }
+    }
+
+    public bool HasBeforeRest(string? name) => name != null && _beforeRest.ContainsKey(name);
+
+    /// <summary>Puts back the pose from before Rest pose (undo can step back from it too). Returns what happened.</summary>
+    public string RestoreBeforeRest(ActorRef actor, MotionService? motions)
+    {
+        string name = actor.Name ?? "";
+        if(!_beforeRest.TryGetValue(name, out var before))
+            return "Nothing to put back.";
+        _beforeRest.Remove(name);
+        Checkpoint(name);
+        if(before.Fk != null)
+            All[name] = before.Fk.Copy();
+        else
+            All.Remove(name);
+        _eulerBone = null;
+        _config.Save();
+        if(before.Ik is { Length: > 0 })
+            lock(_rigs.Sync)
+            {
+                _rigs.Checkpoint();
+                var rig = _rigs.GetOrCreateRig(actor.Address, actor.ObjectIndex, name);
+                rig.Goals.Clear();
+                rig.Goals.AddRange(before.Ik.Select(g => g.Clone()));
+            }
+        if(before.Motions.Count > 0)
+            (motions ?? Motions)?.Resume(before.Motions);
+        return "Back to the pose before the rest pose.";
     }
 
     private int RestAll(string name, ActorRef actor, BoneSnapshot snapshot)

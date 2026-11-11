@@ -390,7 +390,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.AnimationsTab = new AnimationsTab(_selection);
             Favorites.Settings = _config.Ik;
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
-            _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik);
+            _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik) { Motions = _motions };
             limberTab.Fk = _fkTab;
             _faceTab = new FacePosingTab(_selection, _facePosing, _config.Ik);
             _mainWindow.FacePosingTab = _faceTab;

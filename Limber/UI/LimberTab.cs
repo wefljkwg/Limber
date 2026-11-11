@@ -2362,6 +2362,11 @@ public sealed partial class LimberTab
         {
             if(ImGui.Button("Rest pose###limber_rest_all", new Vector2(third, 0)) && Fk != null)
             {
+                var held = Motions?.ActiveFor(actor.Address);
+                Goal[]? pins;
+                lock(_rigs.Sync)
+                    pins = _rigs.GetRig(actor.Address)?.Goals.Select(g => g.Clone()).ToArray();
+                Fk.SaveBeforeRest(actor, pins, held);
                 Motions?.StopFor(actor.Address, null);
                 lock(_rigs.Sync)
                 {
@@ -2372,13 +2377,17 @@ public sealed partial class LimberTab
                 _restNote = Fk.RestPose(actor, null);
             }
         }
-        Tooltip("The whole body to the skeleton's rest pose: lets go of every bone, and holds the rest pose with FK (Clear FK on the FK posing page undoes it).");
+        Tooltip("The whole body to the skeleton's rest pose: lets go of every bone, and holds the rest pose with FK (\"Back to the pose before\" puts the old pose back).");
         ImGui.SameLine();
         var chosen = _selection.Bone;
         using(ImRaii.Disabled(Fk == null || chosen == null))
         {
             if(ImGui.Button("Rest pose (this bone)###limber_rest_bone", new Vector2(third, 0)) && Fk != null && chosen != null)
             {
+                Goal[]? pins;
+                lock(_rigs.Sync)
+                    pins = _rigs.GetRig(actor.Address)?.Goals.Select(g => g.Clone()).ToArray();
+                Fk.SaveBeforeRest(actor, pins, null);
                 lock(_rigs.Sync)
                 {
                     _rigs.Checkpoint();
@@ -2388,6 +2397,15 @@ public sealed partial class LimberTab
             }
         }
         Tooltip("The chosen bone to its rest pose (let go, and held there by FK).");
+        using(ImRaii.Disabled(Fk == null || !Fk.HasBeforeRest(actor.Name)))
+        {
+            if(ImGui.Button("Back to the pose before###limber_unrest") && Fk != null)
+            {
+                _restNote = Fk.RestoreBeforeRest(actor, Motions);
+                _selection.Bone = null;
+            }
+        }
+        Tooltip("Puts back the pose this character had before Rest pose was pressed: its FK, IK pins and motions.");
         if(_restNote.Length > 0)
             ImGui.TextDisabled(_restNote);
 

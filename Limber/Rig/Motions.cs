@@ -163,6 +163,30 @@ public sealed unsafe class MotionService
     /// <summary>Other things holding bones that "Let go" should stop too (Oral).</summary>
     public Func<nint, string?, int>? AlsoStop;
 
+    /// <summary>The motion devices holding bones on this character right now (to turn back on later).</summary>
+    public List<MotionProp> ActiveFor(nint actor)
+    {
+        var list = new List<MotionProp>();
+        foreach (var ((address, _), m) in _active)
+            if (address == actor && m.Enabled && !list.Contains(m))
+                list.Add(m);
+        return list;
+    }
+
+    /// <summary>Turns these motion devices back on.</summary>
+    public void Resume(IEnumerable<MotionProp> motions)
+    {
+        bool any = false;
+        foreach (var m in motions)
+            if (!m.Enabled)
+            {
+                m.Enabled = true;
+                any = true;
+            }
+        if (any)
+            Changed?.Invoke();
+    }
+
     public int StopFor(nint actor, string? bone)
     {
         int stopped = AlsoStop?.Invoke(actor, bone) ?? 0;
