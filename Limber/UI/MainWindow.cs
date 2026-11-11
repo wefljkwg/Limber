@@ -201,7 +201,14 @@ public sealed class MainWindow : Window
             }),
             "dynamic" => PerCharacter(n => new() { ["DynamicBones"] = For(ik.DynamicBones ??= new(), n) }),
             "lookat" => PerCharacter(n => new() { ["LookAt"] = For(ik.LookAt ??= new(), n) }),
-            "reactions" => PerCharacter(n => new() { ["ReactionMotion"] = For(ik.ReactionMotions ??= new(), n) }),
+            "reactions" => PerCharacter(n => new()
+            {
+                ["ReactionMotion"] = For(ik.ReactionMotions ??= new(), n),
+                ["Ruler"] = new PresetValues()
+                    .Add("Show", () => ik.ShowRuler, v => ik.ShowRuler = v)
+                    .Add("Everyone", () => ik.RulerEveryone, v => ik.RulerEveryone = v)
+                    .Add("Units", () => ik.RulerUnits, v => ik.RulerUnits = v),
+            }),
             "face" => PerCharacter(n => new() { ["Face"] = For(ik.FacePoses ??= new(), n) }),
             "fk" => PerCharacter(n => new() { ["Fk"] = For(ik.FkPoses ??= new(), n) }),
             "scale" => PerCharacter(n => new() { ["BoneScale"] = For(ik.BoneScales ??= new(), n) }),
