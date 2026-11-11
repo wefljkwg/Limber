@@ -319,9 +319,11 @@ public static unsafe class BodySwap
             _pap = gi.HookFromAddress<PathByIndexName>(F(84), PapDetour);
             _matPap = gi.HookFromAddress<PathByIndexUnk>(F(87), (h, b, n, i, u) => Body(h, BodySlot(i), () => _matPap!.Original(h, b, n, i, u)));
             _imc = gi.HookFromAddress<PathByIndex>(F(89), (h, b, n, i) => Body(h, BodySlot(i), () => _imc!.Original(h, b, n, i)));
-            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => Body(h, BodySlot(i), () => _mtrl!.Original(h, b, n, i, m)));
-            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => Body(h, BodySlot(i), () => _skinMtrl!.Original(h, b, n, i)));
-            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => Body(h, BodySlot(i), () => _decal!.Original(h, b, n, i)));
+            // (skin stays the character's own - its tone, scales and markings - so skin materials, the skin material and
+            // body decals aren't asked as the other race; the gear's own materials are)
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => Body(h, BodySlot(i) && !IsSkin(m), () => _mtrl!.Original(h, b, n, i, m)));
+            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => _skinMtrl!.Original(h, b, n, i));
+            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
             _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => Body(h, BodySlot(s), () => _deformer!.Original(h, s)));
             _sklb.Enable(); _mdl.Enable(); _skp.Enable(); _phyb.Enable(); _kdb.Enable(); _bnmb.Enable(); _pap.Enable();
             _matPap.Enable(); _imc.Enable(); _mtrl.Enable(); _skinMtrl.Enable(); _decal.Enable(); _deformer.Enable();
@@ -379,7 +381,8 @@ public static unsafe class BodySwap
         }
     }
 
-    // Animations: the body's come from the other race; the face's (a different folder) stay this race's.
+    // Animations: every body animation comes from the other race (whatever race's file the game first picked: some races
+    // borrow another's animations, e.g. Au Ra use Midlander ones); the face's (a different folder) stay this race's.
     private static nint PapDetour(nint human, nint buffer, nuint size, uint index, nint name)
     {
         nint path = _pap!.Original(human, buffer, size, index, name);
@@ -388,13 +391,38 @@ public static unsafe class BodySwap
         try
         {
             string got = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(path) ?? "";
-            if(!got.Contains($"chara/human/c{swap.Own:D4}/animation/a", StringComparison.OrdinalIgnoreCase))
+            if(!IsBodyAnimation(got))
                 return path;
             return Body(human, true, () => _pap!.Original(human, buffer, size, index, name));
         }
         catch
         {
             return path;
+        }
+    }
+
+    // chara/human/cXXXX/animation/aNNNN/... is the body's; .../animation/fNNNN/... the face's.
+    private static bool IsBodyAnimation(string path)
+    {
+        int at = path.IndexOf("/animation/", StringComparison.OrdinalIgnoreCase);
+        return at >= 0 && path.StartsWith("chara/human/c", StringComparison.OrdinalIgnoreCase)
+            && at + 11 < path.Length && (path[at + 11] == 'a' || path[at + 11] == 'A');
+    }
+
+    // A skin material ("/mt_c0201b0001_a.mtrl": the body's skin, turned into the character's own race's skin).
+    private static bool IsSkin(nint name)
+    {
+        if(name == 0)
+            return false;
+        try
+        {
+            string file = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(name) ?? "";
+            int c = file.IndexOf("mt_c", StringComparison.OrdinalIgnoreCase);
+            return c >= 0 && c + 9 < file.Length && (file[c + 8] == 'b' || file[c + 8] == 'B');
+        }
+        catch
+        {
+            return false;
         }
     }
 
