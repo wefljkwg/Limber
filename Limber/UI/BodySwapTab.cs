@@ -66,9 +66,9 @@ public sealed class BodySwapTab
         if(ImGui.RadioButton("Body only###swap_body_only", BodyOnly))
             BodyOnly = true;
         if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("Only the body becomes the new race: its body skeleton and physics, the body, the gear worn on it (the new\n"
-                + "race's version) and the body animations. The head, face, hair, ears, horns and face animations stay its own.\n"
-                + "Every character of this race using the same mod collection gets the body too.");
+            ImGui.SetTooltip("Only the body becomes the new race's, exactly as a character of that race gets it: its skeleton and\n"
+                + "physics, body, the gear worn on it, skin and body animations (your body mods for that race included).\n"
+                + "The head, face, hair, ears, horns, tail and face animations stay its own. Only this character changes.");
 
         if(!BodyOnly)
         {

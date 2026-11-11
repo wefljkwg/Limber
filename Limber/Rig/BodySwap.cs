@@ -123,17 +123,15 @@ public static unsafe class BodySwap
     /// <summary>Framework update.</summary>
     public static void Tick()
     {
-        // Characters that left (GPose ended, actor removed): forgotten, and a body-only swap taken out of the mod
-        // manager (it would go on changing every character of that race in the collection).
+        // Characters that left (GPose ended, actor removed): forgotten; draw objects looked up again (a redraw makes a
+        // new one).
         if(++_pruneFrames >= 60)
         {
             _pruneFrames = 0;
             foreach(var (address, swap) in new List<KeyValuePair<nint, BodyOnly>>(BodySwaps))
                 if(Get(address, swap.Index) == null)
-                {
-                    RemoveMod(swap.Collection, swap.Tag);
                     BodySwaps.Remove(address);
-                }
+            RefreshDraws();
             foreach(var (address, b) in new List<KeyValuePair<nint, Before>>(Swapped))
                 if(Get(address, b.Index) == null)
                 {
@@ -169,16 +167,21 @@ public static unsafe class BodySwap
 
     // ---- Body only: the head (face, hair, ears, horns) stays this race's; the body becomes the other race's
     //
-    // The character keeps its own race, so its face, hair, ears and face animations stay its own. Through the mod
-    // manager, every file the game asks for the body is given the other race's instead (what the collection would give
-    // that race, body mods included): the body skeleton and its physics, the nude body, the body / hands / legs / feet
-    // of the gear worn, and the body animations. It's per collection, so every character of this race sharing the
-    // collection gets the body too. One redraw.
+    // The character keeps its own race, so its face, hair, ears, tail and face animations stay its own. For everything
+    // that belongs to the body, the game is asked for the files as if the character were the other race: the body
+    // skeleton and its physics, the body / hands / legs / feet models (and neck, wrist and ring accessories), their
+    // materials and skin, and the body animations. So it gets exactly the body a character of that race gets - the
+    // collection's body mods for that race included - and the models are fitted for that race too. Only this character
+    // changes. One redraw.
+    //
+    // How: the game builds each of those file paths (and fits each model) from Human.RaceSexId (+0xAA0). Its path
+    // functions (Human vtable 76-92) and the model fitting (101) are hooked, and for a swapped character's body parts
+    // RaceSexId holds the other race's id for the length of that one call, then goes back.
 
-    private const string BodyTag = "Limber body swap";
-    private const int BodyPriority = 98;
-    private sealed record BodyOnly(Guid Collection, string Tag, ushort Index, ushort Own, ushort Body, bool[] Redirected);
-    private static readonly Dictionary<nint, BodyOnly> BodySwaps = new();
+    private sealed record BodyOnly(ushort Index, ushort Own, ushort Body);
+    private static readonly Dictionary<nint, BodyOnly> BodySwaps = new();     // by character (GameObject address)
+    private static readonly Dictionary<nint, BodyOnly> BodyDraws = new();     // by its draw object (kept up to date)
+    [ThreadStatic] private static nint _creatingFor;                           // the character whose model is being made
 
     public static bool IsBodySwapped(nint address) => BodySwaps.ContainsKey(address);
 
@@ -193,14 +196,6 @@ public static unsafe class BodySwap
         };
         return pair == 0 ? (ushort)0 : (ushort)((pair + (sex == 1 ? 1 : 0)) * 100 + 1);
     }
-
-    private static readonly string[] GearParts = ["top", "glv", "dwn", "sho"]; // body, hands, legs, feet
-    private static readonly int[] GearSlots = [1, 2, 3, 4];
-    private static readonly string[] ResidentAnimations =
-    [
-        "resident/idle", "resident/move_a", "resident/move_b", "resident/move_c", "resident/move_d", "resident/jump",
-        "resident/action", "resident/emote", "resident/mount", "resident/other",
-    ];
 
     public static string SwapBodyOnly(nint address, ushort index, byte race, byte tribe)
     {
@@ -221,90 +216,32 @@ public static unsafe class BodySwap
             return "Can't tell which race that is.";
         if(own == body)
             return "That's its own body already.";
-
-        // (a body swapped before: taken out first, so the files below are what the collection itself gives)
-        if(BodySwaps.Remove(address, out var previous))
-            RemoveMod(previous.Collection, previous.Tag);
-
-        // Every body file this race asks for -> the other race's (as the collection would give that race).
-        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string o = $"c{own:D4}", t = $"c{body:D4}";
-        void Map(string from, string to)
-        {
-            if(paths.ContainsKey(from) || !Plugin.DataManager.FileExists(to))
-                return;
-            paths[from] = Resolve(to, index);
-        }
-        Map($"chara/human/{o}/skeleton/base/b0001/skl_{o}b0001.sklb", $"chara/human/{t}/skeleton/base/b0001/skl_{t}b0001.sklb");
-        Map($"chara/human/{o}/skeleton/base/b0001/phy_{o}b0001.phyb", $"chara/human/{t}/skeleton/base/b0001/phy_{t}b0001.phyb");
-        foreach(var part in GearParts)
-        {
-            Map($"chara/human/{o}/obj/body/b0001/model/{o}b0001_{part}.mdl", $"chara/human/{t}/obj/body/b0001/model/{t}b0001_{part}.mdl");
-            Map($"chara/equipment/e0000/model/{o}e0000_{part}.mdl", $"chara/equipment/e0000/model/{t}e0000_{part}.mdl");
-        }
-        // The gear worn: the new race's version has priority. (Where this race has no model of its own the game uses
-        // another race's, which isn't touched: that would change it for every race wearing it.)
-        for(int i = 0; i < GearSlots.Length; i++)
-        {
-            ushort set = (ushort)(now.Gear[GearSlots[i]] & 0xFFFF);
-            Map($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl", $"chara/equipment/e{set:D4}/model/{t}e{set:D4}_{GearParts[i]}.mdl");
-        }
-        // Body animations (the face's stay this race's).
-        string Anim(string code, string key) => $"chara/human/{code}/animation/a0001/bt_common/{key}.pap";
-        foreach(var key in ResidentAnimations)
-            Map(Anim(o, key), Anim(t, key));
-        foreach(var e in Animations.All)
-            if(e.Key.Length > 0)
-                Map(Anim(o, e.Key), Anim(t, e.Key));
-
-        Guid collection;
-        try
-        {
-            var got = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index);
-            if(!got.Item1)
-                return "The mod manager doesn't know this character right now.";
-            collection = got.Item3.Item1;
-            int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
-                .InvokeFunc($"{BodyTag} {index}", collection, paths, "", BodyPriority);
-            if(result != 0)
-                return $"The mod manager didn't take the swap (it said {result}).";
-        }
-        catch(Exception e)
-        {
-            return "The mod manager isn't reachable: " + e.Message;
-        }
-        // Which of body / hands / legs / feet now hold the new race's own model (the rest are reshaped to fit it).
-        var redirected = new bool[10];
-        for(int i = 0; i < GearSlots.Length; i++)
-        {
-            ushort set = (ushort)(now.Gear[GearSlots[i]] & 0xFFFF);
-            redirected[GearSlots[i]] = paths.ContainsKey($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl");
-        }
-        BodySwaps[address] = new BodyOnly(collection, $"{BodyTag} {index}", index, own, body, redirected);
-        HookDeformer((nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject);
+        if(!Hook((nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject))
+            return "Couldn't hook the game's file lookup: " + _hookProblem;
+        BodySwaps[address] = new BodyOnly(index, own, body);
+        RefreshDraws();
         Appearance.Redraw(index);
-        return $"Body swapped ({paths.Count} files): head, hair and face kept.";
+        return "Body swapped: head, hair and face kept.";
     }
 
     public static string SwapBodyBack(nint address, ushort index)
     {
-        if(!BodySwaps.Remove(address, out var swap))
+        if(!BodySwaps.Remove(address))
             return "Not swapped.";
-        RemoveMod(swap.Collection, swap.Tag);
+        RefreshDraws();
         Appearance.Redraw(index);
         return "Its own body again.";
     }
 
-    /// <summary>Every body-only swap taken away (Limber unloading).</summary>
+    /// <summary>Every swap undone (Limber unloading).</summary>
     public static void ClearBodySwaps()
     {
-        foreach(var (address, swap) in new List<KeyValuePair<nint, BodyOnly>>(BodySwaps))
-        {
-            RemoveMod(swap.Collection, swap.Tag);
+        var was = new List<KeyValuePair<nint, BodyOnly>>(BodySwaps);
+        BodySwaps.Clear();
+        BodyDraws.Clear();
+        foreach(var (address, swap) in was)
             if(Get(address, swap.Index) != null)
                 Appearance.Redraw(swap.Index);
-        }
-        BodySwaps.Clear();
         // Whole-body swaps back to their own race too (sizes are Limber's own, gone with it).
         foreach(var (address, b) in new List<KeyValuePair<nint, Before>>(Swapped))
             if(Get(address, b.Index) != null)
@@ -313,126 +250,173 @@ public static unsafe class BodySwap
         Checks.Clear();
     }
 
-    private static void RemoveMod(Guid collection, string tag)
+    // Draw object -> swap (framework thread; the hooks read it on the same thread).
+    private static void RefreshDraws()
     {
-        try
+        BodyDraws.Clear();
+        foreach(var (address, swap) in BodySwaps)
         {
-            Plugin.PluginInterface.GetIpcSubscriber<string, Guid, int, int>("Penumbra.RemoveTemporaryMod.V5").InvokeFunc(tag, collection, BodyPriority);
-        }
-        catch
-        {
-            // (the mod manager is gone: its temporary mods went with it)
+            var c = Get(address, swap.Index);
+            if(c == null)
+                continue;
+            nint draw = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject;
+            if(draw != 0)
+                BodyDraws[draw] = swap;
         }
     }
 
-    // What the character's collection gives for a game path (a mod's file, or the game's own path if none).
-    private static string Resolve(string gamePath, ushort index)
+    // The swap for a draw object, while it's being made too (the character isn't pointing at it yet then).
+    private static BodyOnly? SwapFor(nint human)
     {
-        try
-        {
-            var got = Plugin.PluginInterface.GetIpcSubscriber<string, int, string>("Penumbra.ResolveGameObjectPath.V5").InvokeFunc(gamePath, index);
-            return string.IsNullOrEmpty(got) ? gamePath : got;
-        }
-        catch
-        {
-            return gamePath;
-        }
+        if(BodyDraws.TryGetValue(human, out var swap))
+            return swap;
+        if(_creatingFor != 0 && BodySwaps.TryGetValue(_creatingFor, out swap))
+            return swap;
+        return null;
     }
 
-    // ---- Reshaping models for the swapped body
-    //
-    // When a model loads, the game reshapes it from the race it was made for to the character's race (Human.RaceSexId),
-    // e.g. a body mod made only for Midlanders is reshaped to fit an Au Ra. With the body skeleton swapped to another
-    // race, that's the wrong target: the mesh comes out shaped for the old race and is moved by the new race's bones
-    // (shoulders folded into the chest, a long neck). So for the body, hands, legs, feet and the accessories worn on them,
-    // the reshaping is pointed at the new race while that model is set up. Models already swapped for the new race's own
-    // aren't reshaped at all. (Human vtable slot 101, CreateDeformer; the head, face, hair, ears and tail keep their own.)
+    // ---- The hooks
 
+    private const int RaceSexIdOffset = 0xAA0;
+    // body, hands, legs, feet, neck, wrists, right ring, left ring (equipment slots; 0 head and 5 ears stay the head's)
+    private static bool BodySlot(uint slot) => slot is >= 1 and <= 4 or >= 6 and <= 9;
+    // partial skeletons: 0 the body, 4 the top's (gear skeleton); 1 face, 2 hair, 3 headgear stay the head's
+    private static bool BodyPartial(uint partial) => partial is 0 or 4;
+
+    private delegate nint PathByIndex(nint human, nint buffer, nuint size, uint index);
+    private delegate nint PathByIndexName(nint human, nint buffer, nuint size, uint index, nint name);
+    private delegate nint PathByIndexUnk(nint human, nint buffer, nuint size, uint index, uint unk);
     private delegate nint CreateDeformerDelegate(nint human, uint slot);
-    private static Dalamud.Hooking.Hook<CreateDeformerDelegate>? _deformerHook;
-    private const int RaceSexIdOffset = 0xAA0;   // Human.RaceSexId
-    private const int SlotModelsOffset = 0xC50;  // per slot: 0x20 bytes, the race the slot's model was made for at +0x16
-    private static readonly uint[] BodySlots = [1, 2, 3, 4, 6, 7, 8, 9]; // body, hands, legs, feet, neck, wrists, rings
 
-    private static void HookDeformer(nint drawObject)
+    private static Dalamud.Hooking.Hook<PathByIndex>? _sklb, _mdl, _skp, _phyb, _kdb, _bnmb, _imc, _skinMtrl, _decal;
+    private static Dalamud.Hooking.Hook<PathByIndexName>? _pap, _mtrl;
+    private static Dalamud.Hooking.Hook<PathByIndexUnk>? _matPap;
+    private static Dalamud.Hooking.Hook<CreateDeformerDelegate>? _deformer;
+    private static bool _hooked;
+    private static string _hookProblem = "";
+    private static object? _creating, _created;
+
+    private static bool Hook(nint drawObject)
     {
-        if(_deformerHook != null || drawObject == 0)
-            return;
+        if(_hooked)
+            return true;
+        if(drawObject == 0)
+        {
+            _hookProblem = "the character isn't drawn.";
+            return false;
+        }
         try
         {
-            nint vtable = *(nint*)drawObject;
-            nint create = vtable == 0 ? 0 : *(nint*)(vtable + 101 * 8);
-            if(create == 0)
-                return;
-            _deformerHook = Plugin.GameInterop.HookFromAddress<CreateDeformerDelegate>(create, CreateDeformerDetour);
-            _deformerHook.Enable();
-        }
-        catch(Exception e)
-        {
-            Plugin.Log.Warning(e, "Limber: body swap couldn't set up the model reshaping (the body may look squashed)");
-            _deformerHook = null;
-        }
-    }
-
-    public static void DisposeDeformer()
-    {
-        _deformerHook?.Dispose();
-        _deformerHook = null;
-    }
-
-    private static nint CreateDeformerDetour(nint human, uint slot)
-    {
-        var original = _deformerHook!.Original;
-        try
-        {
-            if(BodySwaps.Count == 0 || Array.IndexOf(BodySlots, slot) < 0)
-                return original(human, slot);
-            ushort race = *(ushort*)(human + RaceSexIdOffset);
-            BodyOnly? swap = null;
-            foreach(var s in BodySwaps.Values)
-                if(s.Own == race && WearsBody(human, s.Body))
-                {
-                    swap = s;
-                    break;
-                }
-            if(swap == null)
-                return original(human, slot);
-            nint slots = *(nint*)(human + SlotModelsOffset);
-            ushort madeFor = slots == 0 ? (ushort)0 : *(ushort*)(slots + (nint)slot * 0x20 + 0x16);
-            // the new race's own model (put in its place by the swap): fits the new skeleton as it is
-            if(madeFor == swap.Own && slot < swap.Redirected.Length && swap.Redirected[slot])
-                return 0;
-            // anything else: reshaped for the new race (the game compares against the character's race: the new one, for
-            // the length of this call only)
-            *(ushort*)(human + RaceSexIdOffset) = swap.Body;
+            nint vt = *(nint*)drawObject;
+            nint F(int slot) => *(nint*)(vt + slot * 8);
+            var gi = Plugin.GameInterop;
+            _sklb = gi.HookFromAddress<PathByIndex>(F(76), (h, b, n, i) => Body(h, BodyPartial(i), () => _sklb!.Original(h, b, n, i)));
+            _mdl = gi.HookFromAddress<PathByIndex>(F(77), (h, b, n, i) => Body(h, BodySlot(i), () => _mdl!.Original(h, b, n, i)));
+            _skp = gi.HookFromAddress<PathByIndex>(F(78), (h, b, n, i) => Body(h, BodyPartial(i), () => _skp!.Original(h, b, n, i)));
+            _phyb = gi.HookFromAddress<PathByIndex>(F(79), (h, b, n, i) => Body(h, BodyPartial(i), () => _phyb!.Original(h, b, n, i)));
+            _kdb = gi.HookFromAddress<PathByIndex>(F(80), (h, b, n, i) => Body(h, BodyPartial(i), () => _kdb!.Original(h, b, n, i)));
+            _bnmb = gi.HookFromAddress<PathByIndex>(F(82), (h, b, n, i) => Body(h, BodyPartial(i), () => _bnmb!.Original(h, b, n, i)));
+            _pap = gi.HookFromAddress<PathByIndexName>(F(84), PapDetour);
+            _matPap = gi.HookFromAddress<PathByIndexUnk>(F(87), (h, b, n, i, u) => Body(h, BodySlot(i), () => _matPap!.Original(h, b, n, i, u)));
+            _imc = gi.HookFromAddress<PathByIndex>(F(89), (h, b, n, i) => Body(h, BodySlot(i), () => _imc!.Original(h, b, n, i)));
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => Body(h, BodySlot(i), () => _mtrl!.Original(h, b, n, i, m)));
+            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => Body(h, BodySlot(i), () => _skinMtrl!.Original(h, b, n, i)));
+            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => Body(h, BodySlot(i), () => _decal!.Original(h, b, n, i)));
+            _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => Body(h, BodySlot(s), () => _deformer!.Original(h, s)));
+            _sklb.Enable(); _mdl.Enable(); _skp.Enable(); _phyb.Enable(); _kdb.Enable(); _bnmb.Enable(); _pap.Enable();
+            _matPap.Enable(); _imc.Enable(); _mtrl.Enable(); _skinMtrl.Enable(); _decal.Enable(); _deformer.Enable();
+            // Which character a new draw object is for, while it's made (the mod manager says so).
             try
             {
-                return original(human, slot);
+                var creating = Plugin.PluginInterface.GetIpcSubscriber<nint, Guid, nint, nint, nint, object?>("Penumbra.CreatingCharacterBase.V5");
+                var created = Plugin.PluginInterface.GetIpcSubscriber<nint, Guid, nint, object?>("Penumbra.CreatedCharacterBase.V5");
+                creating.Subscribe(OnCreating);
+                created.Subscribe(OnCreated);
+                _creating = creating;
+                _created = created;
             }
-            finally
+            catch
             {
-                *(ushort*)(human + RaceSexIdOffset) = race;
+                // (no mod manager: a swapped character's body is still found once it's drawn, from the next redraw)
             }
+            _hooked = true;
+            return true;
         }
         catch(Exception e)
         {
-            Plugin.Log.Warning(e, "Limber: body swap model reshaping failed");
-            return original(human, slot);
+            _hookProblem = e.Message;
+            DisposeHooks();
+            return false;
         }
     }
 
-    // The character's body skeleton is the swapped one (its file is the new race's).
-    private static bool WearsBody(nint human, ushort body)
+    private static void OnCreating(nint gameObject, Guid collection, nint modelId, nint customize, nint equip) => _creatingFor = gameObject;
+
+    private static void OnCreated(nint gameObject, Guid collection, nint drawObject)
     {
-        var skeleton = ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)human)->Skeleton;
-        if(skeleton == null || skeleton->PartialSkeletons == null || skeleton->PartialSkeletonCount < 1)
-            return false;
-        var handle = (byte*)skeleton->PartialSkeletons[0].SkeletonResourceHandle;
-        if(handle == null)
-            return false;
-        string path = Limber.Core.SafeMemory.ReadStdString((nint)(handle + 0x48), 511);
-        return path.Contains($"c{body:D4}", StringComparison.OrdinalIgnoreCase);
+        if(BodySwaps.TryGetValue(gameObject, out var swap) && drawObject != 0)
+            BodyDraws[drawObject] = swap;
+        _creatingFor = 0;
     }
+
+    // One of the game's lookups, as the other race when it's for a swapped character's body.
+    private static T Body<T>(nint human, bool bodyPart, Func<T> original)
+    {
+        if(!bodyPart || (BodySwaps.Count == 0) || SwapFor(human) is not { } swap)
+            return original();
+        ushort* race = (ushort*)(human + RaceSexIdOffset);
+        ushort was = *race;
+        if(was != swap.Own)
+            return original();
+        *race = swap.Body;
+        try
+        {
+            return original();
+        }
+        finally
+        {
+            *race = was;
+        }
+    }
+
+    // Animations: the body's come from the other race; the face's (a different folder) stay this race's.
+    private static nint PapDetour(nint human, nint buffer, nuint size, uint index, nint name)
+    {
+        nint path = _pap!.Original(human, buffer, size, index, name);
+        if(BodySwaps.Count == 0 || path == 0 || SwapFor(human) is not { } swap)
+            return path;
+        try
+        {
+            string got = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(path) ?? "";
+            if(!got.Contains($"chara/human/c{swap.Own:D4}/animation/a", StringComparison.OrdinalIgnoreCase))
+                return path;
+            return Body(human, true, () => _pap!.Original(human, buffer, size, index, name));
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    private static void DisposeHooks()
+    {
+        foreach(var hook in new IDisposable?[] { _sklb, _mdl, _skp, _phyb, _kdb, _bnmb, _pap, _matPap, _imc, _mtrl, _skinMtrl, _decal, _deformer })
+            hook?.Dispose();
+        _sklb = _mdl = _skp = _phyb = _kdb = _bnmb = _imc = _skinMtrl = _decal = null;
+        _pap = _mtrl = null;
+        _matPap = null;
+        _deformer = null;
+        try
+        {
+            (_creating as Dalamud.Plugin.Ipc.ICallGateSubscriber<nint, Guid, nint, nint, nint, object?>)?.Unsubscribe(OnCreating);
+            (_created as Dalamud.Plugin.Ipc.ICallGateSubscriber<nint, Guid, nint, object?>)?.Unsubscribe(OnCreated);
+        }
+        catch { }
+        _creating = _created = null;
+        _hooked = false;
+    }
+
+    public static void DisposeDeformer() => DisposeHooks();
 
     /// <summary>Forgets characters that left the scene.</summary>
     public static void Forget(nint address) => Swapped.Remove(address);
