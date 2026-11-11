@@ -20,7 +20,7 @@ public sealed class BackdropSettings
     /// How much it glows (0..3). Too much makes the game's glare (bloom) spill it over the character's edges as a halo;
     /// 0.5 or so keeps it flat without that.
     /// </summary>
-    public float Glow { get; set; } = 0.5f;
+    public float Glow { get; set; } = 0.2f;
     /// <summary>How far it is from the character (metres): the camera has to stay inside it.</summary>
     public float Radius { get; set; } = 15f;
     /// <summary>The character (and the camera) lifted this high into the sky (metres; 0: left where they are).</summary>
@@ -194,7 +194,24 @@ public sealed unsafe class BackdropService : IDisposable
             var meshes = new List<PropMesh> { Sphere(24, 48) };
             if(s.Floor)
                 meshes.Add(Disc(64));
-            files[model] = MdlBuilder.Build(mdl, meshes, [material, material]);
+            // Which way its triangles face (worked out from the real normals), then every normal pointing straight up:
+            // every part of it is lit the same, so it's one flat colour (no bright side, no line where the floor meets
+            // it). And it casts no shadow, so the sun still reaches the character inside.
+            int winding = WindingOf(meshes[0]);
+            foreach(var m in meshes)
+                for(int v = 0; v < m.N.Count; v++)
+                    m.N[v] = Vector3.UnitY;
+            MdlBuilder.ForceWinding = winding;
+            MdlBuilder.NoShadows = true;
+            try
+            {
+                files[model] = MdlBuilder.Build(mdl, meshes, [material, material]);
+            }
+            finally
+            {
+                MdlBuilder.ForceWinding = 0;
+                MdlBuilder.NoShadows = false;
+            }
 
             Directory.CreateDirectory(DiskDir);
             foreach(var old in _files)
@@ -223,6 +240,19 @@ public sealed unsafe class BackdropService : IDisposable
         }
     }
 
+    // The same test the model builder makes: do the triangles turn with the normals (+1) or against them (-1)?
+    private static int WindingOf(PropMesh m)
+    {
+        float sum = 0f;
+        for(int i = 0; i + 2 < m.I.Count; i += 3)
+        {
+            int a = m.I[i], b = m.I[i + 1], c = m.I[i + 2];
+            var face = Vector3.Cross(m.P[b] - m.P[a], m.P[c] - m.P[a]);
+            sum += MathF.Sign(Vector3.Dot(face, m.N[a] + m.N[b] + m.N[c]));
+        }
+        return sum < 0f ? -1 : 1;
+    }
+
     // A sphere of radius 1 seen from the inside (its normals point in).
     private static PropMesh Sphere(int rings, int segments)
     {
@@ -245,9 +275,9 @@ public sealed unsafe class BackdropService : IDisposable
             for(int j = 0; j < segments; j++)
             {
                 int a = i * row + j, b = a + row;
-                // (facing the centre)
-                m.I.AddRange([a, a + 1, b]);
-                m.I.AddRange([a + 1, b + 1, b]);
+                // (turning the same way as the inward normals, like the floor's with its upward ones)
+                m.I.AddRange([a, b, a + 1]);
+                m.I.AddRange([a + 1, b, b + 1]);
             }
         return m;
     }

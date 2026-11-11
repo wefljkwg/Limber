@@ -171,6 +171,12 @@ public static class MdlBuilder
     [ThreadStatic] public static bool FlipFaces;
     /// <summary>Normals pointing the other way, as a fix to try.</summary>
     [ThreadStatic] public static bool FlipNormals;
+    /// <summary>The model casts no shadows (model flags: shadow and light shadow off). The backdrop: the sun still reaches
+    /// what's inside it.</summary>
+    [ThreadStatic] public static bool NoShadows;
+    /// <summary>Which way the triangles turn against the normals, when the normals can't tell (+1 / -1; 0: worked out
+    /// from them). The backdrop: all its normals point the same way, for even light.</summary>
+    [ThreadStatic] public static int ForceWinding;
 
     /// <summary>The same, and where each vertex ended up (meshes with more than 65535 vertices aren't split here: those
     /// models can't be moved live, and <paramref name="layout"/> is null).</summary>
@@ -219,7 +225,7 @@ public static class MdlBuilder
                 max = Vector3.Max(max, p);
             }
             int start = (int)(index.Length / 2);
-            bool turn = (Winding(m) * t.Winding < 0) ^ FlipFaces;
+            bool turn = ((ForceWinding != 0 ? ForceWinding : Winding(m)) * t.Winding < 0) ^ FlipFaces;
             for(int i = 0; i + 2 < m.I.Count; i += 3)
             {
                 index.Write(BitConverter.GetBytes((ushort)m.I[i]));
@@ -276,6 +282,8 @@ public static class MdlBuilder
         mh[27] = (byte)(mh[27] & ~0x10); // no extra lods
         BitConverter.TryWriteBytes(mh.AsSpan(38), (ushort)0); // terrain shadow submeshes
         mh[43] = 0; // neck morphs
+        if(NoShadows)
+            mh[23] |= 0x03; // (flags: ShadowDisabled, LightShadowDisabled)
         BitConverter.TryWriteBytes(mh.AsSpan(44), (ushort)0); // bone table arrays
         w.Write(mh);
 
