@@ -208,8 +208,9 @@ public sealed class ExtrasTab
             ImGui.TextDisabled(Backdrop.Note);
         else if(!Backdrop.Showing)
             ImGui.TextDisabled("Making it... (in GPose, with a character chosen)");
-        ImGui.TextDisabled("For clean edges: System Configuration > Graphics, Glare off and Screen Space Ambient Occlusion off; "
-            + "depth of field and GPose filters off. Other characters inside it still show: hide them from the actor list.");
+        ImGui.TextDisabled("Inside it the sun doesn't reach them: light them with GPose's own lights. For a perfect background, "
+            + "use Green screen and the tools/backdrop_key script on the pictures afterwards (pure white, no green fringe). "
+            + "Other characters inside it still show: hide them from the actor list.");
         ImGui.Unindent();
     }
 
