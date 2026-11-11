@@ -210,6 +210,11 @@ public sealed partial class LimberTab
                 twerk.Enabled = false;
                 done.Add("twerking");
             }
+            if(_config.ReactionMotions != null && _config.ReactionMotions.TryGetValue(name, out var reaction) && reaction.Enabled)
+            {
+                reaction.Enabled = false;
+                done.Add("reaction motion");
+            }
             if(_config.Ahegao != null && _config.Ahegao.TryGetValue(name, out var ahegao) && ahegao.Enabled)
             {
                 ahegao.Enabled = false;

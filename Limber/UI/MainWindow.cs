@@ -49,6 +49,7 @@ public sealed class MainWindow : Window
     public KoiImportTab? KoiImportTab { get; set; }
     public HousingPropsTab? KoiPropsTab { get; set; }
     public LookAtTab? LookAtTab { get; set; }
+    public ReactionsTab? ReactionsTab { get; set; }
     public TimelineTab? TimelineTab { get; set; }
     public AppearanceTab? AppearanceTab { get; set; }
     public CameraTab? CameraTab { get; set; }
@@ -128,6 +129,7 @@ public sealed class MainWindow : Window
         new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
         new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
         new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis, a pregnant belly), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
+        new("reactions", "Scene", "Size & reactions", "A partner reacting to the size of a character's shaft (smirk, giggle, eye roll, \"this small\"...), small looping motions, a fingertip hold, and a ruler that measures it (adult characters).", () => ReactionsTab?.Draw(), () => ReactionsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null && Cfg.ShowOralTab),
         new("devices", "Scene", "Devices", "Props that touch the body (colliders, toys) and move the soft bodies.", () => _propsTab.Draw()),
         new("props", "Scene", "Housing props", "Place housing furniture around you in GPose, in sections by type.", () => _housingTab.Draw()),
@@ -199,6 +201,7 @@ public sealed class MainWindow : Window
             }),
             "dynamic" => PerCharacter(n => new() { ["DynamicBones"] = For(ik.DynamicBones ??= new(), n) }),
             "lookat" => PerCharacter(n => new() { ["LookAt"] = For(ik.LookAt ??= new(), n) }),
+            "reactions" => PerCharacter(n => new() { ["ReactionMotion"] = For(ik.ReactionMotions ??= new(), n) }),
             "face" => PerCharacter(n => new() { ["Face"] = For(ik.FacePoses ??= new(), n) }),
             "fk" => PerCharacter(n => new() { ["Fk"] = For(ik.FkPoses ??= new(), n) }),
             "scale" => PerCharacter(n => new() { ["BoneScale"] = For(ik.BoneScales ??= new(), n) }),

@@ -129,6 +129,14 @@ public sealed class RigSettings
     /// <summary>Twerking (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.TwerkSettings> Twerk { get; set; } = new();
 
+    /// <summary>Looping reaction motions (Size &amp; reactions page), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.ReactionMotionSettings> ReactionMotions { get; set; } = new();
+    /// <summary>Size &amp; reactions: the ruler drawn along the shaft, on everyone with one (or only the chosen
+    /// character), in cm (0), inches (1) or both (2).</summary>
+    public bool ShowRuler { get; set; }
+    public bool RulerEveryone { get; set; } = true;
+    public int RulerUnits { get; set; } = 2;
+
     /// <summary>Ahegao face (Limber Animations page), per character name.</summary>
     public System.Collections.Generic.Dictionary<string, Limber.Rig.AhegaoSettings> Ahegao { get; set; } = new();
 
@@ -257,6 +265,8 @@ public sealed class RigSettings
         foreach(var s in (Twerk ??= new()).Values)
             s.Enabled = false;
         foreach(var s in (Ahegao ??= new()).Values)
+            s.Enabled = false;
+        foreach(var s in (ReactionMotions ??= new()).Values)
             s.Enabled = false;
         foreach(var s in (Expansion ??= new()).Values)
         {
