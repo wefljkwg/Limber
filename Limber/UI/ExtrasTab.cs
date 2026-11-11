@@ -15,6 +15,8 @@ public sealed class ExtrasTab
     public EntitiesTab? Entities { get; set; }
     /// <summary>The flat-colour backdrop.</summary>
     public BackdropService? Backdrop { get; set; }
+    /// <summary>Dataset capture.</summary>
+    public DatasetCapture? Dataset { get; set; }
 
     public ExtrasTab(Selection selection, RagdollService ragdoll, RigSettings? config = null)
     {
@@ -74,7 +76,94 @@ public sealed class ExtrasTab
         }
         DrawHideMounts();
         DrawBackdrop();
+        DrawDataset();
     }
+
+    // ---- Dataset capture: a set of pictures of the chosen character, for training an image model (a LoRA)
+
+    private void DrawDataset()
+    {
+        if(_config == null || Dataset == null)
+            return;
+        ImGui.Spacing();
+        ImGui.Separator();
+        if(!ImGui.CollapsingHeader("Dataset capture###extras_dataset"))
+            return;
+        var s = _config.Dataset ??= new();
+        bool changed = false;
+        ImGui.TextWrapped("Takes pictures of the chosen character from all round (front, sides, behind, above and below) at four "
+            + "distances, for training an image model. Each is copied straight from the game's picture (no windows, dots or "
+            + "plugin overlays in it), cropped round the character and saved as a PNG: full body and thigh up at 1024 x 1280, "
+            + "upper body and face square.");
+        using(ImRaii.Disabled(Dataset.Running))
+        {
+            bool full = s.FullBody, thigh = s.ThighUp, upper = s.UpperBody, face = s.Face;
+            if(ImGui.Checkbox("Full body###ds_full", ref full)) { s.FullBody = full; changed = true; }
+            ImGui.SameLine();
+            if(ImGui.Checkbox("Thigh up###ds_thigh", ref thigh)) { s.ThighUp = thigh; changed = true; }
+            ImGui.SameLine();
+            if(ImGui.Checkbox("Upper body###ds_upper", ref upper)) { s.UpperBody = upper; changed = true; }
+            ImGui.SameLine();
+            if(ImGui.Checkbox("Face###ds_face", ref face)) { s.Face = face; changed = true; }
+            bool large = s.LargeSquares;
+            if(ImGui.Checkbox("Square pictures at 1280 x 1280 (else 1024)###ds_large", ref large)) { s.LargeSquares = large; changed = true; }
+            bool captions = s.Captions;
+            if(ImGui.Checkbox("Caption files###ds_captions", ref captions)) { s.Captions = captions; changed = true; }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("A .txt next to each picture: your trigger word, then the shot (full body, three-quarter view, from above...).");
+            if(captions)
+            {
+                ImGui.SameLine();
+                string trigger = s.Trigger;
+                ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+                if(ImGui.InputText("Trigger word###ds_trigger", ref trigger, 64)) { s.Trigger = trigger; changed = true; }
+            }
+            string folder = s.Folder;
+            ImGui.SetNextItemWidth(360 * ImGuiHelpers.GlobalScale);
+            if(ImGui.InputText("Folder###ds_folder", ref folder, 260)) { s.Folder = folder; changed = true; }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Where the pictures go (a new folder inside it each time). Empty: Pictures\\Limber dataset.");
+        }
+        if(changed)
+            _config.Save();
+
+        int count = DatasetCapture.Shots(s).Count;
+        var actor = _selection.Actor;
+        if(!Dataset.Running)
+        {
+            using(ImRaii.Disabled(!actor.IsSet || count == 0))
+                if(ImGui.Button($"Take {count} pictures of {(actor.IsSet ? actor.Name : "...")}###ds_start", new System.Numerics.Vector2(260 * ImGuiHelpers.GlobalScale, 0)))
+                    _datasetNote = Dataset.Start(actor.Address, actor.ObjectIndex, actor.Name ?? "", s);
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("The camera moves round them by itself; it's put back afterwards. Hide the game's own UI first "
+                    + "(it would be in the pictures), and keep the character still (a pose, or the animation frozen).");
+        }
+        else
+        {
+            if(ImGui.Button("Stop###ds_stop", new System.Numerics.Vector2(120 * ImGuiHelpers.GlobalScale, 0)))
+                Dataset.Stop();
+            ImGui.SameLine();
+            ImGui.ProgressBar(Dataset.Total > 0 ? (float)Dataset.Done / Dataset.Total : 0f, new System.Numerics.Vector2(-1, 0), $"{Dataset.Done} / {Dataset.Total}");
+        }
+        string note = Dataset.Note.Length > 0 ? Dataset.Note : _datasetNote;
+        if(note.Length > 0)
+            ImGui.TextWrapped(note);
+        if(!Dataset.Running && Dataset.LastFolder.Length > 0 && System.IO.Directory.Exists(Dataset.LastFolder))
+        {
+            if(ImGui.SmallButton("Open the folder###ds_open"))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{Dataset.LastFolder}\"") { UseShellExecute = true });
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    private string _datasetNote = "";
 
     // ---- Backdrop: a flat colour all round the chosen character (clean pictures, training sets)
 

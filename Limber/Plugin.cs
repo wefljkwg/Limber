@@ -85,6 +85,7 @@ public sealed class Plugin : IDalamudPlugin
     private FkPosingTab? _fkTab;
     private readonly Limber.BodyRig.HousingProps _housing;
     private readonly Limber.Rig.BackdropService _backdrop;
+    private readonly Limber.Rig.DatasetCapture _dataset = new();
     private readonly Limber.BodyRig.Effects _effects;
     private readonly Limber.Rig.ActorTransforms _actors = new();
     private readonly Limber.Rig.MotionFreeze _freeze = new();
@@ -435,7 +436,7 @@ public sealed class Plugin : IDalamudPlugin
             _followers = new Limber.Rig.Followers(_spawner, _config.Ik);
             _mainWindow.EntitiesTab = new EntitiesTab(_selection, _config.Ik, _spawner, _followers);
             _mainWindow.BodySwapTab = new BodySwapTab(_selection, _actors);
-            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab, Backdrop = _backdrop };
+            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab, Backdrop = _backdrop, Dataset = _dataset };
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             foreach(var pageWindow in _mainWindow.PageWindows())
@@ -915,6 +916,11 @@ public sealed class Plugin : IDalamudPlugin
             bool here = ClientState.IsGPosing || _config.Ik.WorkOutsideGPose;
             // The camera works in GPose and out of it (whenever Limber is on).
             UpdateCamera(_config.PluginEnabled);
+            // Dataset pictures: taken here, before anything (Limber's or other plugins') is drawn into the picture.
+            if(_config.PluginEnabled)
+                _dataset.Step();
+            else if(_dataset.Running)
+                _dataset.Stop("Stopped: Limber was turned off.");
             perf.Mark("selection and camera");
             if(_config.PluginEnabled)
             {
@@ -1040,7 +1046,8 @@ public sealed class Plugin : IDalamudPlugin
         {
             var ik = _config.Ik;
             const float deg = MathF.PI / 180f;
-            CameraControl.Update(on && ik.CameraUnlock, new CameraControl.CameraLimits(
+            // (unlocked while dataset pictures are taken too: close-ups need the camera nearer than the game allows)
+            CameraControl.Update(on && (ik.CameraUnlock || _dataset.Running), new CameraControl.CameraLimits(
                 Math.Clamp(ik.CameraMinDistance, 0.05f, 10f), Math.Clamp(ik.CameraMaxDistance, 5f, 500f),
                 Math.Clamp(MathF.Min(ik.CameraMinFoV, ik.CameraMaxFoV), 0.01f, 3f), Math.Clamp(MathF.Max(ik.CameraMinFoV, ik.CameraMaxFoV), 0.01f, 3f),
                 Math.Clamp(ik.CameraMinPitch, -89.5f, 0f) * deg, Math.Clamp(ik.CameraMaxPitch, 0f, 89.5f) * deg));
@@ -1219,6 +1226,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Koi.Props.KoiProps.Unregister();
         _spawner.Dispose();
         Framework.Update -= OnFrameworkUpdate;
+        _dataset.Stop();
         _backdrop.Dispose();
         _housing.Dispose();
         _effects.Dispose();

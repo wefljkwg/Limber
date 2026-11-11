@@ -197,9 +197,25 @@ public static unsafe class CameraControl
         Refresh();
     }
 
+    // ---- Aimed at a point (Extras: Dataset capture): the camera keeps its own angle and distance but looks at this point
+    // (world), as if it went round it. And where the game itself put the camera each frame, for working out its angles.
+
+    private static Vector3? _aim;
+    /// <summary>The camera's place and what it looked at as the game made them (before Limber moved them), last frame.</summary>
+    public static Vector3 RawPosition, RawLook;
+    public static volatile bool RawValid;
+
+    public static void SetAim(Vector3? at)
+    {
+        _aim = at;
+        if(at == null)
+            RawValid = false;
+        Refresh();
+    }
+
     private static void Refresh()
     {
-        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero;
+        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _aim != null;
         if(HasOffset)
             EnsureHook();
     }
@@ -239,6 +255,9 @@ public static unsafe class CameraControl
             // (the game's own vector type: taken as System.Numerics vectors to work with)
             Vector3 position = *(Vector3*)&obj->Position;
             Vector3 look = *(Vector3*)&scene->LookAtVector;
+            RawPosition = position;
+            RawLook = look;
+            RawValid = true;
             Vector3 forward = look - position;
             if(forward.LengthSquared() < 1e-8f)
                 return;
@@ -247,6 +266,8 @@ public static unsafe class CameraControl
             right = right.LengthSquared() < 1e-8f ? Vector3.UnitX : Vector3.Normalize(right);
             var up = Vector3.Cross(right, forward);
             Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world;
+            if(_aim is { } aim)
+                move = aim - look;
             Vector3 movedPosition = position + move, movedLook = look + move;
             *(Vector3*)&obj->Position = movedPosition;
             *(Vector3*)&scene->LookAtVector = movedLook;

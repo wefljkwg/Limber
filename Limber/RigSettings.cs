@@ -169,6 +169,8 @@ public sealed class RigSettings
     public System.Collections.Generic.List<Limber.Rig.AppearanceHistoryEntry> AppearanceHistory { get; set; } = new();
     /// <summary>Extras: a flat-coloured backdrop round the chosen character.</summary>
     public Limber.Rig.BackdropSettings Backdrop { get; set; } = new();
+    /// <summary>Extras: dataset capture (pictures of a character for training an image model).</summary>
+    public Limber.Rig.DatasetSettings Dataset { get; set; } = new();
     /// <summary>Appearance & gear: a look put on stays on when the character is redrawn (body physics, other plugins).</summary>
     public bool AppearanceKeep { get; set; } = true;
     /// <summary>Extras: extra minions (any creature) that follow your character.</summary>
