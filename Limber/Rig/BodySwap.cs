@@ -177,7 +177,7 @@ public static unsafe class BodySwap
 
     private const string BodyTag = "Limber body swap";
     private const int BodyPriority = 98;
-    private sealed record BodyOnly(Guid Collection, string Tag, ushort Index, ushort Own, ushort Body);
+    private sealed record BodyOnly(Guid Collection, string Tag, ushort Index, ushort Own, ushort Body, bool[] Redirected);
     private static readonly Dictionary<nint, BodyOnly> BodySwaps = new();
 
     public static bool IsBodySwapped(nint address) => BodySwaps.ContainsKey(address);
@@ -273,7 +273,15 @@ public static unsafe class BodySwap
         {
             return "The mod manager isn't reachable: " + e.Message;
         }
-        BodySwaps[address] = new BodyOnly(collection, $"{BodyTag} {index}", index, own, body);
+        // Which of body / hands / legs / feet now hold the new race's own model (the rest are reshaped to fit it).
+        var redirected = new bool[10];
+        for(int i = 0; i < GearSlots.Length; i++)
+        {
+            ushort set = (ushort)(now.Gear[GearSlots[i]] & 0xFFFF);
+            redirected[GearSlots[i]] = paths.ContainsKey($"chara/equipment/e{set:D4}/model/{o}e{set:D4}_{GearParts[i]}.mdl");
+        }
+        BodySwaps[address] = new BodyOnly(collection, $"{BodyTag} {index}", index, own, body, redirected);
+        HookDeformer((nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject);
         Appearance.Redraw(index);
         return $"Body swapped ({paths.Count} files): head, hair and face kept.";
     }
@@ -329,6 +337,101 @@ public static unsafe class BodySwap
         {
             return gamePath;
         }
+    }
+
+    // ---- Reshaping models for the swapped body
+    //
+    // When a model loads, the game reshapes it from the race it was made for to the character's race (Human.RaceSexId),
+    // e.g. a body mod made only for Midlanders is reshaped to fit an Au Ra. With the body skeleton swapped to another
+    // race, that's the wrong target: the mesh comes out shaped for the old race and is moved by the new race's bones
+    // (shoulders folded into the chest, a long neck). So for the body, hands, legs, feet and the accessories worn on them,
+    // the reshaping is pointed at the new race while that model is set up. Models already swapped for the new race's own
+    // aren't reshaped at all. (Human vtable slot 101, CreateDeformer; the head, face, hair, ears and tail keep their own.)
+
+    private delegate nint CreateDeformerDelegate(nint human, uint slot);
+    private static Dalamud.Hooking.Hook<CreateDeformerDelegate>? _deformerHook;
+    private const int RaceSexIdOffset = 0xAA0;   // Human.RaceSexId
+    private const int SlotModelsOffset = 0xC50;  // per slot: 0x20 bytes, the race the slot's model was made for at +0x16
+    private static readonly uint[] BodySlots = [1, 2, 3, 4, 6, 7, 8, 9]; // body, hands, legs, feet, neck, wrists, rings
+
+    private static void HookDeformer(nint drawObject)
+    {
+        if(_deformerHook != null || drawObject == 0)
+            return;
+        try
+        {
+            nint vtable = *(nint*)drawObject;
+            nint create = vtable == 0 ? 0 : *(nint*)(vtable + 101 * 8);
+            if(create == 0)
+                return;
+            _deformerHook = Plugin.GameInterop.HookFromAddress<CreateDeformerDelegate>(create, CreateDeformerDetour);
+            _deformerHook.Enable();
+        }
+        catch(Exception e)
+        {
+            Plugin.Log.Warning(e, "Limber: body swap couldn't set up the model reshaping (the body may look squashed)");
+            _deformerHook = null;
+        }
+    }
+
+    public static void DisposeDeformer()
+    {
+        _deformerHook?.Dispose();
+        _deformerHook = null;
+    }
+
+    private static nint CreateDeformerDetour(nint human, uint slot)
+    {
+        var original = _deformerHook!.Original;
+        try
+        {
+            if(BodySwaps.Count == 0 || Array.IndexOf(BodySlots, slot) < 0)
+                return original(human, slot);
+            ushort race = *(ushort*)(human + RaceSexIdOffset);
+            BodyOnly? swap = null;
+            foreach(var s in BodySwaps.Values)
+                if(s.Own == race && WearsBody(human, s.Body))
+                {
+                    swap = s;
+                    break;
+                }
+            if(swap == null)
+                return original(human, slot);
+            nint slots = *(nint*)(human + SlotModelsOffset);
+            ushort madeFor = slots == 0 ? (ushort)0 : *(ushort*)(slots + (nint)slot * 0x20 + 0x16);
+            // the new race's own model (put in its place by the swap): fits the new skeleton as it is
+            if(madeFor == swap.Own && slot < swap.Redirected.Length && swap.Redirected[slot])
+                return 0;
+            // anything else: reshaped for the new race (the game compares against the character's race: the new one, for
+            // the length of this call only)
+            *(ushort*)(human + RaceSexIdOffset) = swap.Body;
+            try
+            {
+                return original(human, slot);
+            }
+            finally
+            {
+                *(ushort*)(human + RaceSexIdOffset) = race;
+            }
+        }
+        catch(Exception e)
+        {
+            Plugin.Log.Warning(e, "Limber: body swap model reshaping failed");
+            return original(human, slot);
+        }
+    }
+
+    // The character's body skeleton is the swapped one (its file is the new race's).
+    private static bool WearsBody(nint human, ushort body)
+    {
+        var skeleton = ((FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)human)->Skeleton;
+        if(skeleton == null || skeleton->PartialSkeletons == null || skeleton->PartialSkeletonCount < 1)
+            return false;
+        var handle = (byte*)skeleton->PartialSkeletons[0].SkeletonResourceHandle;
+        if(handle == null)
+            return false;
+        string path = Limber.Core.SafeMemory.ReadStdString((nint)(handle + 0x48), 511);
+        return path.Contains($"c{body:D4}", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Forgets characters that left the scene.</summary>
