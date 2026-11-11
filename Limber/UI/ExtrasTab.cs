@@ -136,18 +136,19 @@ public sealed class ExtrasTab
         }
 
         // (applied when let go: the backdrop is made again for it)
-        float brightness = _dragBrightness ?? s.Brightness;
+        float glow = _dragBrightness ?? s.Glow;
         ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
-        if(ImGui.SliderFloat("Brightness###extras_backdrop_bright", ref brightness, 0.2f, 5f, "%.2f"))
-            _dragBrightness = brightness;
+        if(ImGui.SliderFloat("Glow###extras_backdrop_bright", ref glow, 0f, 3f, "%.2f"))
+            _dragBrightness = glow;
         if(ImGui.IsItemDeactivated() && _dragBrightness is { } done)
         {
-            s.Brightness = done;
+            s.Glow = done;
             _dragBrightness = null;
             changed = true;
         }
         if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("1: the colour as picked. If white looks a little grey (the game's exposure and filters), turn it up.");
+            ImGui.SetTooltip("How brightly it glows. Too high and the game's glare spills it over the character's edges as a halo:\n"
+                + "keep it around 0.5, and turn Glare off in the game's graphics settings. Turn it up if the colour looks dull.");
 
         float radius = s.Radius;
         ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
@@ -207,8 +208,8 @@ public sealed class ExtrasTab
             ImGui.TextDisabled(Backdrop.Note);
         else if(!Backdrop.Showing)
             ImGui.TextDisabled("Making it... (in GPose, with a character chosen)");
-        ImGui.TextDisabled("Other characters inside it still show: hide them from the actor list. Turn off depth of field, "
-            + "bloom and GPose filters for the flattest colour.");
+        ImGui.TextDisabled("For clean edges: System Configuration > Graphics, Glare off and Screen Space Ambient Occlusion off; "
+            + "depth of field and GPose filters off. Other characters inside it still show: hide them from the actor list.");
         ImGui.Unindent();
     }
 

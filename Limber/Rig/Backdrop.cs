@@ -16,8 +16,11 @@ public sealed class BackdropSettings
     public bool Enabled { get; set; }
     /// <summary>Its colour (0..1 each).</summary>
     public Vector3 Colour { get; set; } = Vector3.One;
-    /// <summary>How brightly it glows: 1 is the colour as picked; higher pushes it toward pure white / the full colour.</summary>
-    public float Brightness { get; set; } = 1f;
+    /// <summary>
+    /// How much it glows (0..3). Too much makes the game's glare (bloom) spill it over the character's edges as a halo;
+    /// 0.5 or so keeps it flat without that.
+    /// </summary>
+    public float Glow { get; set; } = 0.5f;
     /// <summary>How far it is from the character (metres): the camera has to stay inside it.</summary>
     public float Radius { get; set; } = 15f;
     /// <summary>The character (and the camera) lifted this high into the sky (metres; 0: left where they are).</summary>
@@ -54,7 +57,7 @@ public sealed unsafe class BackdropService : IDisposable
     private string _path = "";
     private readonly List<string> _files = new();
     private int _version;
-    private (Vector3 Colour, float Brightness, bool Floor) _made = (new Vector3(-1f), -1f, false);
+    private (Vector3 Colour, float Glow, bool Floor) _made = (new Vector3(-1f), -1f, false);
     private Vector3 _centre;
     private bool _haveCentre;
 
@@ -111,7 +114,7 @@ public sealed unsafe class BackdropService : IDisposable
         if(here)
             SetLift(address, index, lift);
         // Made again when its colour, brightness or floor changed.
-        var want = (s.Colour, s.Brightness, s.Floor);
+        var want = (s.Colour, s.Glow, s.Floor);
         if(_object == null || want != _made)
         {
             Remove();
@@ -183,7 +186,7 @@ public sealed unsafe class BackdropService : IDisposable
             files[diffuse] = TexWriter.Solid(R(s.Colour.X), R(s.Colour.Y), R(s.Colour.Z), 255);
             files[normal] = TexWriter.Solid(128, 128, 255, 255);
             files[spec] = TexWriter.Solid(0, 255, 0, 255);
-            var glow = s.Colour * Math.Clamp(s.Brightness, 0f, 20f);
+            var glow = s.Colour * Math.Clamp(s.Glow, 0f, 3f);
             var textures = new List<string>();
             foreach(var slot in slots)
                 textures.Add(slot == "d" ? diffuse : slot == "n" ? normal : spec);
