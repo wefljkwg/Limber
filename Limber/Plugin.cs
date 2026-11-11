@@ -84,6 +84,7 @@ public sealed class Plugin : IDalamudPlugin
     private TimelineService? _timeline;
     private FkPosingTab? _fkTab;
     private readonly Limber.BodyRig.HousingProps _housing;
+    private readonly Limber.Rig.BackdropService _backdrop;
     private readonly Limber.BodyRig.Effects _effects;
     private readonly Limber.Rig.ActorTransforms _actors = new();
     private readonly Limber.Rig.MotionFreeze _freeze = new();
@@ -130,6 +131,7 @@ public sealed class Plugin : IDalamudPlugin
             _props = new Limber.BodyRig.PropService(ObjectTable, ClientState, () => _config.Ik.Props);
             _props.HandSize = () => _config.Ik.HandColliderSize;
             _housing = new Limber.BodyRig.HousingProps(DataManager, Log);
+            _backdrop = new Limber.Rig.BackdropService(() => _config.Ik.Backdrop ??= new(), () => (_selection.Actor.Address, _selection.Actor.ObjectIndex));
             _effects = new Limber.BodyRig.Effects(DataManager, SigScanner, GameInterop, Log);
             _climax = new Limber.Rig.ClimaxService(ObjectTable, _config.Ik);
             // Skin effects and the engine animation layer: never on by themselves (off whenever Limber starts).
@@ -433,7 +435,7 @@ public sealed class Plugin : IDalamudPlugin
             _followers = new Limber.Rig.Followers(_spawner, _config.Ik);
             _mainWindow.EntitiesTab = new EntitiesTab(_selection, _config.Ik, _spawner, _followers);
             _mainWindow.BodySwapTab = new BodySwapTab(_selection, _actors);
-            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab };
+            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab, Backdrop = _backdrop };
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             foreach(var pageWindow in _mainWindow.PageWindows())
@@ -637,6 +639,14 @@ public sealed class Plugin : IDalamudPlugin
             perf.Mark("oral");
             // Placed housing props: only while Limber runs here (removed when you leave GPose or turn it off).
             _housing.Update(here);
+            try
+            {
+                _backdrop.Update(here);
+            }
+            catch(Exception e)
+            {
+                Log.Debug(e, "Limber: backdrop");
+            }
             perf.Mark("housing props");
             _effects.Update(here);
             _climax.Update(here && _config.PluginEnabled && _config.ShowClimaxTab);
@@ -1209,6 +1219,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Koi.Props.KoiProps.Unregister();
         _spawner.Dispose();
         Framework.Update -= OnFrameworkUpdate;
+        _backdrop.Dispose();
         _housing.Dispose();
         _effects.Dispose();
         Limber.Gpu.FluidRenderer.Dispose();

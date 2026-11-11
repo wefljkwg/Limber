@@ -167,6 +167,8 @@ public sealed class RigSettings
     public bool AppearanceLive { get; set; } = true;
     /// <summary>Appearance &amp; gear: the last 10 looks put on there (newest first).</summary>
     public System.Collections.Generic.List<Limber.Rig.AppearanceHistoryEntry> AppearanceHistory { get; set; } = new();
+    /// <summary>Extras: a flat-coloured backdrop round the chosen character.</summary>
+    public Limber.Rig.BackdropSettings Backdrop { get; set; } = new();
     /// <summary>Appearance & gear: a look put on stays on when the character is redrawn (body physics, other plugins).</summary>
     public bool AppearanceKeep { get; set; } = true;
     /// <summary>Extras: extra minions (any creature) that follow your character.</summary>

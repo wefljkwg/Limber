@@ -13,6 +13,8 @@ public sealed class ExtrasTab
     private readonly RigSettings? _config;
     /// <summary>For the extra minions.</summary>
     public EntitiesTab? Entities { get; set; }
+    /// <summary>The flat-colour backdrop.</summary>
+    public BackdropService? Backdrop { get; set; }
 
     public ExtrasTab(Selection selection, RagdollService ragdoll, RigSettings? config = null)
     {
@@ -71,6 +73,132 @@ public sealed class ExtrasTab
             Entities.DrawMinions();
         }
         DrawHideMounts();
+        DrawBackdrop();
+    }
+
+    // ---- Backdrop: a flat colour all round the chosen character (clean pictures, training sets)
+
+    private System.Numerics.Vector3? _pickColour;
+    private float? _dragBrightness;
+    private long _pickedAt;
+
+    private void DrawBackdrop()
+    {
+        if(_config == null || Backdrop == null)
+            return;
+        ImGui.Spacing();
+        ImGui.Separator();
+        var s = _config.Backdrop ??= new();
+        bool on = s.Enabled;
+        if(ImGui.Checkbox("Backdrop (a flat colour all round)###extras_backdrop", ref on))
+            s.Enabled = on;
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Surrounds the chosen character with one flat colour, sky, ground and all, so they look like they're in an empty void.\n"
+                + "Good for clean pictures (a training set for an image model, say). Only on your screen; never on by itself when Limber starts.");
+        if(!on)
+            return;
+        ImGui.Indent();
+        bool changed = false;
+
+        // Colour: made again once you stop changing it (not on every step of the picker).
+        var colour = _pickColour ?? s.Colour;
+        if(ImGui.ColorEdit3("Colour###extras_backdrop_colour", ref colour))
+        {
+            _pickColour = colour;
+            _pickedAt = System.Environment.TickCount64;
+        }
+        if(_pickColour is { } picked && System.Environment.TickCount64 - _pickedAt > 300 && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            s.Colour = picked;
+            _pickColour = null;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("White###extras_backdrop_white"))
+        {
+            s.Colour = System.Numerics.Vector3.One;
+            _pickColour = null;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Green screen###extras_backdrop_green"))
+        {
+            s.Colour = new System.Numerics.Vector3(0f, 1f, 0f);
+            _pickColour = null;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Black###extras_backdrop_black"))
+        {
+            s.Colour = System.Numerics.Vector3.Zero;
+            _pickColour = null;
+            changed = true;
+        }
+
+        // (applied when let go: the backdrop is made again for it)
+        float brightness = _dragBrightness ?? s.Brightness;
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Brightness###extras_backdrop_bright", ref brightness, 0.2f, 5f, "%.2f"))
+            _dragBrightness = brightness;
+        if(ImGui.IsItemDeactivated() && _dragBrightness is { } done)
+        {
+            s.Brightness = done;
+            _dragBrightness = null;
+            changed = true;
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("1: the colour as picked. If white looks a little grey (the game's exposure and filters), turn it up.");
+
+        float radius = s.Radius;
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Size###extras_backdrop_radius", ref radius, 3f, 60f, "%.0f m"))
+        {
+            s.Radius = radius;
+            changed = true;
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("How far it is from them. The camera has to stay inside it (zoomed out past it, you see the world again).");
+
+        bool floor = s.Floor;
+        if(ImGui.Checkbox("Floor of the same colour###extras_backdrop_floor", ref floor))
+        {
+            s.Floor = floor;
+            changed = true;
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Hides the ground under them, so they stand in the void. Off: they stand on the real ground.");
+        if(floor)
+        {
+            ImGui.SameLine();
+            float height = s.FloorHeight * 100f;
+            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("Floor height###extras_backdrop_floor_h", ref height, -20f, 30f, "%.0f cm"))
+            {
+                s.FloorHeight = height / 100f;
+                changed = true;
+            }
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Up a little if grass or bumps in the ground poke through; down if it hides their feet.");
+        }
+
+        bool follow = s.Follow;
+        if(ImGui.Checkbox("Follows the chosen character###extras_backdrop_follow", ref follow))
+        {
+            s.Follow = follow;
+            changed = true;
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("It stays centred on whoever is chosen at the top. Off: it stays where it is.");
+
+        if(changed)
+            _config.Save();
+        if(Backdrop.Note.Length > 0)
+            ImGui.TextDisabled(Backdrop.Note);
+        else if(!Backdrop.Showing)
+            ImGui.TextDisabled("Making it... (in GPose, with a character chosen)");
+        ImGui.TextDisabled("Other characters inside it still show: hide them from the actor list. Turn off depth of field, "
+            + "bloom and GPose filters for the flattest colour.");
+        ImGui.Unindent();
     }
 
     // Ragdoll on the real floors, stairs, beds and furniture (the game's own world collision).
