@@ -219,6 +219,8 @@ public static unsafe class BodySwap
         if(!Hook((nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject))
             return "Couldn't hook the game's file lookup: " + _hookProblem;
         BodySwaps[address] = new BodyOnly(index, own, body);
+        Logged.Clear();
+        Plugin.Log.Information($"Limber body swap: #{index} c{own:D4} -> body c{body:D4}");
         RefreshDraws();
         Appearance.Redraw(index);
         return "Body swapped: head, hair and face kept.";
@@ -287,11 +289,16 @@ public static unsafe class BodySwap
     private delegate nint PathByIndexName(nint human, nint buffer, nuint size, uint index, nint name);
     private delegate nint PathByIndexUnk(nint human, nint buffer, nuint size, uint index, uint unk);
     private delegate nint CreateDeformerDelegate(nint human, uint slot);
+    private delegate ushort RaceDelegate(nint human);
 
     private static Dalamud.Hooking.Hook<PathByIndex>? _sklb, _mdl, _skp, _phyb, _kdb, _bnmb, _imc, _skinMtrl, _decal;
     private static Dalamud.Hooking.Hook<PathByIndexName>? _pap, _mtrl;
     private static Dalamud.Hooking.Hook<PathByIndexUnk>? _matPap;
     private static Dalamud.Hooking.Hook<CreateDeformerDelegate>? _deformer;
+    // Human vtable 88: "which race is this" (just RaceSexId). The game's animation loaders (resident motion packs,
+    // weapon and emote packs, timelines) ask it, not the path functions: answered with the new race for a swapped
+    // character, so its body animations are the new race's.
+    private static Dalamud.Hooking.Hook<RaceDelegate>? _race;
     private static bool _hooked;
     private static string _hookProblem = "";
     private static object? _creating, _created;
@@ -325,8 +332,9 @@ public static unsafe class BodySwap
             _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => _skinMtrl!.Original(h, b, n, i));
             _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
             _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => Body(h, BodySlot(s), () => _deformer!.Original(h, s)));
+            _race = gi.HookFromAddress<RaceDelegate>(F(88), RaceDetour);
             _sklb.Enable(); _mdl.Enable(); _skp.Enable(); _phyb.Enable(); _kdb.Enable(); _bnmb.Enable(); _pap.Enable();
-            _matPap.Enable(); _imc.Enable(); _mtrl.Enable(); _skinMtrl.Enable(); _decal.Enable(); _deformer.Enable();
+            _matPap.Enable(); _imc.Enable(); _mtrl.Enable(); _skinMtrl.Enable(); _decal.Enable(); _deformer.Enable(); _race.Enable();
             // Which character a new draw object is for, while it's made (the mod manager says so).
             try
             {
@@ -381,6 +389,17 @@ public static unsafe class BodySwap
         }
     }
 
+    private static ushort RaceDetour(nint human)
+    {
+        ushort race = _race!.Original(human);
+        if(BodySwaps.Count == 0 || SwapFor(human) is not { } swap || race != swap.Own)
+            return race;
+        return swap.Body;
+    }
+
+    // (what a swapped character's animations resolve to, in the log: the first few of each)
+    private static readonly HashSet<string> Logged = new();
+
     // Animations: every body animation comes from the other race (whatever race's file the game first picked: some races
     // borrow another's animations, e.g. Au Ra use Midlander ones); the face's (a different folder) stay this race's.
     private static nint PapDetour(nint human, nint buffer, nuint size, uint index, nint name)
@@ -392,13 +411,24 @@ public static unsafe class BodySwap
         {
             string got = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(path) ?? "";
             if(!IsBodyAnimation(got))
+            {
+                Note("kept", got);
                 return path;
-            return Body(human, true, () => _pap!.Original(human, buffer, size, index, name));
+            }
+            nint swapped = Body(human, true, () => _pap!.Original(human, buffer, size, index, name));
+            Note("body", swapped == 0 ? "" : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(swapped) ?? "");
+            return swapped;
         }
         catch
         {
             return path;
         }
+    }
+
+    private static void Note(string kind, string path)
+    {
+        if(Logged.Count < 40 && Logged.Add(kind + path))
+            Plugin.Log.Information($"Limber body swap: animation ({kind}) {path}");
     }
 
     // chara/human/cXXXX/animation/aNNNN/... is the body's; .../animation/fNNNN/... the face's.
@@ -428,12 +458,13 @@ public static unsafe class BodySwap
 
     private static void DisposeHooks()
     {
-        foreach(var hook in new IDisposable?[] { _sklb, _mdl, _skp, _phyb, _kdb, _bnmb, _pap, _matPap, _imc, _mtrl, _skinMtrl, _decal, _deformer })
+        foreach(var hook in new IDisposable?[] { _sklb, _mdl, _skp, _phyb, _kdb, _bnmb, _pap, _matPap, _imc, _mtrl, _skinMtrl, _decal, _deformer, _race })
             hook?.Dispose();
         _sklb = _mdl = _skp = _phyb = _kdb = _bnmb = _imc = _skinMtrl = _decal = null;
         _pap = _mtrl = null;
         _matPap = null;
         _deformer = null;
+        _race = null;
         try
         {
             (_creating as Dalamud.Plugin.Ipc.ICallGateSubscriber<nint, Guid, nint, nint, nint, object?>)?.Unsubscribe(OnCreating);
