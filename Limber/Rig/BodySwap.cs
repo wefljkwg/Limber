@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Limber.Core;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
@@ -123,6 +124,8 @@ public static unsafe class BodySwap
     /// <summary>Framework update.</summary>
     public static void Tick()
     {
+        if(BodySwaps.Count > 0)
+            FitHeads();
         // Characters that left (GPose ended, actor removed): forgotten; draw objects looked up again (a redraw makes a
         // new one).
         if(++_pruneFrames >= 60)
@@ -220,6 +223,7 @@ public static unsafe class BodySwap
             return "Couldn't hook the game's file lookup: " + _hookProblem;
         BodySwaps[address] = new BodyOnly(index, own, body);
         Logged.Clear();
+        FitLogged.Clear();
         Plugin.Log.Information($"Limber body swap: #{index} c{own:D4} -> body c{body:D4}");
         RefreshDraws();
         Appearance.Redraw(index);
@@ -241,6 +245,7 @@ public static unsafe class BodySwap
         var was = new List<KeyValuePair<nint, BodyOnly>>(BodySwaps);
         BodySwaps.Clear();
         BodyDraws.Clear();
+        FittedTables.Clear();
         foreach(var (address, swap) in was)
             if(Get(address, swap.Index) != null)
                 Appearance.Redraw(swap.Index);
@@ -476,6 +481,280 @@ public static unsafe class BodySwap
     }
 
     public static void DisposeDeformer() => DisposeHooks();
+
+    // ---- Body only: fitting the head's models to the new body
+    //
+    // The face, hair, ears and tail (and hats, earrings) are this race's models. Most of each moves with the head's own
+    // skeletons, which sit on the new body's head bone, but its lower edge (the neck of the face model, long hair on
+    // the back) is weighted to body bones (neck, upper back, collar): those are now the other race's, and the game
+    // never refits head models to a body, so those vertices stayed where this race's neck is - stretched to the new
+    // head. Each model has, per bone table, the inverse bind matrices its skinning uses (bone-table object +0xB8,
+    // one 3x4 per bone, the model's own copy); for the body bones they get this race -> the other race's fitting from
+    // the game's own deformer file (human.pbd) folded in, the way the game fits a body model made for another race.
+    // Once per table; checked every frame (a redraw or a new hat makes new ones).
+
+    private sealed class Fitted
+    {
+        public nint Matrices;
+        public int[] Entries = [];
+        public float[][] Written = [];
+        public bool Seen;
+    }
+
+    private static readonly Dictionary<nint, Fitted> FittedTables = new();
+    private static readonly Dictionary<(ushort, ushort), Dictionary<string, System.Numerics.Matrix4x4>?> Fits = new();
+    private static byte[]? _pbd;
+    private static bool _pbdRead;
+    private static readonly Dictionary<nint, string[]> BoneNameCache = new();
+    private static readonly HashSet<string> FitLogged = new();
+
+    private static void FitHeads()
+    {
+        foreach(var f in FittedTables.Values)
+            f.Seen = false;
+        foreach(var (address, swap) in BodySwaps)
+        {
+            var c = Get(address, swap.Index);
+            if(c == null)
+                continue;
+            nint draw = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject;
+            if(draw == 0)
+                continue;
+            try
+            {
+                FitHead(draw, swap);
+            }
+            catch(Exception e)
+            {
+                if(FitLogged.Add("error"))
+                    Plugin.Log.Warning($"Limber body swap: couldn't fit the head ({e.Message})");
+            }
+        }
+        foreach(var key in new List<nint>(FittedTables.Keys))
+            if(!FittedTables[key].Seen)
+                FittedTables.Remove(key);
+    }
+
+    // Head slots: 0 hat, 5 earrings, 10+ face, hair, ears / horns, tail.
+    private static bool HeadSlot(int slot) => slot is 0 or 5 || slot >= 10;
+
+    private static void FitHead(nint draw, BodyOnly swap)
+    {
+        var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)draw;
+        if(cb->Skeleton == null)
+            return;
+        int slots = cb->SlotCount;
+        if(slots <= 0 || slots > 64 || cb->Models == null)
+            return;
+        var names = BodyBoneNames(cb);
+        if(names == null)
+            return;
+        var fit = FitFor(swap.Own, swap.Body);
+        if(fit == null || fit.Count == 0)
+            return;
+        for(int slot = 0; slot < slots; slot++)
+        {
+            if(!HeadSlot(slot))
+                continue;
+            nint model = SafeMemory.ReadPointer((nint)(cb->Models + slot));
+            if(!SafeMemory.Plausible(model))
+                continue;
+            nint list = SafeMemory.ReadPointer(model + 0x58);
+            int count = SafeMemory.Read<int>(model + 0x60, 0);
+            if(!SafeMemory.Plausible(list) || count <= 0 || count > 16)
+                continue;
+            for(int i = 0; i < count; i++)
+                FitTable(list + i * 0xE0, names, fit, slot);
+        }
+    }
+
+    private static void FitTable(nint table, string[] names, Dictionary<string, System.Numerics.Matrix4x4> fit, int slot)
+    {
+        nint matrices = SafeMemory.ReadPointer(table + 0xB8);
+        nint refsAt = SafeMemory.ReadPointer(table + 0xC0);
+        int count = SafeMemory.Read<int>(table + 0xC8, 0);
+        if(!SafeMemory.Plausible(matrices) || !SafeMemory.Plausible(refsAt) || count <= 0 || count > 1024)
+            return;
+        var floats = new float[count * 12];
+        var refs = new ushort[count];
+        fixed(float* to = floats)
+            if(!SafeMemory.Copy(matrices, to, count * 48))
+                return;
+        fixed(ushort* to = refs)
+            if(!SafeMemory.Copy(refsAt, to, count * 2))
+                return;
+
+        // Already fitted (and still as written)?
+        if(FittedTables.TryGetValue(table, out var done) && done.Matrices == matrices)
+        {
+            bool same = true;
+            for(int e = 0; e < done.Entries.Length && same; e++)
+                for(int k = 0; k < 12; k++)
+                    if(floats[done.Entries[e] * 12 + k] != done.Written[e][k])
+                    {
+                        same = false;
+                        break;
+                    }
+            if(same)
+            {
+                done.Seen = true;
+                return;
+            }
+        }
+
+        // The body bones this table uses that the fitting moves.
+        var entries = new List<int>();
+        for(int e = 0; e < count; e++)
+        {
+            int partial = refs[e] >> 12, bone = refs[e] & 0xFFF;
+            if(partial == 0 && bone < names.Length && fit.ContainsKey(names[bone]))
+                entries.Add(e);
+        }
+        var record = new Fitted { Matrices = matrices, Seen = true };
+        if(entries.Count == 0)
+        {
+            FittedTables[table] = record;
+            return;
+        }
+
+        // How the 3x4s are laid out: rows of four (a column-vector matrix, the move in the last column) or four rows of
+        // three (row-vector): whichever has unit-length rows in its rotation part (the head models aren't fitted by the
+        // game, so these are plain rigid inverse binds).
+        float errA = 0f, errB = 0f;
+        foreach(var e in entries)
+        {
+            int o = e * 12;
+            errA += RowError(floats, o, o + 4, o + 8);
+            errB += RowError(floats, o, o + 3, o + 6);
+        }
+        bool columnLayout = errA <= errB;
+
+        var written = new float[entries.Count][];
+        for(int n = 0; n < entries.Count; n++)
+        {
+            int e = entries[n], o = e * 12;
+            var ib = ToRowVector(floats, o, columnLayout);
+            var t = fit[names[refs[e] & 0xFFF]];
+            var result = t * ib; // a vertex: this race's shape -> the other race's -> the bone's space
+            FromRowVector(result, floats, o, columnLayout);
+            written[n] = new float[12];
+            Array.Copy(floats, o, written[n], 0, 12);
+        }
+        fixed(float* from = floats)
+            if(!WriteProcessMemory(-1, matrices, from, count * 48, out var wrote) || wrote != count * 48)
+                return;
+        record.Entries = entries.ToArray();
+        record.Written = written;
+        FittedTables[table] = record;
+        if(FitLogged.Count < 30 && FitLogged.Add($"{slot}:{table:X}"))
+            Plugin.Log.Information($"Limber body swap: fitted head slot {slot} table {table:X}: {entries.Count} body bones ({(columnLayout ? "rows of 4" : "rows of 3")}, layout error {errA:0.###} / {errB:0.###})");
+    }
+
+    private static float RowError(float[] m, int r0, int r1, int r2)
+    {
+        float Len(int at) => MathF.Sqrt(m[at] * m[at] + m[at + 1] * m[at + 1] + m[at + 2] * m[at + 2]);
+        return MathF.Abs(Len(r0) - 1f) + MathF.Abs(Len(r1) - 1f) + MathF.Abs(Len(r2) - 1f);
+    }
+
+    private static System.Numerics.Matrix4x4 ToRowVector(float[] m, int o, bool columnLayout) => columnLayout
+        ? new System.Numerics.Matrix4x4(
+            m[o + 0], m[o + 4], m[o + 8], 0f,
+            m[o + 1], m[o + 5], m[o + 9], 0f,
+            m[o + 2], m[o + 6], m[o + 10], 0f,
+            m[o + 3], m[o + 7], m[o + 11], 1f)
+        : new System.Numerics.Matrix4x4(
+            m[o + 0], m[o + 1], m[o + 2], 0f,
+            m[o + 3], m[o + 4], m[o + 5], 0f,
+            m[o + 6], m[o + 7], m[o + 8], 0f,
+            m[o + 9], m[o + 10], m[o + 11], 1f);
+
+    private static void FromRowVector(System.Numerics.Matrix4x4 r, float[] m, int o, bool columnLayout)
+    {
+        if(columnLayout)
+        {
+            m[o + 0] = r.M11; m[o + 1] = r.M21; m[o + 2] = r.M31; m[o + 3] = r.M41;
+            m[o + 4] = r.M12; m[o + 5] = r.M22; m[o + 6] = r.M32; m[o + 7] = r.M42;
+            m[o + 8] = r.M13; m[o + 9] = r.M23; m[o + 10] = r.M33; m[o + 11] = r.M43;
+        }
+        else
+        {
+            m[o + 0] = r.M11; m[o + 1] = r.M12; m[o + 2] = r.M13;
+            m[o + 3] = r.M21; m[o + 4] = r.M22; m[o + 5] = r.M23;
+            m[o + 6] = r.M31; m[o + 7] = r.M32; m[o + 8] = r.M33;
+            m[o + 9] = r.M41; m[o + 10] = r.M42; m[o + 11] = r.M43;
+        }
+    }
+
+    // The body skeleton's bone names (partial 0), by its Havok skeleton.
+    private static string[]? BodyBoneNames(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase* cb)
+    {
+        var skeleton = cb->Skeleton;
+        if(skeleton == null || skeleton->PartialSkeletonCount < 1 || skeleton->PartialSkeletons == null)
+            return null;
+        var partial = &skeleton->PartialSkeletons[0];
+        FFXIVClientStructs.Havok.Animation.Rig.hkaPose* pose = null;
+        for(int i = 0; i < 4 && pose == null; i++)
+            pose = partial->GetHavokPose(i);
+        if(pose == null || pose->Skeleton == null)
+            return null;
+        nint key = (nint)pose->Skeleton;
+        if(BoneNameCache.TryGetValue(key, out var cached))
+            return cached;
+        var info = SkeletonInfo.Read(pose->Skeleton);
+        if(info == null)
+            return null;
+        if(BoneNameCache.Count > 64)
+            BoneNameCache.Clear();
+        BoneNameCache[key] = info.Names;
+        return info.Names;
+    }
+
+    // This race's body -> the other race's, per bone (row vectors, model space). The deformer file fits each body from
+    // the one above it in its tree (Midlander man at the top), so: this race back up to the top, then down to the other.
+    private static Dictionary<string, System.Numerics.Matrix4x4>? FitFor(ushort own, ushort body)
+    {
+        if(Fits.TryGetValue((own, body), out var known))
+            return known;
+        if(!_pbdRead)
+        {
+            _pbdRead = true;
+            _pbd = Limber.BodyRig.RigBuilder.ReadActive(Limber.BodyRig.Deformers.GamePath, out _);
+        }
+        Dictionary<string, System.Numerics.Matrix4x4>? result = null;
+        if(_pbd != null)
+        {
+            const ushort Top = 101;
+            var direct = Limber.BodyRig.Deformers.Fitting(_pbd, own, body);
+            if(direct != null)
+                result = direct;
+            else
+            {
+                var up = own == Top ? new() : Limber.BodyRig.Deformers.Fitting(_pbd, Top, own);
+                var down = body == Top ? new() : Limber.BodyRig.Deformers.Fitting(_pbd, Top, body);
+                if(up != null && down != null)
+                {
+                    result = new Dictionary<string, System.Numerics.Matrix4x4>(StringComparer.Ordinal);
+                    foreach(var name in new HashSet<string>(up.Keys.Concat(down.Keys)))
+                    {
+                        var undo = System.Numerics.Matrix4x4.Identity;
+                        if(up.TryGetValue(name, out var u) && !System.Numerics.Matrix4x4.Invert(u, out undo))
+                            continue;
+                        var go = down.TryGetValue(name, out var d) ? d : System.Numerics.Matrix4x4.Identity;
+                        result[name] = undo * go;
+                    }
+                }
+            }
+        }
+        Fits[(own, body)] = result;
+        if(result != null && result.TryGetValue("j_kubi", out var neck))
+            Plugin.Log.Information($"Limber body swap: head fitting c{own:D4} -> c{body:D4}: {result.Count} bones, neck moves {neck.Translation}");
+        else
+            Plugin.Log.Warning($"Limber body swap: no head fitting c{own:D4} -> c{body:D4} ({(_pbd == null ? "deformer file not read" : "not in the deformer file")})");
+        return result;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool WriteProcessMemory(nint process, nint address, void* buffer, nint size, out nint written);
 
     /// <summary>Forgets characters that left the scene.</summary>
     public static void Forget(nint address) => Swapped.Remove(address);
