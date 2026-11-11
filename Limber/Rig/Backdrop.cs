@@ -20,8 +20,10 @@ public sealed class BackdropSettings
     public float Brightness { get; set; } = 1f;
     /// <summary>How far it is from the character (metres): the camera has to stay inside it.</summary>
     public float Radius { get; set; } = 15f;
+    /// <summary>The character (and the camera) lifted this high into the sky (metres; 0: left where they are).</summary>
+    public float Lift { get; set; } = 40f;
     /// <summary>A floor of the same colour under their feet, hiding the ground (else they stand on the real ground).</summary>
-    public bool Floor { get; set; } = true;
+    public bool Floor { get; set; }
     /// <summary>The floor's height above the character's feet (metres): up a little to cover grass and bumps.</summary>
     public float FloorHeight { get; set; } = 0.01f;
     /// <summary>It moves with the character (else it stays where it was put).</summary>
@@ -43,6 +45,10 @@ public sealed unsafe class BackdropService : IDisposable
 
     private readonly Func<BackdropSettings> _settings;
     private readonly Func<(nint Address, ushort Index)> _chosen;
+    private readonly ActorTransforms _actors;
+    // The lift put on a character (taken off again when it's off, someone else is chosen, or Limber unloads).
+    private nint _lifted;
+    private float _liftedBy;
     private BgObject* _object;
     private bool _ready;
     private string _path = "";
@@ -56,10 +62,33 @@ public sealed unsafe class BackdropService : IDisposable
     public string Note { get; private set; } = "";
     public bool Showing => _object != null && _ready;
 
-    public BackdropService(Func<BackdropSettings> settings, Func<(nint Address, ushort Index)> chosen)
+    public BackdropService(Func<BackdropSettings> settings, Func<(nint Address, ushort Index)> chosen, ActorTransforms actors)
     {
         _settings = settings;
         _chosen = chosen;
+        _actors = actors;
+    }
+
+    // The chosen character lifted by this much (the one lifted before let down first); the camera with it.
+    private void SetLift(nint address, ushort index, float by)
+    {
+        if(_lifted != 0 && (_lifted != address || by != _liftedBy))
+        {
+            if(_actors.Get(_lifted) is { } before)
+                lock(_actors.Sync)
+                    before.Move -= new Vector3(0f, _liftedBy, 0f);
+            _lifted = 0;
+            _liftedBy = 0f;
+        }
+        if(address != 0 && by != 0f && _lifted == 0)
+        {
+            var o = _actors.GetOrAdd(address, index);
+            lock(_actors.Sync)
+                o.Move += new Vector3(0f, by, 0f);
+            _lifted = address;
+            _liftedBy = by;
+        }
+        CameraControl.SetWorldOffset(new Vector3(0f, _lifted != 0 ? _liftedBy : 0f, 0f));
     }
 
     private static string DiskDir => Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), "backdrop");
@@ -71,10 +100,16 @@ public sealed unsafe class BackdropService : IDisposable
         if(!allowed || !s.Enabled)
         {
             Remove();
+            SetLift(0, 0, 0f);
             if(!s.Enabled)
                 _haveCentre = false;
             return;
         }
+        var (address, index) = _chosen();
+        bool here = Ground(address, index) != null;
+        float lift = Math.Clamp(s.Lift, 0f, 300f);
+        if(here)
+            SetLift(address, index, lift);
         // Made again when its colour, brightness or floor changed.
         var want = (s.Colour, s.Brightness, s.Floor);
         if(_object == null || want != _made)
@@ -91,13 +126,12 @@ public sealed unsafe class BackdropService : IDisposable
                 return;
             _ready = true;
         }
-        // Where: under the chosen character's feet.
+        // Where: under the chosen character's feet (up in the sky with them).
         if(s.Follow || !_haveCentre)
         {
-            var (address, index) = _chosen();
-            if(Feet(address, index) is { } feet)
+            if(Ground(address, index) is { } feet)
             {
-                _centre = feet;
+                _centre = feet + new Vector3(0f, _lifted == address ? _liftedBy : 0f, 0f);
                 _haveCentre = true;
             }
         }
@@ -114,17 +148,14 @@ public sealed unsafe class BackdropService : IDisposable
         draw->UpdateCulling();
     }
 
-    // The character's feet (where it's drawn), or null when it's gone.
-    private static Vector3? Feet(nint address, ushort index)
+    // Where the character stands (the game's place for it, before Limber's moves), or null when it's gone.
+    private static Vector3? Ground(nint address, ushort index)
     {
         if(address == 0)
             return null;
         var o = Plugin.ObjectTable[index];
         if(o == null || o.Address != address)
             return null;
-        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
-        if(go->DrawObject != null)
-            return go->DrawObject->Object.Position;
         return o.Position;
     }
 
@@ -147,8 +178,9 @@ public sealed unsafe class BackdropService : IDisposable
             string spec = $"{Folder}/texture/backdrop_{tag}_s.tex";
             string material = $"{Folder}/material/backdrop_{tag}.mtrl";
             string model = $"{Folder}/bgparts/backdrop_{tag}.mdl";
-            // No colour of its own and no shine: the scene's light adds nothing. Its glow is all you see.
-            files[diffuse] = TexWriter.Solid(0, 0, 0, 255);
+            // Its colour, no shine, and the same colour glowing (so it's that colour even out of the light).
+            byte R(float v) => (byte)Math.Clamp(v * 255f + 0.5f, 0f, 255f);
+            files[diffuse] = TexWriter.Solid(R(s.Colour.X), R(s.Colour.Y), R(s.Colour.Z), 255);
             files[normal] = TexWriter.Solid(128, 128, 255, 255);
             files[spec] = TexWriter.Solid(0, 255, 0, 255);
             var glow = s.Colour * Math.Clamp(s.Brightness, 0f, 20f);
@@ -261,6 +293,8 @@ public sealed unsafe class BackdropService : IDisposable
     public void Dispose()
     {
         Remove();
+        SetLift(0, 0, 0f);
+        CameraControl.SetWorldOffset(Vector3.Zero);
         foreach(var old in _files)
             KoiProps.Extra.Remove(old);
         _files.Clear();

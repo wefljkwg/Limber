@@ -159,6 +159,17 @@ public sealed class ExtrasTab
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("How far it is from them. The camera has to stay inside it (zoomed out past it, you see the world again).");
 
+        float lift = s.Lift;
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Lift into the sky###extras_backdrop_lift", ref lift, 0f, 150f, "%.0f m"))
+        {
+            s.Lift = lift;
+            changed = true;
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("The chosen character and the camera go up this high, away from the ground and everything on it, so they float in the void.\n"
+                + "0: they stay where they are (use the floor below to hide the ground). Let down again when the backdrop is turned off.");
+
         bool floor = s.Floor;
         if(ImGui.Checkbox("Floor of the same colour###extras_backdrop_floor", ref floor))
         {

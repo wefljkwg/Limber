@@ -131,7 +131,7 @@ public sealed class Plugin : IDalamudPlugin
             _props = new Limber.BodyRig.PropService(ObjectTable, ClientState, () => _config.Ik.Props);
             _props.HandSize = () => _config.Ik.HandColliderSize;
             _housing = new Limber.BodyRig.HousingProps(DataManager, Log);
-            _backdrop = new Limber.Rig.BackdropService(() => _config.Ik.Backdrop ??= new(), () => (_selection.Actor.Address, _selection.Actor.ObjectIndex));
+            _backdrop = new Limber.Rig.BackdropService(() => _config.Ik.Backdrop ??= new(), () => (_selection.Actor.Address, _selection.Actor.ObjectIndex), _actors);
             _effects = new Limber.BodyRig.Effects(DataManager, SigScanner, GameInterop, Log);
             _climax = new Limber.Rig.ClimaxService(ObjectTable, _config.Ik);
             // Skin effects and the engine animation layer: never on by themselves (off whenever Limber starts).

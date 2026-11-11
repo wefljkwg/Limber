@@ -180,11 +180,26 @@ public static unsafe class CameraControl
     /// <summary>Sideways (+ right), up, forward, in metres, along the way the camera looks.</summary>
     public static volatile bool HasOffset;
     private static Vector3 _offset;
+    private static Vector3 _world; // straight up / along the world's axes (the backdrop's lift into the sky)
 
     public static void SetOffset(Vector3 offset)
     {
         _offset = offset;
-        HasOffset = offset != Vector3.Zero;
+        Refresh();
+    }
+
+    /// <summary>The camera moved along the world's axes (metres), on top of the offset above (Extras: Backdrop's lift).</summary>
+    public static void SetWorldOffset(Vector3 offset)
+    {
+        if(offset == _world && offset == Vector3.Zero)
+            return;
+        _world = offset;
+        Refresh();
+    }
+
+    private static void Refresh()
+    {
+        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero;
         if(HasOffset)
             EnsureHook();
     }
@@ -231,7 +246,7 @@ public static unsafe class CameraControl
             var right = Vector3.Cross(forward, Vector3.UnitY);
             right = right.LengthSquared() < 1e-8f ? Vector3.UnitX : Vector3.Normalize(right);
             var up = Vector3.Cross(right, forward);
-            Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z;
+            Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world;
             Vector3 movedPosition = position + move, movedLook = look + move;
             *(Vector3*)&obj->Position = movedPosition;
             *(Vector3*)&scene->LookAtVector = movedLook;
