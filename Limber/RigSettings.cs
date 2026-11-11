@@ -165,6 +165,8 @@ public sealed class RigSettings
     /// <summary>Appearance &amp; gear page: saved looks, and whether changes go on as they're made.</summary>
     public System.Collections.Generic.List<Limber.Rig.AppearanceData> AppearancePresets { get; set; } = new();
     public bool AppearanceLive { get; set; } = true;
+    /// <summary>Appearance &amp; gear: the last 10 looks put on there (newest first).</summary>
+    public System.Collections.Generic.List<Limber.Rig.AppearanceHistoryEntry> AppearanceHistory { get; set; } = new();
     /// <summary>Appearance & gear: a look put on stays on when the character is redrawn (body physics, other plugins).</summary>
     public bool AppearanceKeep { get; set; } = true;
     /// <summary>Extras: extra minions (any creature) that follow your character.</summary>

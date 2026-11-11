@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Limber.Rig;
@@ -66,7 +67,7 @@ public sealed class AppearanceTab
         if(_applySoon && _dirty && !ImGui.IsAnyItemActive() && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
         {
             _applySoon = false;
-            Apply(actor, look);
+            Apply(actor, look, "Edited by hand");
         }
 
         // Which Penumbra collection draws this character (like Brio).
@@ -89,7 +90,7 @@ public sealed class AppearanceTab
         using(ImRaii.Disabled(!_dirty))
         {
             if(ImGui.Button("Apply###app_apply"))
-                Apply(actor, look);
+                Apply(actor, look, "Edited by hand");
         }
         ImGui.SameLine();
         bool live = _config.AppearanceLive;
@@ -102,7 +103,7 @@ public sealed class AppearanceTab
         ImGui.SameLine();
         if(ImGui.Button("Back to its original look###app_original") && _original.TryGetValue(actor.Address, out var orig))
         {
-            Apply(actor, orig.Copy());
+            Apply(actor, orig.Copy(), "Its original look");
             Appearance.Forget(actor.ObjectIndex);
         }
         Tooltip("The look it had when you first opened this page for it.");
@@ -133,6 +134,8 @@ public sealed class AppearanceTab
             DrawGear(actor, look);
         if(ImGui.CollapsingHeader("Saved looks (presets)###app_looks", ImGuiTreeNodeFlags.DefaultOpen))
             DrawLooks(actor, look);
+        if(ImGui.CollapsingHeader("History (the last 10 looks)###app_history", ImGuiTreeNodeFlags.DefaultOpen))
+            DrawHistory(actor, look);
         if(ImGui.CollapsingHeader("NPC looks###app_npcs"))
             DrawNpcs(actor);
     }
@@ -147,11 +150,149 @@ public sealed class AppearanceTab
 
     private bool _applySoon;
 
-    private void Apply(ActorRef actor, AppearanceData look)
+    private void Apply(ActorRef actor, AppearanceData look, string from)
     {
         _status = Appearance.Apply(actor.Address, actor.ObjectIndex, look);
         _dirty = false;
         _edit = null;
+        Remember(actor, look, from);
+    }
+
+    // ---- History: the last 10 looks put on here
+
+    private const int HistoryLength = 10;
+
+    private void Remember(ActorRef actor, AppearanceData look, string from)
+    {
+        var history = _config.AppearanceHistory ??= new();
+        string who = actor.Name ?? "";
+        // (changes made by hand one after another, "Apply as I change", are one entry: the latest)
+        if(history.Count > 0 && from == "Edited by hand" && history[0].From == from && history[0].Character == who)
+            history.RemoveAt(0);
+        history.RemoveAll(h => h.Look.SameLook(look));
+        var copy = look.Copy();
+        copy.Name = "";
+        history.Insert(0, new AppearanceHistoryEntry { Look = copy, From = from, Character = who, At = DateTime.Now });
+        if(history.Count > HistoryLength)
+            history.RemoveRange(HistoryLength, history.Count - HistoryLength);
+        _config.Save();
+    }
+
+    private AppearanceHistoryEntry? _saving;   // the history entry the name box is open for
+    private string _saveName = "";
+    private bool _openSave;
+
+    private void DrawHistory(ActorRef actor, AppearanceData look)
+    {
+        var history = _config.AppearanceHistory ??= new();
+        if(history.Count == 0)
+        {
+            ImGui.TextDisabled("Looks you put on here (by hand, from your saved looks, NPCs, pasted, imported or copied) show up here, newest first.");
+            return;
+        }
+        AppearanceHistoryEntry? putOn = null;
+        int mode = 0; // 0 whole, 1 body, 2 gear
+        for(int i = 0; i < history.Count; i++)
+        {
+            var h = history[i];
+            using var id = ImRaii.PushId($"app_hist_{i}");
+            using(ImRaii.PushFont(UiBuilder.IconFont))
+            {
+                if(ImGui.SmallButton(FontAwesomeIcon.Plus.ToIconString()))
+                {
+                    _saving = h;
+                    _saveName = "";
+                    _openSave = true;
+                }
+            }
+            Tooltip("Save this look (asks for a name).");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Whole look"))
+            {
+                putOn = h;
+                mode = 0;
+            }
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Body only"))
+            {
+                putOn = h;
+                mode = 1;
+            }
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Gear only"))
+            {
+                putOn = h;
+                mode = 2;
+            }
+            ImGui.SameLine();
+            ImGui.TextUnformatted(h.From);
+            ImGui.SameLine();
+            ImGui.TextDisabled((h.Character.Length > 0 ? $"on {h.Character}, " : "") + Ago(h.At));
+        }
+        if(putOn != null)
+        {
+            var chosen = look.Copy();
+            if(mode != 2)
+                chosen.Customize = (byte[])putOn.Look.Customize.Clone();
+            if(mode != 1)
+            {
+                chosen.Gear = (ulong[])putOn.Look.Gear.Clone();
+                chosen.Weapons = (ulong[])putOn.Look.Weapons.Clone();
+            }
+            Apply(actor, chosen, putOn.From);
+        }
+
+        // The name box for the + button.
+        if(_openSave)
+        {
+            ImGui.OpenPopup("###app_hist_save");
+            _openSave = false;
+        }
+        if(ImGui.BeginPopup("###app_hist_save"))
+        {
+            ImGui.TextUnformatted("Save this look as:");
+            if(ImGui.IsWindowAppearing())
+                ImGui.SetKeyboardFocusHere();
+            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            bool enter = ImGui.InputText("Name###app_hist_name", ref _saveName, 48, ImGuiInputTextFlags.EnterReturnsTrue);
+            string name = _saveName.Trim();
+            var presets = _config.AppearancePresets ??= new();
+            if(name.Length > 0 && presets.Any(p => p.Name == name))
+                ImGui.TextDisabled("(replaces the saved look with this name)");
+            using(ImRaii.Disabled(name.Length == 0))
+            {
+                if((ImGui.Button("Save###app_hist_ok") || enter) && name.Length > 0 && _saving != null)
+                {
+                    var copy = _saving.Look.Copy();
+                    copy.Name = name;
+                    presets.RemoveAll(p => p.Name == name);
+                    presets.Add(copy);
+                    _config.Save();
+                    _status = $"Saved \"{name}\" under Saved looks.";
+                    _saving = null;
+                    ImGui.CloseCurrentPopup();
+                }
+            }
+            ImGui.SameLine();
+            if(ImGui.Button("Cancel###app_hist_cancel"))
+            {
+                _saving = null;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
+    }
+
+    private static string Ago(DateTime at)
+    {
+        var d = DateTime.Now - at;
+        if(d.TotalMinutes < 1)
+            return "just now";
+        if(d.TotalHours < 1)
+            return $"{(int)d.TotalMinutes} min ago";
+        if(d.TotalDays < 1)
+            return $"{(int)d.TotalHours} h ago";
+        return at.ToString("MMM d");
     }
 
     // ---- Race, clan, sex and the customize values
@@ -609,7 +750,7 @@ public sealed class AppearanceTab
             {
                 var pasted = Newtonsoft.Json.JsonConvert.DeserializeObject<AppearanceData>(ImGui.GetClipboardText() ?? "");
                 if(pasted is { Customize.Length: 26 })
-                    Apply(actor, pasted);
+                    Apply(actor, pasted, "Pasted");
             }
             catch
             {
@@ -634,7 +775,7 @@ public sealed class AppearanceTab
                         _status = error;
                         return;
                     }
-                    Apply(who, read);
+                    Apply(who, read, $"Imported {name}");
                     _status = $"Imported {name}.";
                 }
                 catch(Exception e)
@@ -659,7 +800,7 @@ public sealed class AppearanceTab
                         continue;
                     var theirs = Appearance.Read(other.Address, other.ObjectIndex);
                     if(theirs != null)
-                        Apply(actor, theirs);
+                        Apply(actor, theirs, $"Copied from {other.Name}");
                 }
         }
 
@@ -671,13 +812,24 @@ public sealed class AppearanceTab
             ImGui.TextUnformatted(presets[i].Name);
             ImGui.SameLine();
             if(ImGui.SmallButton("Whole look"))
-                Apply(actor, presets[i].Copy());
+                Apply(actor, presets[i].Copy(), $"Saved look: {presets[i].Name}");
             ImGui.SameLine();
             if(ImGui.SmallButton("Body only"))
+            {
                 _status = Appearance.Apply(actor.Address, actor.ObjectIndex, presets[i].Copy(), customize: true, gear: false, weapons: false);
+                var mixed = look.Copy();
+                mixed.Customize = (byte[])presets[i].Customize.Clone();
+                Remember(actor, mixed, $"Saved look (body): {presets[i].Name}");
+            }
             ImGui.SameLine();
             if(ImGui.SmallButton("Gear only"))
+            {
                 _status = Appearance.Apply(actor.Address, actor.ObjectIndex, presets[i].Copy(), customize: false, gear: true, weapons: true);
+                var mixed = look.Copy();
+                mixed.Gear = (ulong[])presets[i].Gear.Clone();
+                mixed.Weapons = (ulong[])presets[i].Weapons.Clone();
+                Remember(actor, mixed, $"Saved look (gear): {presets[i].Name}");
+            }
             ImGui.SameLine();
             if(ImGui.SmallButton("x") && ImGui.GetIO().KeyCtrl)
                 remove = i;
@@ -757,6 +909,7 @@ public sealed class AppearanceTab
             }
             Tooltip("Which mod collection this character is drawn with. Picking one gives this character its own;\n"
                 + "\"(the default)\" takes that away again. It's redrawn either way.");
+            DrawCollectionConfirm();
         }
         catch
         {
@@ -764,7 +917,84 @@ public sealed class AppearanceTab
         }
     }
 
-    private void SetCollection(ActorRef actor, Guid? id)
+    // A collection picked for a character the mod manager counts as the same one as others: asked first.
+    private (ActorRef Actor, Guid Id, string Name, List<string> Others)? _confirm;
+    private bool _openConfirm;
+
+    // Who else the mod manager would draw with a collection given to this character: it knows characters by name
+    // and home world, and a copy (a GPose actor, an actor added by another tool) by the character it was copied from.
+    private static List<string> SharingWith(ushort index)
+    {
+        var result = new List<string>();
+        try
+        {
+            var parentOf = Plugin.PluginInterface.GetIpcSubscriber<int, int>("Penumbra.GetCutsceneParentIndex.V5");
+            int Root(int i)
+            {
+                int p = -1;
+                try { p = parentOf.InvokeFunc(i); } catch { }
+                return p >= 0 ? p : i;
+            }
+            var objects = Plugin.ObjectTable;
+            int root = Root(index);
+            var me = objects[root];
+            string name = me?.Name.TextValue ?? "";
+            var spawner = Limber.Rig.ActorSpawner.Current;
+            foreach(var o in objects)
+            {
+                // (the character this one is a copy of is the same person, not someone else)
+                if(o == null || o.ObjectIndex == index || o.ObjectIndex == root || o is not Dalamud.Game.ClientState.Objects.Types.ICharacter)
+                    continue;
+                if(spawner != null && spawner.HasOwnIdentity(o.ObjectIndex))
+                    continue;
+                int r = Root(o.ObjectIndex);
+                var ro = objects[r];
+                if(r == root || (name.Length > 0 && ro != null && ro.Name.TextValue == name))
+                    result.Add(o.Name.TextValue + (o.ObjectIndex >= 200 ? $" (#{o.ObjectIndex})" : ""));
+            }
+        }
+        catch
+        {
+            // (no mod manager: nothing shared)
+        }
+        return result.Distinct().ToList();
+    }
+
+    private void DrawCollectionConfirm()
+    {
+        if(_openConfirm)
+        {
+            ImGui.OpenPopup("###app_coll_confirm");
+            _openConfirm = false;
+        }
+        if(!ImGui.BeginPopup("###app_coll_confirm"))
+            return;
+        if(_confirm is { } c)
+        {
+            ImGui.TextUnformatted($"The mod manager counts these as the same character as {c.Actor.Name}:");
+            foreach(var o in c.Others)
+                ImGui.BulletText(o);
+            ImGui.TextUnformatted($"Giving {c.Actor.Name} \"{c.Name}\" gives it to them too (and the mod manager remembers it).");
+            if(ImGui.Button("Change them all###app_coll_yes"))
+            {
+                _confirm = null;
+                ImGui.CloseCurrentPopup();
+                SetCollection(c.Actor, c.Id, confirmed: true);
+            }
+            ImGui.SameLine();
+            if(ImGui.Button("Cancel###app_coll_no"))
+            {
+                _confirm = null;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.TextDisabled("An actor Limber added can have one of its own instead: add one on the Actors page.");
+        }
+        else
+            ImGui.CloseCurrentPopup();
+        ImGui.EndPopup();
+    }
+
+    private void SetCollection(ActorRef actor, Guid? id, bool confirmed = false)
     {
         try
         {
@@ -777,40 +1007,55 @@ public sealed class AppearanceTab
             {
                 // An actor Limber added is a copy of the character it was made from, as far as the mod manager knows:
                 // it shares that character's collection (and every other copy's). It's made its own character first
-                // (known by its own name), so it has a collection of its own.
-                spawner!.SetOwnIdentity(index, true);
+                // (known by its own name), so it has a collection of its own. Never given to the character it was
+                // copied from instead: that changed everyone made from it.
+                if(!Limber.Rig.ActorSpawner.IsPlayerStyleName(actor.Name ?? ""))
+                {
+                    _status = $"\"{actor.Name}\" can't have a collection of its own: the mod manager only gives one to names "
+                        + "shaped like a character's (two words, like \"Ruby Rose\"). Give its look an actor name like that and add it again.";
+                    return;
+                }
+                bool wasOwn = spawner!.HasOwnIdentity(index);
+                spawner.SetOwnIdentity(index, true);
                 (ec, _) = set.InvokeFunc(index, id, true, true);
                 if(ec is not (0 or 1))
                 {
-                    spawner.SetOwnIdentity(index, false);
-                    (ec, _) = set.InvokeFunc(index, id, true, true);
+                    if(!wasOwn)
+                        spawner.SetOwnIdentity(index, false);
+                    _status = $"The mod manager couldn't give {actor.Name} a collection of its own (error {ec}); nothing was changed.";
+                    return;
                 }
+            }
+            else if(id != null)
+            {
+                if(!confirmed)
+                {
+                    var others = SharingWith(index);
+                    if(others.Count > 0)
+                    {
+                        string name = _collections != null && _collections.TryGetValue(id.Value, out var n) ? n : "that collection";
+                        _confirm = (actor, id.Value, name, others);
+                        _openConfirm = true;
+                        return;
+                    }
+                }
+                (ec, _) = set.InvokeFunc(index, id, true, true);
             }
             else
             {
+                // (an added actor that's still a copy has no collection of its own to take away: removing "its" one
+                // would take the character it was copied from's away)
+                if(spawned && !spawner!.HasOwnIdentity(index))
+                {
+                    _status = "It already uses the collection of the character it was copied from.";
+                    return;
+                }
                 (ec, _) = set.InvokeFunc(index, id, true, true);
-                if(spawned && id == null && spawner!.HasOwnIdentity(index))
+                if(spawned && spawner!.HasOwnIdentity(index))
                     spawner.SetOwnIdentity(index, false);
             }
             Limber.Rig.Appearance.Redraw(index);
             _status = ec is 0 or 1 ? (id == null ? "Back to the default (redrawn)." : "Collection set (redrawn).") : $"The mod manager couldn't set it (error {ec}).";
-            // (who else the mod manager now draws with it: characters it counts as the same one share it)
-            if(ec is 0 or 1 && id != null)
-            {
-                var get = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5");
-                var sharing = new List<string>();
-                foreach(var o in Plugin.ObjectTable)
-                {
-                    if(o == null || o.ObjectIndex == index || o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc && o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc
-                       && o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc)
-                        continue;
-                    var (valid, own, (other, _)) = get.InvokeFunc(o.ObjectIndex);
-                    if(valid && own && other == id && !_assigned.ContainsKey(o.ObjectIndex))
-                        sharing.Add(o.Name.TextValue);
-                }
-                if(sharing.Count > 0)
-                    _status += $" The mod manager counts {string.Join(", ", sharing.Distinct())} as the same character, so they have it too.";
-            }
             if(ec is 0 or 1)
             {
                 if(id != null)
@@ -831,7 +1076,7 @@ public sealed class AppearanceTab
         {
             ImGui.SameLine();
             if(ImGui.SmallButton("Put on"))
-                Apply(actor, npc.Look.Copy());
+                Apply(actor, npc.Look.Copy(), $"NPC: {npc.Name}");
             Tooltip("The NPC's whole look on the chosen character.");
             ImGui.SameLine();
             if(ImGui.SmallButton("Save"))

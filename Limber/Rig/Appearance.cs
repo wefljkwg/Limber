@@ -8,6 +8,17 @@ using WeaponSlot = FFXIVClientStructs.FFXIV.Client.Game.Character.DrawDataContai
 
 namespace Limber.Rig;
 
+/// <summary>A look recently put on from the Appearance &amp; gear page (its History), with where it came from.</summary>
+public sealed class AppearanceHistoryEntry
+{
+    public AppearanceData Look { get; set; } = new();
+    /// <summary>Where it came from ("Edited by hand", "Saved look: Name", "NPC: Name"...).</summary>
+    public string From { get; set; } = "";
+    /// <summary>The character it was put on.</summary>
+    public string Character { get; set; } = "";
+    public DateTime At { get; set; }
+}
+
 /// <summary>A character's look as Limber can set it: its customize bytes, gear (model, variant, dyes) and weapons.</summary>
 public sealed class AppearanceData
 {
@@ -21,6 +32,10 @@ public sealed class AppearanceData
     public string ActorName { get; set; } = "";
     /// <summary>A global preset put on an actor added with this look ("" = none).</summary>
     public string GlobalPreset { get; set; } = "";
+
+    /// <summary>The same body, gear and weapons (names aside).</summary>
+    public bool SameLook(AppearanceData other)
+        => Customize.AsSpan().SequenceEqual(other.Customize) && Gear.AsSpan().SequenceEqual(other.Gear) && Weapons.AsSpan().SequenceEqual(other.Weapons);
 
     public AppearanceData Copy() => new()
     {

@@ -159,7 +159,9 @@ public sealed unsafe class ActorSpawner : IDisposable
         }
         _number[index] = number;
         // (a look with its own actor name: that name, made unique if it's in use already)
-        string actorName = $"Limber {number}";
+        // ("Limber One": a name shaped like a player's, so the mod manager can give the actor a collection of its own;
+        // it refuses "Limber 1")
+        string actorName = $"Limber {NumberWord(number)}";
         string wanted = (name ?? look?.ActorName ?? "").Trim();
         if(wanted.Length > 0)
         {
@@ -191,11 +193,61 @@ public sealed unsafe class ActorSpawner : IDisposable
         return index;
     }
 
+    private static readonly string[] Ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+        "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+    private static readonly string[] Tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+    /// <summary>1 -> "One", 21 -> "Twentyone" (letters only, as player names are); the number itself past 99.</summary>
+    public static string NumberWord(int n)
+    {
+        if(n <= 0 || n > 99)
+            return n.ToString();
+        if(n < 20)
+            return Ones[n];
+        string ones = Ones[n % 10];
+        return Tens[n / 10] + ones.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// The game's rules for a player's name (what the mod manager needs to give a character a collection of its own):
+    /// two parts of 2 to 15 letters, each starting with a capital, 20 letters at most in all.
+    /// </summary>
+    public static bool IsPlayerStyleName(string name)
+    {
+        var parts = name.Split(' ');
+        if(parts.Length != 2 || name.Length > 21)
+            return false;
+        foreach(var part in parts)
+        {
+            if(part.Length is < 2 or > 15 || !char.IsUpper(part[0]))
+                return false;
+            foreach(var c in part)
+                if(!char.IsLetter(c) && c != '\'' && c != '-')
+                    return false;
+        }
+        return true;
+    }
+
     /// <summary>Removes an actor Limber added.</summary>
     public bool Despawn(ushort index)
     {
-        if(!_made.Remove(index))
+        if(!_made.Contains(index))
             return false;
+        // An actor with a collection of its own: the mod manager keeps that by name, so it's taken away again (the next
+        // actor given the same name would get it otherwise).
+        if(_own.Contains(index))
+        {
+            try
+            {
+                Plugin.PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5")
+                    .InvokeFunc(index, null, false, true);
+            }
+            catch
+            {
+                // (no mod manager)
+            }
+        }
+        _made.Remove(index);
         _waitingToDraw.Remove(index);
         _parent.Remove(index);
         _number.Remove(index);
