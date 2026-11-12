@@ -418,8 +418,19 @@ public static unsafe class BodySwap
             return original();
         if(!ModelRaces.TryGetValue(swap.Index, out var races) || slot >= races.Length || races[slot] == 0)
             return Body(human, true, original);
-        ushort* modelRace = (ushort*)(human + SlotBase + (nint)slot * SlotStride + SlotModelRace);
+        // (Human+0xC50 is a pointer to the slots' data - FFXIVClientStructs' ChangedEquipData - not the data itself:
+        // written straight into the Human it overwrote other fields and the body vanished)
+        byte* slots = *(byte**)(human + SlotBase);
+        if(slots == null || !SafeMemory.Plausible((nint)slots))
+            return Body(human, true, original);
+        ushort* modelRace = (ushort*)(slots + (nint)slot * SlotStride + SlotModelRace);
         ushort was = *modelRace;
+        // (only over a value that is a race id: cXXXX, 0101..1804 - anything else means this isn't the model race)
+        if(was < 101 || was > 1804 || was % 100 is not (1 or 4))
+        {
+            NoteRace(slot, was);
+            return Body(human, true, original);
+        }
         *modelRace = races[slot];
         try
         {
@@ -429,6 +440,15 @@ public static unsafe class BodySwap
         {
             *modelRace = was;
         }
+    }
+
+    private static readonly HashSet<uint> RaceNoted = new();
+
+    // (in the log once a slot: what was found where the model race should be, when it didn't look like one)
+    private static void NoteRace(uint slot, ushort found)
+    {
+        if(RaceNoted.Add(slot))
+            Plugin.Log.Warning($"Limber body swap: slot {slot}'s model race wasn't where expected (found {found}); its race kept.");
     }
 
     // The other body's model race for each slot, from the gear the character has on (framework thread).
@@ -441,6 +461,9 @@ public static unsafe class BodySwap
         for(int slot = 0; slot < 10; slot++)
             if(BodySlot((uint)slot))
                 races[slot] = ModelRace(swap.Body, (ushort)(look.Gear[slot] & 0xFFFF), slot);
+        if(!ModelRaces.TryGetValue(swap.Index, out var before) || !before.AsSpan().SequenceEqual(races))
+            Plugin.Log.Information($"Limber body swap: #{swap.Index} body c{swap.Body:D4}, each slot's model: "
+                + string.Join(" ", Enumerable.Range(0, 10).Where(i => races[i] != 0).Select(i => $"{i}:c{races[i]:D4}")));
         ModelRaces[swap.Index] = races;
     }
 
