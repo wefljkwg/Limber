@@ -76,7 +76,7 @@ public sealed class AnimationsTab
         {
             if(_retarget?.Target == actor.Address)
                 _retarget.Stop();
-            Animations.ClearRace();
+            Animations.ClearRace(actor.Address, actor.ObjectIndex);
             _status = Animations.Stop(actor.Address, actor.ObjectIndex);
             _speed = 1f;
         }
@@ -149,15 +149,19 @@ public sealed class AnimationsTab
         if(ImGui.BeginCombo("Race's version###anim_race", raceLabel))
         {
             if(ImGui.Selectable("Its own race###anim_race_own", _race < 0))
+            {
                 _race = -1;
+                Animations.ClearRace(actor.Address, actor.ObjectIndex);
+            }
             for(int i = 0; i < Animations.Races.Length; i++)
                 if(ImGui.Selectable($"{Animations.Races[i].Name}###anim_race_{i}", i == _race))
                     _race = i;
             ImGui.EndCombo();
         }
         if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("Play another race's version of the animation (experimental: the mod manager swaps the file for this character's "
-                + "collection). If the game already has the animation loaded, play another one first, then this one again.");
+            ImGui.SetTooltip("Play another race's version of the animation, as Anamnesis's \"Data path\" does: the character loads its\n"
+                + "animations as that race (the game's, or your mods made for that race), keeping its own body. Stays on until\n"
+                + "\"Its own race\" or Stop. If the game already has the animation loaded, play another one first, then this one again.");
         DrawOtherSkeleton(actor);
 
         // Filter: by what kind of animation it is (in plain words), the key's own group, and a search.

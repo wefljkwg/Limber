@@ -1222,6 +1222,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Gpu.FaceMorphs.Clear();
         Limber.Gpu.MeshSculpt.Save();
         Limber.Gpu.MeshSculpt.Stop();
+        Limber.Rig.Animations.ClearRace();
         Limber.Gpu.BustShapes.Stop();
         Limber.Gpu.SkinCapture.Dispose();
         // Unhook first so nothing runs against the parts being torn down.

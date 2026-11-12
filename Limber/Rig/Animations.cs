@@ -296,6 +296,8 @@ public static unsafe class Animations
     /// <summary>Framework update: the restarts waiting their frames.</summary>
     public static void Tick()
     {
+        if(Paths.Count > 0)
+            KeepPaths();
         for(int i = Restarts.Count - 1; i >= 0; i--)
         {
             var p = Restarts[i];
@@ -384,6 +386,7 @@ public static unsafe class Animations
         var c = Get(address, index);
         if(c == null)
             return "The character isn't there.";
+        ClearRace(address, index);
         c->Timeline.BaseOverride = 0;
         ushort back = Before.GetValueOrDefault(address, (ushort)3);
         Before.Remove(address);
@@ -493,9 +496,11 @@ public static unsafe class Animations
     }
 
     /// <summary>
-    /// Plays another race's version of an animation: asks Penumbra to give this character's race that race's file
-    /// (a temporary swap, in this character's collection only), then plays it. If the game already has this race's
-    /// file loaded, the swap may only show from the next time it loads it.
+    /// Plays another race's version of an animation, the way Anamnesis does it ("Data path"): the character's model
+    /// keeps its own race, but the race number the game picks its files by (Human +0xAA0, and the head's +0xAA4) is
+    /// set to the other race's, so every animation it loads from then on is that race's - the game's own, or a mod's
+    /// made for that race (the mod manager gives it as it would to that race). Kept on until "Its own race" or Stop.
+    /// If the game already has the animation loaded, play another one first, then this one again.
     /// </summary>
     public static string PlayAsRace(nint address, ushort index, ushort id, ushort raceBody)
     {
@@ -504,43 +509,128 @@ public static unsafe class Animations
         if(key.Length == 0 || own == 0)
             return "Can't tell which animation file that is.";
         if(raceBody == own)
-            return Play(address, index, id);
-        // That race's file, or (if it has none of its own) the nearest race's it falls back on.
-        string to = NearestFile(raceBody, key, out ushort used);
-        if(to.Length == 0)
-            return "No race has a version of this animation (it isn't a body animation?).";
-        // Every file the game may ask for this character's race (its own, or the ones it falls back on) gives that one.
-        var swaps = new Dictionary<string, string>();
-        foreach(var b in Chain(own))
-            if(b != used)
-                swaps[FileOf(b, key)] = to;
-        if(swaps.Count == 0)
-            return Play(address, index, id);
-        try
         {
-            var collection = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index);
-            if(!collection.Item1)
-                return "The mod manager doesn't know this character right now.";
-            ClearRace();
-            _swapCollection = collection.Item3.Item1;
-            int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
-                .InvokeFunc(SwapTag, _swapCollection, swaps, "", SwapPriority);
-            if(result != 0)
-                return $"The mod manager didn't take the swap (it said {result}).";
+            ClearRace(address, index);
+            return Play(address, index, id);
         }
-        catch(Exception e)
-        {
-            return "The mod manager isn't reachable: " + e.Message;
-        }
+        string problem = SetDataPath(address, index, raceBody);
+        if(problem.Length > 0)
+            return problem;
         Play(address, index, id);
-        string name = Races.FirstOrDefault(r => r.Body == raceBody).Name;
-        return used == raceBody ? $"Playing {key} as {name}."
-            : $"Playing {key} as {name} (that race has no file of its own: {Races.FirstOrDefault(r => r.Body == used).Name}'s, which it uses).";
+        return $"Playing {key} as {Races.FirstOrDefault(r => r.Body == raceBody).Name}.";
+    }
+
+    // ---- The data path (Anamnesis's name): the race the game loads this character's files for
+
+    private const int DataPathOffset = 0xAA0; // Human.RaceSexId
+    private const int DataHeadOffset = 0xAA4;
+
+    private sealed class DataPath
+    {
+        public required ushort Index;
+        public nint Draw;
+        public short OwnPath;
+        public byte OwnHead;
+        public required short Path;
+        public byte Head;
+    }
+    private static readonly Dictionary<nint, DataPath> Paths = new();
+
+    private static FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase* HumanOf(Character* c)
+    {
+        var draw = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)c->GameObject.DrawObject;
+        if(draw == null || draw->GetModelType() != FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase.ModelType.Human)
+            return null;
+        return draw;
+    }
+
+    // The head number for a race's path (Anamnesis's table: which face set the head is read from).
+    private static byte HeadFor(byte tribe, short path)
+    {
+        if(tribe % 2 != 0)
+            return (byte)(path is 301 or 401 ? 0x65 : 0x01);
+        if(tribe <= 10)
+            return (byte)(path is 101 or 201 or 104 ? 0x01 : 0x65);
+        return (byte)(path is 301 or 401 ? 0xC9 : 0x65);
+    }
+
+    private static string SetDataPath(nint address, ushort index, ushort raceBody)
+    {
+        var c = Get(address, index);
+        if(c == null)
+            return "The character isn't there.";
+        var human = HumanOf(c);
+        if(human == null)
+            return "Only a normal (human) body can play another race's animations.";
+        byte tribe = ((byte*)&c->DrawData.CustomizeData)[4];
+        if(!Paths.TryGetValue(address, out var d) || d.Draw != (nint)human)
+        {
+            d = new DataPath
+            {
+                Index = index, Draw = (nint)human, Path = (short)raceBody,
+                OwnPath = *(short*)((byte*)human + DataPathOffset), OwnHead = *((byte*)human + DataHeadOffset),
+            };
+            Paths[address] = d;
+        }
+        d.Path = (short)raceBody;
+        d.Head = HeadFor(tribe, d.Path);
+        *(short*)((byte*)human + DataPathOffset) = d.Path;
+        *((byte*)human + DataHeadOffset) = d.Head;
+        return "";
+    }
+
+    /// <summary>The character's own race's animations again.</summary>
+    public static void ClearRace(nint address, ushort index)
+    {
+        if(!Paths.Remove(address, out var d))
+            return;
+        var c = Get(address, index);
+        if(c == null)
+            return;
+        var human = HumanOf(c);
+        if(human != null && (nint)human == d.Draw)
+        {
+            *(short*)((byte*)human + DataPathOffset) = d.OwnPath;
+            *((byte*)human + DataHeadOffset) = d.OwnHead;
+        }
+    }
+
+    /// <summary>Which race's animations the character plays now (0: its own).</summary>
+    public static ushort RaceOf(nint address) => Paths.TryGetValue(address, out var d) ? (ushort)d.Path : (ushort)0;
+
+    // (framework) Kept on: written again if the game set it back, and on the new model after a redraw.
+    private static void KeepPaths()
+    {
+        foreach(var (address, d) in Paths.ToArray())
+        {
+            var c = Get(address, d.Index);
+            if(c == null)
+            {
+                Paths.Remove(address);
+                continue;
+            }
+            var human = HumanOf(c);
+            if(human == null)
+                continue;
+            if((nint)human != d.Draw)
+            {
+                d.Draw = (nint)human;
+                d.OwnPath = *(short*)((byte*)human + DataPathOffset);
+                d.OwnHead = *((byte*)human + DataHeadOffset);
+            }
+            if(*(short*)((byte*)human + DataPathOffset) != d.Path)
+                *(short*)((byte*)human + DataPathOffset) = d.Path;
+            if(*((byte*)human + DataHeadOffset) != d.Head)
+                *((byte*)human + DataHeadOffset) = d.Head;
+        }
     }
 
     /// <summary>Takes the race swap away again.</summary>
     public static void ClearRace()
     {
+        // (every character's own race's animations back: the data paths)
+        foreach(var (address, d) in Paths.ToArray())
+            ClearRace(address, d.Index);
         if(_swapCollection == Guid.Empty)
             return;
         try
