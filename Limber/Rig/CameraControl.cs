@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Dalamud.Hooking;
@@ -222,41 +223,38 @@ public static unsafe class CameraControl
     /// <summary>Metres a second (Shift: three times as fast, Ctrl: a third).</summary>
     public static float FreeSpeed = 3f;
 
-    // The game's "movement off" count (what Cammy's free camera uses: anything may add one, movement is off while it's
-    // above 0), so the character stays put while the keys fly the camera.
-    internal const string MovementOffSig = "F3 0F 10 05 ?? ?? ?? ?? 0F 2E C7";
-    private static int* _movementOff;
-    private static bool _movementOffTried, _holdingMovement;
-
-    private static int* MovementOff()
-    {
-        if(!_movementOffTried)
-        {
-            _movementOffTried = true;
-            try
-            {
-                nint at = Plugin.SigScanner.ScanText(MovementOffSig);
-                _movementOff = (int*)(at + 8 + *(int*)(at + 4));
-            }
-            catch(Exception e)
-            {
-                Plugin.Log.Warning(e, "Limber: couldn't find the game's movement switch (free camera: the keys may move the character too)");
-            }
-        }
-        return _movementOff;
-    }
+    // While it's on, the game is told the movement keys aren't pressed (its key bindings' "held" / "pressed" checks for
+    // move forward / back / left / right, strafe, jump, ascend, descend, and the controller's move stick answer "no",
+    // as Cammy's free camera does), so the character stays put; Limber reads the keys itself.
+    private delegate byte InputIdDelegate(nint inputData, uint id);
+    private delegate int AxisDelegate(nint inputData, uint id);
+    private static Hook<InputIdDelegate>? _held, _pressed;
+    private static Hook<AxisDelegate>? _axis;
+    private static bool _inputTried, _holdingMovement;
+    private static readonly HashSet<uint> MoveInputs = [321, 322, 323, 324, 325, 326, 348, 448, 449];
 
     private static void HoldMovement(bool hold)
     {
-        if(hold == _holdingMovement)
-            return;
-        var p = MovementOff();
-        // (only a count that looks like one: after a patch the address may be something else)
-        if(p == null || *p < 0 || *p > 64)
-            return;
-        *p += hold ? 1 : -1;
-        if(*p < 0)
-            *p = 0;
+        if(!_inputTried && hold)
+        {
+            _inputTried = true;
+            try
+            {
+                _held = Plugin.GameInterop.HookFromAddress<InputIdDelegate>(Plugin.SigScanner.ScanText("E9 ?? ?? ?? ?? B9 4F 01 00 00"),
+                    (d, id) => _holdingMovement && MoveInputs.Contains(id) ? (byte)0 : _held!.Original(d, id));
+                _pressed = Plugin.GameInterop.HookFromAddress<InputIdDelegate>(Plugin.SigScanner.ScanText("E9 ?? ?? ?? ?? 83 7F 44 02"),
+                    (d, id) => _holdingMovement && MoveInputs.Contains(id) ? (byte)0 : _pressed!.Original(d, id));
+                _axis = Plugin.GameInterop.HookFromAddress<AxisDelegate>(Plugin.SigScanner.ScanText("E8 ?? ?? ?? ?? 66 44 0F 6E C3"),
+                    (d, id) => _holdingMovement && id is 3 or 4 ? 0 : _axis!.Original(d, id));
+                _held.Enable();
+                _pressed.Enable();
+                _axis.Enable();
+            }
+            catch(Exception e)
+            {
+                Plugin.Log.Warning(e, "Limber: couldn't find the game's movement keys (free camera: the keys move the character too)");
+            }
+        }
         _holdingMovement = hold;
     }
 
@@ -430,6 +428,10 @@ public static unsafe class CameraControl
     /// <summary>Everything put back (plugin unloading).</summary>
     public static void Dispose()
     {
+        _holdingMovement = false;
+        _held?.Dispose();
+        _pressed?.Dispose();
+        _axis?.Dispose();
         try
         {
             SetNoCollision(false);
