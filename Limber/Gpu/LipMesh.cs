@@ -546,7 +546,7 @@ public static unsafe class LipMesh
                     else
                         Write(state, buffer, state.LastFrame as Frame);
                 }
-                else if(state.SculptVersion != (MeshSculpt.Applies(state.Address) ? MeshSculpt.Version : -1))
+                else if(state.SculptVersion != (MeshSculpt.AppliesInOral(state.Address) ? MeshSculpt.Version : -1))
                     WriteStill(state, buffer);
                 return;
             }
@@ -1250,7 +1250,7 @@ public static unsafe class LipMesh
                 }
             }
         }
-        MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address);
+        MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address, oral: true);
         state.SculptVersion = -2; // (the lips moving: written again once they're still)
         LiveMesh.Upload(buffer, state.Target.Desc, state.Work);
     }
@@ -1258,7 +1258,7 @@ public static unsafe class LipMesh
     // The lips still (nothing touching): the face as it is, with the morphs and the mesh sculpt's edits.
     private static void WriteStill(State state, nint buffer)
     {
-        bool sculpt = MeshSculpt.Applies(state.Address);
+        bool sculpt = MeshSculpt.AppliesInOral(state.Address);
         bool morphs = FaceMorphs.Active && FaceMorphs.Wanted == state.Address;
         state.SculptVersion = sculpt ? MeshSculpt.Version : -1;
         if(!sculpt && !morphs)
@@ -1270,7 +1270,7 @@ public static unsafe class LipMesh
         if(morphs)
             FaceMorphs.ApplyTo(state.Work, state.File, state.ByteWidth);
         if(sculpt)
-            MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address);
+            MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address, oral: true);
         LiveMesh.Upload(buffer, state.Target.Desc, state.Work);
     }
 }

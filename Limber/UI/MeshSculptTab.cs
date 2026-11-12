@@ -138,8 +138,8 @@ public sealed class MeshSculptTab
                                         | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
         ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "Experimental.");
         ImGui.SameLine();
-        ImGui.TextWrapped("Pinch and drag the face's own mesh with the mouse, right on the face. The edits follow the face's bones "
-            + "and are added on top of Oral's lips and the face morphs. Only on your screen. Adult characters only.");
+        ImGui.TextWrapped("Pinch and drag the face's own mesh with the mouse, right on the face (expressions, face shape...). The edits "
+            + "follow the face's bones and are added on top of the face morphs (and Oral's lips). Only on your screen.");
         var actor = _selection.Actor;
         if(!actor.IsSet)
         {
@@ -148,18 +148,17 @@ public sealed class MeshSculptTab
         }
         string name = actor.Name ?? "";
         if(name.Length == 0)
-        {
+         {
             ImGui.TextDisabled("This character has no name to keep its edits under.");
             return;
         }
         var look = Appearance.Read(actor.Address, actor.ObjectIndex);
-        if(look == null || look.Customize[0] == 3 || look.Customize[2] == 4)
-        {
-            ImGui.TextDisabled("Mesh sculpt is for adult characters only.");
+        if(look == null)
             return;
-        }
+        // (any character, for expressions; Oral's lips use the edits only on adult bodies, not Lalafell)
+        bool oralOk = look.Customize[0] != 3 && look.Customize[2] != 4;
         var model = ModelOf(actor);
-        MeshSculpt.Use(actor.Address, name, model);
+        MeshSculpt.Use(actor.Address, name, model, oralOk);
         if(model == null)
         {
             ImGui.TextDisabled(_note);
@@ -291,7 +290,8 @@ public sealed class MeshSculptTab
         ImGui.TextDisabled($"{_note} {_selected.Count} selected, {sculpt.Edits.Count} edited (saved by themselves).");
         if(sculpt.Edits.Count > 0 && sculpt.On)
         {
-            string through = LipMesh.Running && LipMesh.Owner == actor.Address ? "Shown through Oral's lips."
+            string through = LipMesh.Running && LipMesh.Owner == actor.Address
+                ? (oralOk ? "Shown through Oral's lips." : "Not shown while Oral has this face.")
                 : FaceRig.Running && FaceRig.Owner == actor.Address ? "Shown through the face rig."
                 : "Starting the face rig to show them... " + FaceRig.Status;
             ImGui.TextDisabled(through + (MeshSculpt.Applied.Length > 0 ? $" ({MeshSculpt.Applied})" : ""));

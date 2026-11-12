@@ -76,10 +76,16 @@ public static class MeshSculpt
     public static bool Applies(nint address)
         => address != 0 && address == _owner && _model != null && _sculpt is { On: true } s && s.Edits.Count > 0;
 
+    private static bool _oralOk;
+
+    /// <summary>The edits go on this character's face during Oral too (not for Lalafell: expressions only).</summary>
+    public static bool AppliesInOral(nint address) => _oralOk && Applies(address);
+
     /// <summary>The page's character and face (its saved edits loaded when they change).</summary>
-    public static void Use(nint owner, string name, Model? model)
+    public static void Use(nint owner, string name, Model? model, bool oralOk)
     {
         _owner = owner;
+        _oralOk = oralOk;
         if(model == null)
         {
             if(_model != null)
@@ -321,11 +327,11 @@ public static class MeshSculpt
     /// vertices, morphs, lips...): positions moved by the edits, normals turned with the surface. Returns false if
     /// nothing was written.
     /// </summary>
-    public static bool ApplyTo(byte[] work, string file, int byteWidth, nint address)
+    public static bool ApplyTo(byte[] work, string file, int byteWidth, nint address, bool oral = false)
     {
         var model = _model;
         var sculpt = _sculpt;
-        if(!Applies(address) || model == null || sculpt == null)
+        if(!(oral ? AppliesInOral(address) : Applies(address)) || model == null || sculpt == null)
             return false;
         if(FaceMorphs.KeyOf(file, byteWidth) != model.Key)
         {
