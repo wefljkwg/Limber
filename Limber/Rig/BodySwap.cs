@@ -351,11 +351,13 @@ public static unsafe class BodySwap
             _imc = gi.HookFromAddress<PathByIndex>(F(89), (h, b, n, i) => BodySlotCall(h, i, true, () => _imc!.Original(h, b, n, i)));
             // (skin stays the character's own - its tone, scales and markings - so skin materials, the skin material and
             // body decals aren't asked as the other race; the gear's own materials are)
-            // (a body of the other gender takes its own skin material too: men's and women's skin textures are laid out
-            // differently; the tone still comes from the character's own colours)
-            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m)));
-            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => _skinMtrl!.Original(h, b, n, i));
-            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
+            // (the skin is always the character's own race's - the head's colours - and for a body of the other gender,
+            // that race's skin for that gender: laid out for that body. See SkinCall.)
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => IsSkin(m)
+                ? SkinCall(h, BodySlot(i), () => _mtrl!.Original(h, b, n, i, m))
+                : BodySlotCall(h, i, true, () => _mtrl!.Original(h, b, n, i, m)));
+            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => SkinCall(h, BodySlot(i), () => _skinMtrl!.Original(h, b, n, i)));
+            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => SkinCall(h, BodySlot(i), () => _decal!.Original(h, b, n, i)));
             _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => BodySlotCall(h, s, true, () => _deformer!.Original(h, s)));
             _race = gi.HookFromAddress<RaceDelegate>(F(88), RaceDetour);
             _sklb.Enable(); _mdl.Enable(); _skp.Enable(); _phyb.Enable(); _kdb.Enable(); _bnmb.Enable(); _pap.Enable();
@@ -409,8 +411,33 @@ public static unsafe class BodySwap
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, ushort[]> ModelRaces = new(); // by object index
     private static readonly Dictionary<(ushort Race, bool Accessory), byte[]?> Eqdp = new();
 
-    private static bool OtherSex(nint human)
-        => SwapFor(human) is { } swap && (swap.Own / 100 % 2) != (swap.Body / 100 % 2);
+    // The skin of a swapped body: the character's own race's (its head's colours, scales, markings), and when the body
+    // is the other gender's, that race's skin for that gender (men's and women's skin are laid out differently): a
+    // Miqo'te woman with a Roegadyn man's body gets the Miqo'te man's skin. (Given the body's own race's skin it took
+    // that race's colours: a Roegadyn's pale skin under a Miqo'te head.)
+    private static T SkinCall<T>(nint human, bool bodyPart, Func<T> original)
+    {
+        if(!bodyPart || BodySwaps.Count == 0 || SwapFor(human) is not { } swap)
+            return original();
+        bool ownFemale = swap.Own / 100 % 2 == 0, bodyFemale = swap.Body / 100 % 2 == 0;
+        if(ownFemale == bodyFemale)
+            return original();
+        ushort ownMale = (ushort)(ownFemale ? swap.Own - 100 : swap.Own);
+        ushort skin = (ushort)(bodyFemale ? ownMale + 100 : ownMale);
+        ushort* race = (ushort*)(human + RaceSexIdOffset);
+        ushort was = *race;
+        if(was != swap.Own)
+            return original();
+        *race = skin;
+        try
+        {
+            return original();
+        }
+        finally
+        {
+            *race = was;
+        }
+    }
 
     private static T BodySlotCall<T>(nint human, uint slot, bool swapThis, Func<T> original)
     {
