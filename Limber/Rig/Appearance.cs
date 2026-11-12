@@ -89,6 +89,9 @@ public static unsafe class Appearance
         var c = Get(address, index);
         if(c == null)
             return "The character isn't there.";
+        // (a body-swapped character: the swap stays on through the new look; see BodySwap.LookChanging)
+        if(customize && !_reapplying && look.Customize.Length >= 26)
+            look = BodySwap.LookChanging(address, index, look);
         bool redraw = false;
         if(customize && look.Customize.Length >= 26)
         {
@@ -455,8 +458,10 @@ public static unsafe class Appearance
     /// </summary>
     public static void Redraw(ushort index)
     {
-        // (only an actor Limber added outside GPose, still there: everyone else through Penumbra, as always)
-        bool clientOnly = !Plugin.ClientState.IsGPosing && (ActorSpawner.Current?.StillOurs(index) ?? false);
+        // In GPose: the game's own way, as Brio does (the mod manager's redraw doesn't always load a GPose actor again
+        // with its collection: a look put on came out with the wrong mods, or needed redrawing over and over). Outside
+        // GPose: through Penumbra, as always (only an actor Limber added there, still there, the game's way).
+        bool clientOnly = Plugin.ClientState.IsGPosing || (ActorSpawner.Current?.StillOurs(index) ?? false);
         if(!clientOnly)
             try
             {

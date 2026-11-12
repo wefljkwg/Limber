@@ -59,7 +59,7 @@ public static unsafe class BodySwap
             look.Customize[5] = 1;
         if(look.Customize[22] is 0 or > 4)
             look.Customize[22] = 1;
-        string result = Appearance.Apply(address, index, look, customize: true, gear: false, weapons: false);
+        string result = OwnApply(address, index, look);
         if(!result.StartsWith("Applied", StringComparison.Ordinal))
             return result;
 
@@ -102,7 +102,7 @@ public static unsafe class BodySwap
         look.Customize[4] = before.Look.Customize[4];
         look.Customize[5] = before.Look.Customize[5];
         look.Customize[22] = before.Look.Customize[22];
-        string result = Appearance.Apply(address, index, look, customize: true, gear: false, weapons: false);
+        string result = OwnApply(address, index, look);
         if(moves != null)
             lock(moves.Sync)
                 if(moves.Get(address) is { } offset)
@@ -125,8 +125,143 @@ public static unsafe class BodySwap
     private static int _pruneFrames;
 
     /// <summary>Framework update.</summary>
+    // ---- A new look put on a swapped character (a saved look, an import, a copy...): the swap stays
+    //
+    // Whole swap: the new look is the character's own now (what Swap back returns to), worn as the swapped race.
+    // Body only: the swap is let go for one redraw, so the game makes the new look's colours for its own race (the
+    // swapped body would mix up its palette), they're taken, and the body is swapped again on top.
+
+    private static bool _swapping;
+
+    private static string OwnApply(nint address, ushort index, AppearanceData look)
+    {
+        _swapping = true;
+        try
+        {
+            return Appearance.Apply(address, index, look, customize: true, gear: false, weapons: false);
+        }
+        finally
+        {
+            _swapping = false;
+        }
+    }
+
+    private sealed class Reswap
+    {
+        public required ushort Index;
+        public required byte Race, Tribe, Sex;
+        public required System.Numerics.Vector3 Tint;
+        public nint Draw;
+        public int Frames, Settled;
+    }
+    private static readonly Dictionary<nint, Reswap> Reswaps = new();
+
+    /// <summary>Whether a body swap is waiting to go back on after a new look (Appearance & gear).</summary>
+    public static bool Reswapping(nint address) => Reswaps.ContainsKey(address);
+
+    /// <summary>
+    /// Called by Appearance.Apply before a look's customize data is written (not for Limber's own swaps, or a kept
+    /// look put back): the look to write instead.
+    /// </summary>
+    public static AppearanceData LookChanging(nint address, ushort index, AppearanceData look)
+    {
+        if(_swapping || look.Customize.Length < 26 || (!Swapped.ContainsKey(address) && !BodySwaps.ContainsKey(address) && !Reswaps.ContainsKey(address)))
+            return look;
+        var now = Appearance.Read(address, index);
+        if(now == null || now.Customize.AsSpan().SequenceEqual(look.Customize))
+            return look;
+        if(Swapped.TryGetValue(address, out var before))
+        {
+            Swapped[address] = before with { Look = look.Copy() };
+            var worn = look.Copy();
+            worn.Customize[0] = now.Customize[0];
+            worn.Customize[1] = now.Customize[1];
+            worn.Customize[4] = now.Customize[4];
+            if(worn.Customize[5] is 0 or > 4)
+                worn.Customize[5] = 1;
+            if(worn.Customize[22] is 0 or > 4)
+                worn.Customize[22] = 1;
+            Plugin.Log.Information($"Limber body swap: #{index} took a new look; still swapped (race {worn.Customize[0]}).");
+            return worn;
+        }
+        if(BodySwaps.TryGetValue(address, out var swap))
+        {
+            var (race, tribe, sex) = RaceOf(swap.Body);
+            Reswaps[address] = new Reswap
+            {
+                Index = index, Race = race, Tribe = tribe, Sex = sex, Tint = SkinTintOf(index),
+                Draw = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)Get(address, index))->DrawObject,
+            };
+            // (let go without a redraw of its own: the new look's redraw draws it unswapped)
+            BodySwaps.Remove(address);
+            ModelRaces.TryRemove(index, out _);
+            OwnColours.Remove(address);
+            GameColours.Remove(address);
+            foreach(var key in Tinted.Keys.Where(k => k.Index == index).ToList())
+                Tinted.TryRemove(key, out _);
+            RefreshDraws();
+            Plugin.Log.Information($"Limber body swap: #{index} took a new look; body c{swap.Body:D4} goes back on once it's drawn.");
+        }
+        else if(Reswaps.TryGetValue(address, out var waiting))
+        {
+            // (another look while waiting: wait for that one's redraw instead)
+            waiting.Draw = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)Get(address, index))->DrawObject;
+            waiting.Frames = waiting.Settled = 0;
+        }
+        return look;
+    }
+
+    // The race, clan and sex of a body id (BodyCode the other way round).
+    private static (byte Race, byte Tribe, byte Sex) RaceOf(ushort body)
+    {
+        int n = body / 100;
+        byte sex = (byte)(n % 2 == 0 ? 1 : 0);
+        return (n - sex) switch
+        {
+            1 => (1, 1, sex), 3 => (1, 2, sex), 5 => (2, 3, sex), 11 => (3, 5, sex), 7 => (4, 7, sex),
+            9 => (5, 9, sex), 13 => (6, 11, sex), 15 => (7, 13, sex), 17 => (8, 15, sex),
+            _ => ((byte)0, (byte)0, sex),
+        };
+    }
+
+    // (framework) Bodies to swap again once the new look is drawn (its own colours made).
+    private static void PumpReswaps()
+    {
+        foreach(var (address, r) in new List<KeyValuePair<nint, Reswap>>(Reswaps))
+        {
+            var c = Get(address, r.Index);
+            if(c == null || r.Race == 0)
+            {
+                Reswaps.Remove(address);
+                continue;
+            }
+            r.Frames++;
+            nint draw = (nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject;
+            bool redrawn = draw != 0 && draw != r.Draw && ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->IsReadyToDraw();
+            // (drawn anew and settled for a moment; or, after five seconds, anyway)
+            if(redrawn)
+                r.Settled++;
+            // (a redraw can make the new model at the same address: then ready again after a moment is enough)
+            if(r.Settled < 15 && !(r.Frames >= 90 && ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->IsReadyToDraw()) && r.Frames < 300)
+                continue;
+            Reswaps.Remove(address);
+            var now = Appearance.Read(address, r.Index);
+            if(now == null || BodyCode(now.Customize[0], now.Customize[4], now.Customize[1]) == BodyCode(r.Race, r.Tribe, r.Sex))
+            {
+                Plugin.Log.Information($"Limber body swap: #{r.Index}'s new look has that body already; not swapped again.");
+                continue;
+            }
+            string result = SwapBodyOnly(address, r.Index, r.Race, r.Tribe, r.Sex);
+            Plugin.Log.Information($"Limber body swap: #{r.Index} swapped again after a new look: {result}");
+            if(r.Tint != System.Numerics.Vector3.One)
+                Tints[r.Index] = r.Tint;
+        }
+    }
+
     public static void Tick()
     {
+        if(Reswaps.Count > 0)
+            PumpReswaps();
         if(BodySwaps.Count > 0)
         {
             FitHeads();
