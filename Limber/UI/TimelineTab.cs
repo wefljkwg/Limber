@@ -499,6 +499,17 @@ public sealed class TimelineTab
                 }
                 ImGui.EndMenu();
             }
+            if(ImGui.BeginMenu("Limber Animations###tl_m_lanim"))
+            {
+                foreach(var (key, label, tip) in LimberAnimationsTab.Startable)
+                {
+                    if(ImGui.MenuItem($"{label}###tl_m_lanim_{key}"))
+                        Add(clip, name, "lanim", key);
+                    if(ImGui.IsItemHovered())
+                        ImGui.SetTooltip(tip + "\nKey it on (or off): it starts (stops) when the key is reached, as with its Start button.");
+                }
+                ImGui.EndMenu();
+            }
             foreach(var (property, feature, depth) in TimelineService.Features)
                 SettingsMenu(clip, name, "path", property, feature, depth, name);
         }

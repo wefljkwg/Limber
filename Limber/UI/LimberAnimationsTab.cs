@@ -313,7 +313,7 @@ public sealed class LimberAnimationsTab
     }
 
     // The animations "Start all selected" can start: key, name, tooltip.
-    private static readonly (string Key, string Name, string Tip)[] Startable =
+    public static readonly (string Key, string Name, string Tip)[] Startable =
     [
         ("throb", "Throbbing", "Penis throbbing."),
         ("balls", "Testicle throbbing", "Testicle throbbing (in time with the penis when both are picked)."),
@@ -326,7 +326,7 @@ public sealed class LimberAnimationsTab
         ("height", "Height growth / shrinking", "The whole character growing or shrinking (started over from its start size)."),
     ];
 
-    private bool IsOn(string name, string key) => key switch
+    public bool IsOn(string name, string key) => key switch
     {
         "throb" => (_config.Throb ??= new()).TryGetValue(name, out var t) && t.Enabled,
         "balls" => (_config.BallThrob ??= new()).TryGetValue(name, out var b) && b.Enabled,
@@ -354,7 +354,7 @@ public sealed class LimberAnimationsTab
         _ => -1,
     };
 
-    private void SetOn(string name, string key, bool on, ActorRef actor)
+    public void SetOn(string name, string key, bool on, ActorRef actor)
     {
         switch(key)
         {

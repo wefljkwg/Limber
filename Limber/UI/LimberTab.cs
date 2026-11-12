@@ -2144,11 +2144,46 @@ public sealed partial class LimberTab
         Slider("Spacing##lmb_shape", soft.Spacing, v => soft.Spacing = v, "Moves the two apart (+) or together (-) (0 = unchanged).", -1f, 1f);
         if(part == Limber.BodyRig.RigParts.Breasts)
         {
+            // Each part: its size, then where it is (X out / in, Y up / down, Z forward / back).
+            void Move(int part)
+            {
+                var move = soft.PartMove is { Length: 15 } m ? m : new float[15];
+                string[] axes = ["X", "Y", "Z"];
+                string[] tips = ["Out to the side (+) or in toward the middle (-).", "Up (+) or down (-).", "Forward (+) or back (-)."];
+                for(int a = 0; a < 3; a++)
+                {
+                    ImGui.SameLine();
+                    float v = move[part * 3 + a];
+                    ImGui.SetNextItemWidth(60 * ImGuiHelpers.GlobalScale);
+                    if(ImGui.SliderFloat($"###lmb_part_{part}_{a}", ref v, -0.5f, 0.5f, axes[a] + " %.2f"))
+                    {
+                        var next = (float[])move.Clone();
+                        next[part * 3 + a] = v;
+                        soft.PartMove = next;
+                        move = next;
+                        changed = true;
+                    }
+                    if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                    {
+                        var next = (float[])move.Clone();
+                        next[part * 3 + a] = 0f;
+                        soft.PartMove = next;
+                        move = next;
+                        changed = true;
+                    }
+                    Tooltip($"Moves this part {tips[a]} In breast separations. Right-click: 0.");
+                }
+            }
             Slider("Breast 1 (base)##lmb_shape", soft.Part1, v => soft.Part1 = v, "How wide the base is, where it meets the chest (1 = unchanged).", 0.2f, 3f);
+            Move(0);
             Slider("Breast 2 (lower)##lmb_shape", soft.Part2, v => soft.Part2 = v, "A bit out from the base (1 = unchanged).", 0.2f, 3f);
+            Move(1);
             Slider("Breast 3 (middle)##lmb_shape", soft.Part3, v => soft.Part3 = v, "The middle, where most of it is (1 = unchanged).", 0.2f, 3f);
+            Move(2);
             Slider("Breast 4 (areolas)##lmb_shape", soft.Part4, v => soft.Part4 = v, "The front round the areolas, and the areolas (1 = unchanged).", 0.2f, 3f);
+            Move(3);
             Slider("Breast 5 (tip)##lmb_shape", soft.Part5, v => soft.Part5 = v, "The very front: the tip and the nipples (1 = unchanged).", 0.2f, 3f);
+            Move(4);
         }
         ImGui.TreePop();
         }
@@ -2181,6 +2216,7 @@ public sealed partial class LimberTab
             soft.Size = soft.Width = soft.Height = soft.Projection = 1f;
             soft.Lift = soft.Spacing = 0f;
             soft.Part1 = soft.Part2 = soft.Part3 = soft.Part4 = soft.Part5 = 1f;
+            soft.PartMove = new float[15];
             soft.Shapes = new();
             changed = true;
         }
@@ -2198,6 +2234,7 @@ public sealed partial class LimberTab
             fresh.Size = soft.Size; fresh.Width = soft.Width; fresh.Height = soft.Height; fresh.Projection = soft.Projection;
             fresh.Lift = soft.Lift; fresh.Spacing = soft.Spacing;
             (fresh.Part1, fresh.Part2, fresh.Part3, fresh.Part4, fresh.Part5) = (soft.Part1, soft.Part2, soft.Part3, soft.Part4, soft.Part5);
+            fresh.PartMove = (float[])(soft.PartMove ?? new float[15]).Clone();
             fresh.Shapes = new Dictionary<string, float>(soft.Shapes ?? new());
             if(part == Limber.BodyRig.RigParts.Testicles)
                 _config.SoftBodyTesticles = fresh;

@@ -1439,10 +1439,29 @@ public sealed unsafe class SoftBody
     {
         float p1 = Math.Clamp(s.Part1, 0.1f, 5f), p2 = Math.Clamp(s.Part2, 0.1f, 5f), p3 = Math.Clamp(s.Part3, 0.1f, 5f);
         float p4 = Math.Clamp(s.Part4, 0.1f, 5f), p5 = Math.Clamp(s.Part5, 0.1f, 5f);
-        if (p1 == 1f && p2 == 1f && p3 == 1f && p4 == 1f && p5 == 1f)
+        var move = s.PartMove ?? [];
+        bool moved = false;
+        for (int k = 0; k < move.Length; k++)
+            moved |= move[k] != 0f && float.IsFinite(move[k]);
+        if (p1 == 1f && p2 == 1f && p3 == 1f && p4 == 1f && p5 == 1f && !moved)
             return;
-        if (!_part.Lattice || !Axes(b, middle, out _, out _, out var forward))
+        if (!_part.Lattice || !Axes(b, middle, out var outward, out var upAxis, out var forward))
             return;
+        // (moves are in breast-bone separations, like Lift and Spacing)
+        float separation = 0.17f;
+        {
+            var c = Vector3.Zero;
+            for (int k = 0; k < _part.PerLayer; k++)
+                c += b.Target[k];
+            separation = Math.Clamp(Vector3.Distance(c / _part.PerLayer, middle) * 2f, 0.03f, 1f);
+        }
+        Vector3 MoveOf(int part)
+        {
+            if (part * 3 + 2 >= move.Length)
+                return Vector3.Zero;
+            var m = new Vector3(move[part * 3], move[part * 3 + 1], move[part * 3 + 2]);
+            return MathUtil.IsFinite(m) ? (outward * m.X + upAxis * m.Y + forward * m.Z) * separation : Vector3.Zero;
+        }
         int perLayer = _part.PerLayer, layers = _part.Layers;
         for (int l = 0; l < layers; l++)
         {
@@ -1451,7 +1470,8 @@ public sealed unsafe class SoftBody
             float W(float at) => MathF.Max(0f, 1f - MathF.Abs(t - at) / 0.5f);
             float f = MathF.Pow(p1, W(0f)) * MathF.Pow(p2, W(0.25f)) * MathF.Pow(p3, W(0.5f))
                       * MathF.Pow(p4, W(0.75f) * 0.8f) * MathF.Pow(p5, W(1f) * 0.6f);
-            if (MathF.Abs(f - 1f) < 1e-4f)
+            var shift = moved ? MoveOf(0) * W(0f) + MoveOf(1) * W(0.25f) + MoveOf(2) * W(0.5f) + MoveOf(3) * W(0.75f) + MoveOf(4) * W(1f) : Vector3.Zero;
+            if (MathF.Abs(f - 1f) < 1e-4f && shift == Vector3.Zero)
                 continue;
             var centre = Vector3.Zero;
             for (int k = 0; k < perLayer; k++)
@@ -1462,7 +1482,7 @@ public sealed unsafe class SoftBody
                 int i = l * perLayer + k;
                 var d = b.Target[i] - centre;
                 var along = forward * Vector3.Dot(d, forward);
-                b.Target[i] = centre + along + (d - along) * f;
+                b.Target[i] = centre + along + (d - along) * f + shift;
             }
         }
     }

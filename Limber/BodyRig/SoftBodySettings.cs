@@ -40,6 +40,9 @@ public sealed class SoftBodySettings
     public float Part3 { get; set; } = 1f;
     public float Part4 { get; set; } = 1f;
     public float Part5 { get; set; } = 1f;
+    // ...and each part moved: 5 x (out, up, forward), in breast-bone separations (0 = unchanged). Replaced as a whole
+    // when changed (never edited in place).
+    public float[] PartMove { get; set; } = new float[15];
 
     // Blend shapes (BodyShapes), by name: 0 = off, 1 = full, in between blends, beyond exaggerates. Replaced as a
     // whole when changed (never edited in place), so the physics always reads a complete set.
@@ -48,6 +51,7 @@ public sealed class SoftBodySettings
     public bool ShapeIsDefault =>
         Size == 1f && Width == 1f && Height == 1f && Projection == 1f && Lift == 0f && Spacing == 0f
         && Part1 == 1f && Part2 == 1f && Part3 == 1f && Part4 == 1f && Part5 == 1f
+        && (PartMove == null || PartMove.All(v => v == 0f))
         && (Shapes == null || Shapes.Values.All(v => v == 0f));
 
     public SoftBodySettings Clone()

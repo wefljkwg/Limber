@@ -431,6 +431,9 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
             _mainWindow.LimberPosesTab = new LimberPosesTab(_selection, _config.Ik, _limberPoses, _actors) { Rigs = _rigs };
             _timeline = new TimelineService(ObjectTable, _config.Ik, _rigs, _actors);
+            var limberAnimations = _mainWindow.LimberAnimationsTab!;
+            _timeline.LimberAnimationOn = (n, k) => limberAnimations.IsOn(n, k);
+            _timeline.SetLimberAnimation = (n, k, on, address, index) => limberAnimations.SetOn(n, k, on, new ActorRef(address, index, n));
             _mainWindow.TimelineTab = new TimelineTab(_selection, _config.Ik, _timeline);
             _mainWindow.AppearanceTab = new AppearanceTab(_selection, _config.Ik);
             _mainWindow.CameraTab = new CameraTab(_config.Ik) { CharacterYaw = () => _selection.Actor.IsSet && ObjectTable[_selection.Actor.ObjectIndex] is { } o ? (float?)o.Rotation : null };

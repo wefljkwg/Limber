@@ -96,6 +96,11 @@ public sealed class TimelineService
     private bool _dirty;
     private readonly Dictionary<string, float[]> _seen = new(); // auto key: each track's value as last applied / seen
 
+    /// <summary>Limber Animations (throbbing, twerking, ahegao, expansion, height): on? (character, key)</summary>
+    public Func<string, string, bool>? LimberAnimationOn;
+    /// <summary>Starts / stops one the way its Start button does (expansion and height start over from their own size).</summary>
+    public Action<string, string, bool, nint, ushort>? SetLimberAnimation;
+
     public TimelineService(IObjectTable objects, RigSettings config, RigService rigs, ActorTransforms actors)
     {
         _objects = objects;
@@ -661,7 +666,7 @@ public sealed class TimelineService
     /// <summary>Switches, choices and text jump from key to key instead of blending.</summary>
     public bool IsStep(TimelineTrack track)
     {
-        if(track.Kind is "anim" or "look" or "model")
+        if(track.Kind is "anim" or "look" or "model" or "lanim")
             return true;
         if(track.Kind != "path")
             return false;
@@ -845,6 +850,9 @@ public sealed class TimelineService
                 // (a saved look: keyed "on" where it goes on)
                 value = [1f];
                 return true;
+            case "lanim":
+                value = [LimberAnimationOn?.Invoke(name, track.Target) == true ? 1f : 0f];
+                return LimberAnimationOn != null;
             case "path":
             {
                 // (set up with its defaults if this character has none yet, so it can be keyed straight away)
@@ -946,6 +954,17 @@ public sealed class TimelineService
                 shape[track.Target] = value[0];
                 return;
             }
+            case "lanim" when value.Length >= 1:
+            {
+                // (started / stopped only when it changes: as its Start / Stop button would)
+                bool on = value[0] >= 0.5f;
+                if(LimberAnimationOn == null || SetLimberAnimation == null || LimberAnimationOn(name, track.Target) == on)
+                    return;
+                if(!Find(name, out var address, out var index))
+                    return;
+                SetLimberAnimation(name, track.Target, on, address, index);
+                return;
+            }
             case "model" when value.Length >= 1:
             {
                 if(!Find(name, out var address, out var index))
@@ -1031,6 +1050,7 @@ public sealed class TimelineService
         "anim" => "Game animation",
         "model" => "Costume (creature)",
         "look" => $"Look: {track.Target}",
+        "lanim" => $"Limber Animations: {Limber.UI.LimberAnimationsTab.Startable.FirstOrDefault(s => s.Key == track.Target).Name ?? track.Target}",
         "camera" => "Camera (distance, field of view, angles, tilt)",
         "scale" => $"Scale: {HandleCatalog.Label(track.Target)}",
         "shape" => $"Body: {(Limber.BodyShape.BodySliders.ByKey.TryGetValue(track.Target, out var s) ? s.Name : track.Target)}",
