@@ -21,6 +21,11 @@ public sealed class LookAtSettings
     /// <summary>How much the head (and neck) turns toward it (0 = only the eyes).</summary>
     public float Head { get; set; } = 0.8f;
     public bool Eyes { get; set; } = true;
+    /// <summary>The head (and neck) turn at all (off: only the eyes, and the torso if it's on).</summary>
+    public bool HeadOn { get; set; } = true;
+    /// <summary>The torso (the spine) twists toward it too, taking this share of the turn (0..0.6).</summary>
+    public bool Torso { get; set; }
+    public float TorsoShare { get; set; } = 0.3f;
     /// <summary>How fast it turns (higher = quicker).</summary>
     public float Speed { get; set; } = 4f;
     /// <summary>How far the head turns from the chest, side to side / up and down (degrees).</summary>
@@ -247,10 +252,17 @@ public sealed unsafe class LookAtService
         if(undo.Count == 0)
             return;
         // the face's bones first, then the head, then the neck
+        var depths = sk.Info.Depths; // (not read inside the sort: the skeleton is passed by reference)
         undo.Sort((a, c) =>
         {
             int k = (c.Partial != 0).CompareTo(a.Partial != 0);
-            return k != 0 ? k : (a.Partial == 0 && a.Bone == neck).CompareTo(c.Partial == 0 && c.Bone == neck);
+            if(k != 0)
+                return k;
+            // (body bones: the deepest first - head, neck, then the spine from the chest down - each taken off
+            // before what it hangs from)
+            int da = a.Partial == 0 && a.Bone < depths.Length ? depths[a.Bone] : 0;
+            int dc = c.Partial == 0 && c.Bone < depths.Length ? depths[c.Bone] : 0;
+            return dc.CompareTo(da);
         });
         bool body = false;
         foreach(var (p, b, turn) in undo)
@@ -267,6 +279,9 @@ public sealed unsafe class LookAtService
         if(body)
             sk.RealignPartials(_cache);
     }
+
+    // The spine, from the waist up (the torso's twist is spread over these).
+    private static readonly string[] SpineBones = ["j_sebo_a", "j_sebo_b", "j_sebo_c"];
 
     private void Step(in Target t, long now)
     {
@@ -341,9 +356,39 @@ public sealed unsafe class LookAtService
             dir = wanted;
         state.Dir = dir;
 
+        // The torso: the spine twists toward it (about the chest's up), its share spread over the spine's bones,
+        // the lowest first; the neck and head then do the rest from there.
+        if(s.Torso && !behind)
+        {
+            var flatFrom = current - up * Vector3.Dot(current, up);
+            var flatTo = dir - up * Vector3.Dot(dir, up);
+            if(flatFrom.LengthSquared() > 1e-6f && flatTo.LengthSquared() > 1e-6f)
+            {
+                flatFrom = Vector3.Normalize(flatFrom);
+                flatTo = Vector3.Normalize(flatTo);
+                float twist = MathF.Atan2(Vector3.Dot(Vector3.Cross(flatFrom, flatTo), up), Vector3.Dot(flatFrom, flatTo));
+                twist = Math.Clamp(twist * Math.Clamp(s.TorsoShare, 0f, 0.6f), -45f * MathF.PI / 180f, 45f * MathF.PI / 180f);
+                var spine = new List<int>();
+                foreach(var name in SpineBones)
+                {
+                    int b = sk.Info.IndexOf(name);
+                    if(b >= 0)
+                        spine.Add(b);
+                }
+                if(spine.Count > 0 && MathF.Abs(twist) > 1e-5f)
+                {
+                    var part = Quaternion.CreateFromAxisAngle(up, twist / spine.Count);
+                    foreach(var b in spine)
+                        Write(sk, state, 0, b, part, Quaternion.Normalize(part * sk.GetModelFrame(b).Rotation));
+                    sk.RealignPartials(_cache);
+                    current = Facing(sk, head, Vector3.UnitZ);
+                }
+            }
+        }
+
         // The head (the neck takes part of the turn), as much as Head says.
-        float weight = Math.Clamp(s.Head, 0f, 1f);
-        if(weight > 0f || s.AdjustedHead)
+        float weight = s.HeadOn ? Math.Clamp(s.Head, 0f, 1f) : 0f;
+        if(weight > 0f || (s.HeadOn && s.AdjustedHead))
         {
             if(neck >= 0)
             {

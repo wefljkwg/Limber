@@ -151,13 +151,30 @@ public sealed class LookAtTab
         // How.
         ImGui.Spacing();
         ImGui.Separator();
+        // What turns toward it.
         bool eyes = s.Eyes;
-        if(ImGui.Checkbox("Eyes follow###look_eyes", ref eyes))
+        if(ImGui.Checkbox("Eyes###look_eyes", ref eyes))
         {
             s.Eyes = eyes;
             changed = true;
         }
         Tooltip("The eyes turn the rest of the way (needs a face with eye bones; most faces have them).");
+        ImGui.SameLine();
+        bool headOn = s.HeadOn;
+        if(ImGui.Checkbox("Head###look_head_on", ref headOn))
+        {
+            s.HeadOn = headOn;
+            changed = true;
+        }
+        Tooltip("The head and neck turn toward it (as much as Head turn below says).");
+        ImGui.SameLine();
+        bool torso = s.Torso;
+        if(ImGui.Checkbox("Torso###look_torso", ref torso))
+        {
+            s.Torso = torso;
+            changed = true;
+        }
+        Tooltip("The torso twists toward it too (the spine, from the waist up), taking a share of the turn.");
         ImGui.SameLine();
         bool behind = s.LetGoBehind;
         if(ImGui.Checkbox("Look away when behind###look_behind", ref behind))
@@ -167,8 +184,12 @@ public sealed class LookAtTab
         }
         Tooltip("When the target goes well behind the shoulder, the head turns back to the front instead of staying craned round.");
 
-        changed |= Slider("Head turn", s.Head * 100f, 0f, 100f, "%.0f%%", v => s.Head = v / 100f,
-            "How much the head (and neck) turns toward the target. 0% = only the eyes move.");
+        using(ImRaii.Disabled(!s.HeadOn))
+            changed |= Slider("Head turn", s.Head * 100f, 0f, 100f, "%.0f%%", v => s.Head = v / 100f,
+                "How much the head (and neck) turns toward the target. 0% = only the eyes move.");
+        using(ImRaii.Disabled(!s.Torso))
+            changed |= Slider("Torso turn", s.TorsoShare * 100f, 0f, 60f, "%.0f%%", v => s.TorsoShare = v / 100f,
+                "How much of the turn the torso takes (the head and neck do the rest).");
         changed |= Slider("Speed", s.Speed, 0.5f, 20f, "%.1f", v => s.Speed = v,
             "How quickly it turns toward the target (low = slow and lazy, high = snappy).");
         changed |= Slider("Side to side", s.MaxTurn, 0f, 120f, "%.0f°", v => s.MaxTurn = v,
@@ -225,7 +246,7 @@ public sealed class LookAtTab
         {
             var d = new LookAtSettings();
             s.Head = d.Head; s.Speed = d.Speed; s.MaxTurn = d.MaxTurn; s.MaxTilt = d.MaxTilt; s.EyeRange = d.EyeRange;
-            s.Eyes = d.Eyes; s.LetGoBehind = d.LetGoBehind;
+            s.Eyes = d.Eyes; s.LetGoBehind = d.LetGoBehind; s.HeadOn = d.HeadOn; s.Torso = d.Torso; s.TorsoShare = d.TorsoShare;
             changed = true;
         }
 
