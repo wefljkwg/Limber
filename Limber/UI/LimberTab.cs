@@ -138,7 +138,8 @@ public sealed partial class LimberTab
     private long _resetNoteUntil;
 
     /// <summary>The "Reset to defaults" button: everything Limber does to the chosen character back to nothing (two clicks).</summary>
-    public void DrawResetCharacter()
+    /// <param name="after">Drawn right after the button, on its line (the Actor list switch).</param>
+    public void DrawResetCharacter(Action? after = null)
     {
         var actor = _selection.Actor;
         long now = Environment.TickCount64;
@@ -162,6 +163,11 @@ public sealed partial class LimberTab
               + "size, clears their bone scales and body shape sliders, removes the devices placed on them, and stops Oral on them. "
               + "Click twice (it asks once). Undo brings the pose back."
             : "Choose a character first.");
+        if(after != null)
+        {
+            ImGui.SameLine();
+            after();
+        }
         if(now < _resetNoteUntil && _resetNote.Length > 0)
         {
             ImGui.SameLine();
@@ -250,7 +256,11 @@ public sealed partial class LimberTab
     public void DrawActorPicker()
     {
         var characters = _selection.ListCharacters();
-        string preview = _selection.Actor.IsSet ? _selection.Actor.Label : "Choose a character";
+        // (named as the actor list names them: "NPC One" for the nameless, with how far they are from you)
+        var names = ActorNames.Of(characters);
+        string LabelOf(ActorRef a) => (names.TryGetValue(a.Address, out var n) ? n : string.IsNullOrEmpty(a.Name) ? "(no name)" : a.Name)
+            + $"  #{a.ObjectIndex}" + ActorNames.Distance(a);
+        string preview = _selection.Actor.IsSet ? LabelOf(_selection.Actor) : "Choose a character";
         ImGui.Text("Character:");
         ImGui.SameLine();
 
@@ -262,7 +272,7 @@ public sealed partial class LimberTab
                 foreach(var character in characters)
                 {
                     bool selected = character.Address == _selection.Actor.Address;
-                    if(ImGui.Selectable($"{character.Label}###actor_{character.Address:X}", selected))
+                    if(ImGui.Selectable($"{LabelOf(character)}###actor_{character.Address:X}", selected))
                     {
                         _selection.Select(character);
                         _config.FollowTarget = false;

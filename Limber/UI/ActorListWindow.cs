@@ -91,24 +91,9 @@ public sealed class ActorListWindow : Window
             };
         }
         bool gpose = Plugin.ClientState.IsGPosing;
-        // Names for the ones without one ("NPC One", "NPC Two"... by kind, in the list's order).
-        var shownNames = new System.Collections.Generic.Dictionary<nint, string>();
-        var counts = new System.Collections.Generic.Dictionary<string, int>();
-        foreach(var a in list.OrderBy(a => a.ObjectIndex))
-        {
-            if(!string.IsNullOrEmpty(a.Name))
-            {
-                shownNames[a.Address] = a.Name!;
-                continue;
-            }
-            string prefix = KindOf(a) switch { Kind.Npc => "NPC", Kind.Player => "Player", _ => "Actor" };
-            int n = counts.TryGetValue(prefix, out var c) ? c + 1 : 1;
-            counts[prefix] = n;
-            shownNames[a.Address] = $"{prefix} {ActorSpawner.NumberWord(n)}";
-        }
+        // Names for the ones without one ("NPC One", "NPC Two"...), the same as the character drop-down's.
+        var shownNames = ActorNames.Of(list);
         string NameOf(ActorRef a) => shownNames.TryGetValue(a.Address, out var n) ? n : a.Name ?? "";
-        // How far each one is from you (yalms).
-        var player = Plugin.ObjectTable[0];
         var shown = list.Where(a => (_filter.Length == 0 || NameOf(a).Contains(_filter, StringComparison.OrdinalIgnoreCase))
                                     && (!_onlyScene || !gpose || a.ObjectIndex >= 200)).ToList();
 
@@ -139,9 +124,7 @@ public sealed class ActorListWindow : Window
                     var kind = KindOf(actor);
                     bool chosen = actor.Address == _selection.Actor.Address;
                     string name = NameOf(actor);
-                    var obj = Plugin.ObjectTable[actor.ObjectIndex];
-                    if(player != null && obj != null && obj.Address == actor.Address && obj.Address != player.Address)
-                        name += $"  ({Vector3.Distance(player.Position, obj.Position):0} yalms)";
+                    name += ActorNames.Distance(actor);
                     float tagWidth = 52f * scale;
                     using(ImRaii.PushColor(ImGuiCol.Text, ImGui.GetColorU32(ImGuiCol.TextDisabled), hidden))
                     {

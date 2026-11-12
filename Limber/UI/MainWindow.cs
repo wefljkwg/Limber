@@ -534,21 +534,23 @@ public sealed class MainWindow : Window
         _limberTab.DrawFreezeToggle();
         ImGui.SameLine();
         _limberTab.DrawUndoRedo();
-        ImGui.SameLine();
-        bool actorList = Cfg.Ik.ShowActorList;
-        if (ImGui.Checkbox("Actor list###limber_actor_list_toggle", ref actorList))
-        {
-            Cfg.Ik.ShowActorList = actorList;
-            SaveLocked();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("A small window listing every character: click to choose one, hide or show them, remove Limber's actors.");
         if (!Cfg.PluginEnabled)
             ImGui.TextColored(Warn, "Limber is off: nothing is posed, simulated or linked.");
         else if (!Plugin.ClientState.IsGPosing && !(Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose))
             ImGui.TextColored(Warn, "Enter GPose to use Limber (or turn on \"Also run outside GPose\" in Advanced).");
         _limberTab.DrawActorPicker();
-        _limberTab.DrawResetCharacter();
+        // (the Actor list switch next to Reset to defaults, under the character drop-down)
+        _limberTab.DrawResetCharacter(() =>
+        {
+            bool actorList = Cfg.Ik.ShowActorList;
+            if (ImGui.Checkbox("Actor list###limber_actor_list_toggle", ref actorList))
+            {
+                Cfg.Ik.ShowActorList = actorList;
+                SaveLocked();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("A small window listing every character: click to choose one, hide or show them, remove Limber's actors.");
+        });
         ImGui.Separator();
 
         var pages = Pages.Where(p => p.Shown?.Invoke() ?? true).ToArray();
