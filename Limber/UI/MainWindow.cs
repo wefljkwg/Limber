@@ -618,6 +618,9 @@ public sealed class MainWindow : Window
         ImGui.TextWrapped("Limber poses characters in GPose by dragging dots on their bones, gives bodies soft-body physics, " +
                           "and shapes and scales them. Everything it does is only on your screen.");
         ImGui.Spacing();
+        ImGui.TextColored(new System.Numerics.Vector4(1f, 0.75f, 0.3f, 1f),
+            "This plugin is not to be used for the depiction of minors or minor-appearing individuals.");
+        ImGui.Spacing();
         ImGui.Text("Checklist");
         Check(Cfg.PluginEnabled, "Limber is on", "Tick \"Limber on\" at the top.");
         Check(_hook.IsHooked && _limberTab.PosingHookReady, "Limber can reach the game's bones", "Limber needs an update for this game version.");
