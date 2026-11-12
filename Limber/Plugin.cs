@@ -1057,6 +1057,9 @@ public sealed class Plugin : IDalamudPlugin
                 Math.Clamp(MathF.Min(ik.CameraMinFoV, ik.CameraMaxFoV), 0.01f, 3f), Math.Clamp(MathF.Max(ik.CameraMinFoV, ik.CameraMaxFoV), 0.01f, 3f),
                 Math.Clamp(ik.CameraMinPitch, -89.5f, 0f) * deg, Math.Clamp(ik.CameraMaxPitch, 0f, 89.5f) * deg));
             CameraControl.SetOffset(on ? _config.Ik.CameraOffset : System.Numerics.Vector3.Zero);
+            if(!on && CameraControl.Free)
+                CameraControl.SetFree(false);
+            CameraControl.FlyFree(KeyState, _typing || LimberTab.CapturingHotkey);
             bool noCollide = on && _config.Ik.CameraNoCollide;
             if(noCollide != _noCollideOn && CameraControl.SetNoCollision(noCollide))
                 _noCollideOn = noCollide;

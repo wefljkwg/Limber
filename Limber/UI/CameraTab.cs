@@ -46,6 +46,21 @@ public sealed class CameraTab
         Tooltip("Back to the game's usual distance, field of view, height and angle, and Limber's move off its place undone.\n"
             + "(The limits stay as they are: turn Unlock off for the game's own.)");
 
+        bool free = CameraControl.Free;
+        if(ImGui.Checkbox("Free camera###cam_free", ref free))
+            CameraControl.SetFree(free);
+        Tooltip("The camera flies on its own: W / S forward and back, A / D sideways, E (or Space) up, Q down,\n"
+            + "Shift faster, Ctrl slower. Turn it with the mouse as usual. The keys don't move your character while it's on.\n"
+            + "Off: the camera goes back to following the character.");
+        if(free)
+        {
+            ImGui.SameLine();
+            float speed = CameraControl.FreeSpeed;
+            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("Speed###cam_free_speed", ref speed, 0.2f, 20f, "%.1f m/s", ImGuiSliderFlags.Logarithmic))
+                CameraControl.FreeSpeed = speed;
+        }
+
         bool unlock = _config.CameraUnlock;
         if(ImGui.Checkbox("Unlock the camera's limits###cam_unlock", ref unlock))
         {

@@ -213,9 +213,75 @@ public static unsafe class CameraControl
         Refresh();
     }
 
+    // ---- Free camera (Camera tab): the camera flies on its own (WASD, E / Q up and down), still turned with the mouse
+    // as the game turns it; what it looks at goes along in front of it.
+
+    private static bool _free;
+    private static Vector3 _freeAt;
+    public static bool Free => _free;
+    /// <summary>Metres a second (Shift: three times as fast, Ctrl: a third).</summary>
+    public static float FreeSpeed = 3f;
+
+    public static void SetFree(bool on)
+    {
+        if(on == _free)
+            return;
+        if(on)
+        {
+            var c = Active();
+            if(c == null)
+                return;
+            var scene = &((FFXIVClientStructs.FFXIV.Client.Game.CameraBase*)c)->SceneCamera;
+            var obj = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)scene;
+            _freeAt = *(Vector3*)&obj->Position;
+        }
+        _free = on;
+        Refresh();
+    }
+
+    /// <summary>Framework update: flies the free camera with the keys (taken from the game while it's on).</summary>
+    private static long _flyTicks;
+
+    public static void FlyFree(Dalamud.Plugin.Services.IKeyState keys, bool typing)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        float dt = _flyTicks == 0 ? 0f : (float)((now - _flyTicks) / (double)System.Diagnostics.Stopwatch.Frequency);
+        _flyTicks = now;
+        if(!_free || typing || !RawValid)
+            return;
+        var forward = RawLook - RawPosition;
+        if(forward.LengthSquared() < 1e-8f)
+            return;
+        forward = Vector3.Normalize(forward);
+        var right = Vector3.Cross(forward, Vector3.UnitY);
+        right = right.LengthSquared() < 1e-8f ? Vector3.UnitX : Vector3.Normalize(right);
+        var move = Vector3.Zero;
+        bool Held(Dalamud.Game.ClientState.Keys.VirtualKey key)
+        {
+            if(!keys.IsVirtualKeyValid(key) || !keys[key])
+                return false;
+            keys[key] = false; // (the game doesn't get it: the character stays put)
+            return true;
+        }
+        if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.W)) move += forward;
+        if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.S)) move -= forward;
+        if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.D)) move += right;
+        if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.A)) move -= right;
+        if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.E) || Held(Dalamud.Game.ClientState.Keys.VirtualKey.SPACE)) move += Vector3.UnitY;
+        if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.Q)) move -= Vector3.UnitY;
+        if(move == Vector3.Zero)
+            return;
+        float speed = Math.Clamp(FreeSpeed, 0.1f, 50f);
+        if(keys[Dalamud.Game.ClientState.Keys.VirtualKey.SHIFT])
+            speed *= 3f;
+        if(keys[Dalamud.Game.ClientState.Keys.VirtualKey.CONTROL])
+            speed /= 3f;
+        _freeAt += Vector3.Normalize(move) * speed * Math.Clamp(dt, 0f, 0.1f);
+    }
+
     private static void Refresh()
     {
-        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _aim != null;
+        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _aim != null || _free;
         if(HasOffset)
             EnsureHook();
     }
@@ -268,6 +334,8 @@ public static unsafe class CameraControl
             Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world;
             if(_aim is { } aim)
                 move = aim - look;
+            if(_free)
+                move = _freeAt - position;
             Vector3 movedPosition = position + move, movedLook = look + move;
             *(Vector3*)&obj->Position = movedPosition;
             *(Vector3*)&scene->LookAtVector = movedLook;
