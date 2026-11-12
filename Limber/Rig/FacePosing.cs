@@ -140,32 +140,51 @@ public sealed unsafe class FacePosingService
                 return p;
         }
         var main = sk.PartialInfo(0, _cache);
-        if(main != null && Find(main, "j_f_eye_l") >= 0 && Find(main, "j_f_eye_r") >= 0
-           && (Find(main, "j_f_ago") >= 0 || Find(main, "j_f_ulip") >= 0 || Find(main, "j_f_mayu_l") >= 0))
-            return 0;
+        if(main != null)
+            for(int i = 0; i < main.Count; i++)
+                if(FaceName(main.Names[i], main: true) != null)
+                    return 0;
         return -1;
     }
 
-    // The face bones' names without the "f" (non-player models): only these, so the head, hair and the rest of the
-    // body aren't taken for face bones.
-    private static readonly string[] BareFace =
+    // The face bones of non-player models (monsters, demi-humans), found in a survey of every monster and demi-human
+    // skeleton in the game: their names after "j_" or "j_f_". Only these, so the head, hair, legs ("j_f_asi": front
+    // legs) and the rest aren't taken for face bones.
+    private static readonly string[] FaceStems =
     [
-        "mmayu", "mayu", "miken", "memoto", "eyepuru", "eye", "umab", "dmab", "mab", "hana", "shoho", "hoho",
-        "uslip", "umlip", "ulip", "dslip", "dmlip", "dlip", "lip", "dago", "ago", "haguki", "bero",
+        // brows, eyes, eyelids
+        "mmayu", "mayu", "miken", "memoto", "eyepuru", "eyeprm", "eyeprmroll", "eye", "2eye", "me", "umab", "dmab", "mab",
+        "mabup", "mabdn", "mabuta",
+        // nose, cheeks
+        "hana", "uhana", "shoho", "hoho",
+        // lips, mouth
+        "uslip", "umlip", "ulip", "dslip", "dmlip", "dlip", "lip", "kuti", "kuchi", "mouth",
+        // jaw, teeth, tongue
+        "dago", "uago", "bago", "ago", "jaw", "haguki", "kiba", "bero", "sita", "shita",
+        // whiskers, ears, horns
+        "hige", "higea", "higeb", "mimi", "tuno",
     ];
 
-    /// <summary>A face bone's name as players' faces have it ("j_mayu_l" -> "j_f_mayu_l"), or null if it isn't one.</summary>
-    public static string? FaceName(string name)
+    private static bool FaceStem(string rest)
+    {
+        foreach(var stem in FaceStems)
+            if(rest == stem || (rest.StartsWith(stem, StringComparison.Ordinal) && rest.Length > stem.Length && rest[stem.Length] == '_'))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// A face bone's name as players' faces have it ("j_mayu_l" -> "j_f_mayu_l"), or null if it isn't one.
+    /// <paramref name="main"/>: it's in a main skeleton (a monster's), where "j_f_" isn't only the face's.
+    /// </summary>
+    public static string? FaceName(string name, bool main = false)
     {
         if(name.StartsWith("j_f_", StringComparison.Ordinal))
-            return name == "j_f_face" ? null : name;
+            return name == "j_f_face" || (main && !FaceStem(name[4..])) ? null : name;
         if(!name.StartsWith("j_", StringComparison.Ordinal))
             return null;
         var rest = name[2..];
-        foreach(var stem in BareFace)
-            if(rest == stem || (rest.StartsWith(stem, StringComparison.Ordinal) && rest.Length > stem.Length && rest[stem.Length] == '_'))
-                return "j_f_" + rest;
-        return null;
+        return FaceStem(rest) ? "j_f_" + rest : null;
     }
 
     /// <summary>A face bone by its players' name ("j_f_mayu_l"), or the same bone without the "f" ("j_mayu_l").</summary>
@@ -187,7 +206,22 @@ public sealed unsafe class FacePosingService
         width = 0.06f;
         int el = Find(info, "j_f_eye_l"), er = Find(info, "j_f_eye_r");
         if(el < 0 || er < 0)
-            return false;
+        {
+            // No pair of eyes (a jaw, a tongue, whiskers...): the character's own directions, round the head.
+            int head = info.IndexOf("j_kao");
+            int at = head;
+            for(int i = 0; i < info.Count && at < 0; i++)
+                if(FaceName(info.Names[i], part == 0) != null)
+                    at = i;
+            if(at < 0)
+                return false;
+            middle = sk.GetPartialFrame(part, at).Position;
+            int jawBone = Find(info, "j_f_ago");
+            width = jawBone >= 0 && head >= 0
+                ? MathF.Max(0.05f, 2f * Vector3.Distance(sk.GetPartialFrame(part, head).Position, sk.GetPartialFrame(part, jawBone).Position))
+                : 0.12f;
+            return true;
+        }
         var l = sk.GetPartialFrame(part, el).Position;
         var r = sk.GetPartialFrame(part, er).Position;
         var eyes = (l + r) * 0.5f;
@@ -195,7 +229,7 @@ public sealed unsafe class FacePosingService
         int n = 0;
         for(int i = 0; i < info.Count; i++)
         {
-            var name = FaceName(info.Names[i]) ?? "";
+            var name = FaceName(info.Names[i], part == 0) ?? "";
             if(name.StartsWith("j_f_ulip", StringComparison.Ordinal) || name.StartsWith("j_f_dlip", StringComparison.Ordinal)
                || name.StartsWith("j_f_umlip", StringComparison.Ordinal) || name.StartsWith("j_f_dmlip", StringComparison.Ordinal)
                || name.StartsWith("j_f_lip_", StringComparison.Ordinal))
@@ -399,7 +433,7 @@ public sealed unsafe class FacePosingService
         for(int i = 0; i < info.Count; i++)
         {
             // (shown by the players' names whatever the model calls them)
-            if(FaceName(info.Names[i]) is not { } name)
+            if(FaceName(info.Names[i], part == 0) is not { } name)
                 continue;
             var fr = sk.GetPartialFrame(part, i);
             bones.Add(new BoneView(name, fr.Position, sk.ModelToWorldPoint(fr.Position), fr.Rotation));

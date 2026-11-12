@@ -26,13 +26,17 @@ public sealed class FacePosingTab
     private static readonly (string Name, string[] Starts, Vector4 Colour)[] Regions =
     [
         ("Brows", ["j_f_mmayu", "j_f_mayu", "j_f_miken"], new(0.95f, 0.75f, 0.35f, 1f)),
-        ("Eyes", ["j_f_eyepuru", "j_f_eye"], new(0.45f, 0.8f, 1f, 1f)),
+        ("Eyes", ["j_f_eyepuru", "j_f_eye", "j_f_2eye", "j_f_me_"], new(0.45f, 0.8f, 1f, 1f)),
         ("Eyelids", ["j_f_umab", "j_f_dmab", "j_f_mab"], new(0.55f, 0.65f, 1f, 1f)),
         ("Nose", ["j_f_hana"], new(0.85f, 0.85f, 0.85f, 1f)),
         ("Cheeks", ["j_f_shoho", "j_f_hoho"], new(1f, 0.6f, 0.65f, 1f)),
-        ("Lips", ["j_f_uslip", "j_f_umlip", "j_f_ulip", "j_f_dslip", "j_f_dmlip", "j_f_dlip", "j_f_lip"], new(1f, 0.45f, 0.5f, 1f)),
-        ("Jaw and teeth", ["j_f_dago", "j_f_ago", "j_f_haguki"], new(0.7f, 0.9f, 0.6f, 1f)),
-        ("Tongue", ["j_f_bero"], new(1f, 0.5f, 0.8f, 1f)),
+        ("Lips", ["j_f_uslip", "j_f_umlip", "j_f_ulip", "j_f_dslip", "j_f_dmlip", "j_f_dlip", "j_f_lip", "j_f_kuti", "j_f_kuchi", "j_f_mouth"], new(1f, 0.45f, 0.5f, 1f)),
+        ("Jaw and teeth", ["j_f_dago", "j_f_uago", "j_f_bago", "j_f_ago", "j_f_jaw", "j_f_haguki", "j_f_kiba"], new(0.7f, 0.9f, 0.6f, 1f)),
+        ("Tongue", ["j_f_bero", "j_f_sita", "j_f_shita"], new(1f, 0.5f, 0.8f, 1f)),
+        // (non-player models)
+        ("Whiskers", ["j_f_hige"], new(0.8f, 0.7f, 0.55f, 1f)),
+        ("Ears", ["j_f_mimi"], new(0.95f, 0.8f, 0.7f, 1f)),
+        ("Horns", ["j_f_tuno"], new(0.75f, 0.6f, 0.9f, 1f)),
     ];
     private static readonly Vector4 OtherColour = new(0.75f, 0.75f, 0.75f, 1f);
 
