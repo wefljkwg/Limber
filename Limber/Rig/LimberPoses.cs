@@ -7,7 +7,7 @@ using Limber.Core;
 namespace Limber.Rig;
 
 /// <summary>
-/// Limber Poses (Posing): ready-made whole-body poses (A-pose, T-pose, splits, the Jack-O pose), made for each
+/// Limber Poses (Posing): ready-made whole-body poses (A-pose, T-pose), made for each
 /// character's own skeleton and saved as its FK pose, so they can be fine-tuned on the FK Posing page afterwards.
 /// Each pose says which way each part of the body points (in the character's own directions: X to its left, Y up,
 /// Z forward), worked out from the skeleton at rest; poses with the body low (splits, Jack-O) are lowered until
@@ -65,39 +65,7 @@ public sealed class LimberPoses
             Join(Upright, Arms(V(0.72f, -0.7f, 0), V(0.72f, -0.7f, 0), V(0.72f, -0.7f, 0)), Legs(V(0.06f, -1, 0), V(0.02f, -1, 0))), [], 0f),
         new("T-Pose", "Standing straight, arms straight out to the sides, legs straight.",
             Join(Upright, Arms(V(1, 0, 0), V(1, 0, 0), V(1, 0, 0)), Legs(V(0.04f, -1, 0), V(0, -1, 0))), [], 0f),
-        new("Splits", "Left leg forward, right leg back, flat on the floor; upright, arms out to the sides.",
-            Join(Upright, Arms(V(1, 0.15f, 0), V(1, 0.15f, 0), V(1, 0.1f, 0)),
-                [new("j_asi_a_l", "j_asi_c_l", V(0.02f, -0.06f, 1)), new("j_asi_c_l", "j_asi_d_l", V(0, -0.04f, 1)),
-                 new("j_asi_d_l", "j_asi_e_l", V(0, -0.3f, 1)),
-                 new("j_asi_a_r", "j_asi_c_r", V(-0.02f, -0.06f, -1)), new("j_asi_c_r", "j_asi_d_r", V(0, -0.04f, -1)),
-                 new("j_asi_d_r", "j_asi_e_r", V(0, -0.4f, -1))]),
-            ["j_asi_c_l", "j_asi_d_l", "j_asi_c_r", "j_asi_d_r"], 0.07f, "Forward and back"),
-        new("Splits", "Both legs straight out to the sides, flat on the floor; upright, arms out to the sides.",
-            Join(Upright, Arms(V(1, 0.15f, 0), V(1, 0.15f, 0), V(1, 0.1f, 0)), Legs(V(1, -0.06f, 0), V(1, -0.04f, 0)),
-                Both("j_asi_d", "j_asi_e", V(0.2f, 0.6f, 0.3f))),
-            ["j_asi_c_l", "j_asi_d_l", "j_asi_c_r", "j_asi_d_r"], 0.07f, "To the sides"),
-        new("Jack-O Pose", "Lying on the chest, back arched and hips up high; legs straight and spread wide out behind, toes on the floor; elbows on the floor, chin resting on the hands, looking ahead.",
-            Join(
-                // (from the hips, high up, the back slopes forward and down to the chest lying on the floor in front;
-                // the neck curls back up so the head looks ahead over the hands)
-                [new("j_sebo_a", "j_sebo_b", V(0, -0.72f, 0.69f)), new("j_sebo_b", "j_sebo_c", V(0, -0.5f, 0.87f)),
-                 new("j_sebo_c", "j_kubi", V(0, -0.12f, 1f)), new("j_kubi", "j_kao", V(0, 0.62f, 0.78f))],
-                // (upper arms forward and down to the elbows on the floor in front, forearms up and in to meet under
-                // the chin, hands cupping it)
-                Arms(V(0.28f, -0.55f, 0.79f), V(-0.72f, 0.5f, 0.48f), V(-0.35f, 0.85f, 0.4f)),
-                JackOLegs(1.1f),
-                // (feet stretched back, toes on the floor)
-                Both("j_asi_d", "j_asi_e", V(0.15f, -0.55f, -0.82f))),
-            ["j_asi_d_l", "j_asi_d_r"], 0.06f, "", new Fit("j_sebo_c", -0.1f, JackOLegs)),
     ];
-
-    // Both legs straight, spread this far from straight down: out to the sides and back behind the hips (wider
-    // brings the hips lower, so the chest in front reaches the floor).
-    private static Aim[] JackOLegs(float angle)
-    {
-        var d = V(MathF.Sin(angle) * 0.82f, -MathF.Cos(angle), -MathF.Sin(angle) * 0.55f);
-        return Join(Legs(d, d));
-    }
 
     /// <summary>The same pose with left and right swapped (the other leg forward in the splits).</summary>
     public static Pose Mirrored(Pose p)

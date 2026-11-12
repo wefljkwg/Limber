@@ -99,20 +99,19 @@ public sealed class MainWindow : Window
     [
         new("start", "", "Getting started", "What Limber does and where to begin.", DrawStartPage),
         new("globalpresets", "", "Global presets", "Everything a character has, saved as one preset: put it on anyone, edit it, and have it go on by itself when a player or actor comes into the scene.", () => GlobalPresetsTab?.Draw(), () => GlobalPresetsTab != null),
-        new("extras", "", "Extras", "One-press fun: Ragdoll mode (the chosen character goes limp and falls where they stand), extra minions that follow you, hidden mounts.", () => ExtrasTab?.Draw(), () => ExtrasTab != null),
+        new("extras", "", "Extras", "One-press fun: Ragdoll mode (the chosen character goes limp and falls where they stand), extra minions that follow you, hidden mounts, ready-made Limber Poses.", () => { ExtrasTab?.Draw(); DrawLimberPosesInExtras(); }, () => ExtrasTab != null),
 
+        new("actors", "Posing", "Actors", "Add GPose actors (copies of a character) and remove them again.", () => _limberTab.DrawActorsPage()),
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
         new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
         new("face", "Posing", "Face Posing", "Move, turn and scale each face bone (brows, eyelids, eyes, cheeks, lips, jaw, tongue) on a face map or right on the face.", () => FacePosingTab?.Draw(), () => FacePosingTab != null),
         new("facemorphs", "Posing", "Face morphs", "Experimental: pose the face with blend shapes (lips stretched or in a tube, vacuum cheeks, nose, jaw, eyes), from Limber or imported from Virt-a-Mate and Koikatsu. Works on its own; Oral can drive them too (adult characters).", () => FaceMorphsTab?.Draw(), () => FaceMorphsTab != null),
         new("lookat", "Posing", "Look at", "The head and eyes follow another character (their face or any bone), one of their own bones, or the camera.", () => LookAtTab?.Draw(), () => LookAtTab != null),
-        new("limberposes", "Posing", "Limber Poses", "Ready-made whole-body poses: A-pose, T-pose, the splits and the Jack-O pose, made to fit the character and fine-tuned on the FK page.", () => LimberPosesTab?.Draw(), () => LimberPosesTab != null),
         new("hands", "Posing", "Hands", "Preset finger poses (fist, open, point...) for one hand or both.", () => _limberTab.DrawHandsPage()),
         new("scale", "Posing", "Bone scale", "Make any bone bigger or smaller, with control over the bones around it.", () => _limberTab.DrawBoneScalePage()),
         new("attach", "Posing", "Attach", "Hold a bone on to another character (hands on shoulders, holding hands...).", () => _limberTab.DrawAttachPage()),
         new("move", "Posing", "Move character", "Move, turn and resize the whole character.", () => _limberTab.DrawMovePage()),
         new("animations", "Posing", "Animations", "Play any of the game's animations on the character (emotes, poses...), also other races' versions.", () => AnimationsTab?.Draw(), () => AnimationsTab != null),
-        new("actors", "Posing", "Actors", "Add GPose actors (copies of a character) and remove them again.", () => _limberTab.DrawActorsPage()),
 
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
         new("collide", "Body", "Physics collisions", "What pushes the soft breasts, butt, testicles and belly (arms, hands, thighs, the floor, props) and how they give way.", () => _limberTab.DrawCollisionsTab()),
@@ -170,6 +169,20 @@ public sealed class MainWindow : Window
             PresetBar.Draw(Cfg.Ik, page.Id, parts, () => PresetParts(page.Id, new Configuration())?.Invoke());
         ImGui.Spacing();
         page.Draw();
+    }
+
+    // Limber Poses (on the Extras page since 2026-11-12).
+    private void DrawLimberPosesInExtras()
+    {
+        if (LimberPosesTab == null)
+            return;
+        ImGui.Spacing();
+        ImGui.Separator();
+        if (ImGui.CollapsingHeader("Limber Poses###extras_limberposes"))
+        {
+            using var id = Dalamud.Interface.Utility.Raii.ImRaii.PushId("extras_lposes");
+            LimberPosesTab.Draw();
+        }
     }
 
     private static T For<T>(Dictionary<string, T> all, string name) where T : new()
@@ -286,6 +299,7 @@ public sealed class MainWindow : Window
                     .Add("Hide", () => ik.HideMounts, v => ik.HideMounts = v)
                     .Add("OnlyTicked", () => ik.HideMountsOnlyTicked, v => ik.HideMountsOnlyTicked = v)
                     .Add("Characters", () => ik.HideMountsCharacters ?? new(), v => ik.HideMountsCharacters = v),
+                ["LimberPoses"] = new PresetValues().Add("Freeze", () => ik.LimberPoseFreeze, v => ik.LimberPoseFreeze = v),
             },
             "entities" => () => new()
             {
@@ -538,6 +552,8 @@ public sealed class MainWindow : Window
         ImGui.Separator();
 
         var pages = Pages.Where(p => p.Shown?.Invoke() ?? true).ToArray();
+        if (CurrentPage == "limberposes")
+            CurrentPage = "extras"; // (Limber Poses moved into Extras)
         var current = pages.FirstOrDefault(p => p.Id == CurrentPage) ?? pages[0];
 
         float navWidth = 150f * Dalamud.Interface.Utility.ImGuiHelpers.GlobalScale;

@@ -104,7 +104,7 @@ public sealed class LimberPosesTab
             + "character's FK pose, so you can fine-tune it on the FK Posing page (and IK posing works on top).");
         ImGui.Checkbox("Mirrored (left and right swapped)###lposes_mirror", ref _mirror);
         if(ImGui.IsItemHovered())
-            ImGui.SetTooltip("The other side: the right leg forward in the splits, and so on.");
+            ImGui.SetTooltip("The other side: left and right swapped.");
         ImGui.SameLine();
         bool freeze = _config.LimberPoseFreeze;
         if(ImGui.Checkbox("Freeze###lposes_freeze", ref freeze))
