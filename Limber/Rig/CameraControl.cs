@@ -222,10 +222,49 @@ public static unsafe class CameraControl
     /// <summary>Metres a second (Shift: three times as fast, Ctrl: a third).</summary>
     public static float FreeSpeed = 3f;
 
+    // The game's "movement off" count (what Cammy's free camera uses: anything may add one, movement is off while it's
+    // above 0), so the character stays put while the keys fly the camera.
+    internal const string MovementOffSig = "F3 0F 10 05 ?? ?? ?? ?? 0F 2E C7";
+    private static int* _movementOff;
+    private static bool _movementOffTried, _holdingMovement;
+
+    private static int* MovementOff()
+    {
+        if(!_movementOffTried)
+        {
+            _movementOffTried = true;
+            try
+            {
+                nint at = Plugin.SigScanner.ScanText(MovementOffSig);
+                _movementOff = (int*)(at + 8 + *(int*)(at + 4));
+            }
+            catch(Exception e)
+            {
+                Plugin.Log.Warning(e, "Limber: couldn't find the game's movement switch (free camera: the keys may move the character too)");
+            }
+        }
+        return _movementOff;
+    }
+
+    private static void HoldMovement(bool hold)
+    {
+        if(hold == _holdingMovement)
+            return;
+        var p = MovementOff();
+        // (only a count that looks like one: after a patch the address may be something else)
+        if(p == null || *p < 0 || *p > 64)
+            return;
+        *p += hold ? 1 : -1;
+        if(*p < 0)
+            *p = 0;
+        _holdingMovement = hold;
+    }
+
     public static void SetFree(bool on)
     {
         if(on == _free)
             return;
+        HoldMovement(on);
         if(on)
         {
             var c = Active();
@@ -258,10 +297,9 @@ public static unsafe class CameraControl
         var move = Vector3.Zero;
         bool Held(Dalamud.Game.ClientState.Keys.VirtualKey key)
         {
-            if(!keys.IsVirtualKeyValid(key) || !keys[key])
-                return false;
-            keys[key] = false; // (the game doesn't get it: the character stays put)
-            return true;
+            // (read only, never cleared: a cleared key reads "up" until Windows repeats it, so the camera barely moved;
+            // the character is kept still by the game's movement switch instead)
+            return keys.IsVirtualKeyValid(key) && keys[key];
         }
         if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.W)) move += forward;
         if(Held(Dalamud.Game.ClientState.Keys.VirtualKey.S)) move -= forward;
