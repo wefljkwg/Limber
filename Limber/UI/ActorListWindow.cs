@@ -108,7 +108,7 @@ public sealed class ActorListWindow : Window
         }
         string NameOf(ActorRef a) => shownNames.TryGetValue(a.Address, out var n) ? n : a.Name ?? "";
         // How far each one is from you (yalms).
-        var me = Plugin.ObjectTable[0];
+        var player = Plugin.ObjectTable[0];
         var shown = list.Where(a => (_filter.Length == 0 || NameOf(a).Contains(_filter, StringComparison.OrdinalIgnoreCase))
                                     && (!_onlyScene || !gpose || a.ObjectIndex >= 200)).ToList();
 
@@ -140,8 +140,8 @@ public sealed class ActorListWindow : Window
                     bool chosen = actor.Address == _selection.Actor.Address;
                     string name = NameOf(actor);
                     var obj = Plugin.ObjectTable[actor.ObjectIndex];
-                    if(me != null && obj != null && obj.Address == actor.Address && obj.Address != me.Address)
-                        name += $"  ({Vector3.Distance(me.Position, obj.Position):0} yalms)";
+                    if(player != null && obj != null && obj.Address == actor.Address && obj.Address != player.Address)
+                        name += $"  ({Vector3.Distance(player.Position, obj.Position):0} yalms)";
                     float tagWidth = 52f * scale;
                     using(ImRaii.PushColor(ImGuiCol.Text, ImGui.GetColorU32(ImGuiCol.TextDisabled), hidden))
                     {
