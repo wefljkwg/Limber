@@ -131,6 +131,7 @@ public static unsafe class BodySwap
         {
             FitHeads();
             KeepColours();
+            MakeTints();
             // (each slot's model race for the other body, kept up to date as gear changes: twice a second)
             if(++_raceFrames >= 30)
             {
@@ -253,6 +254,9 @@ public static unsafe class BodySwap
         if(!BodySwaps.Remove(address))
             return "Not swapped.";
         ModelRaces.TryRemove(index, out _);
+        Tints.TryRemove(index, out _);
+        foreach(var key in Tinted.Keys.Where(k => k.Index == index).ToList())
+            Tinted.TryRemove(key, out _);
         OwnColours.Remove(address);
         GameColours.Remove(address);
         RefreshDraws();
@@ -268,6 +272,12 @@ public static unsafe class BodySwap
         BodyDraws.Clear();
         FittedTables.Clear();
         ModelRaces.Clear();
+        Tints.Clear();
+        Tinted.Clear();
+        SkinSeen.Clear();
+        foreach(var f in TintFiles)
+            Limber.Koi.Props.KoiProps.Extra.Remove(f);
+        TintFiles.Clear();
         OwnColours.Clear();
         GameColours.Clear();
         foreach(var (address, swap) in was)
@@ -359,8 +369,9 @@ public static unsafe class BodySwap
             // body decals aren't asked as the other race; the gear's own materials are)
             // (a body of the other gender takes its own skin material: only its own fits it - another race's or gender's
             // skin comes out glitched. The skin's colour is the character's own either way: see KeepColours.)
-            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m)));
-            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => _skinMtrl!.Original(h, b, n, i));
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) =>
+                TintSkin(h, b, n, i, IsSkin(m), BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m))));
+            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => TintSkin(h, b, n, i, true, _skinMtrl!.Original(h, b, n, i)));
             _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
             _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => BodySlotCall(h, s, true, () => _deformer!.Original(h, s)));
             _race = gi.HookFromAddress<RaceDelegate>(F(88), RaceDetour);
@@ -417,6 +428,116 @@ public static unsafe class BodySwap
 
     private static bool OtherSex(nint human)
         => SwapFor(human) is { } swap && (swap.Own / 100 % 2) != (swap.Body / 100 % 2);
+
+    // ---- Body skin tint (Body swap page): the swapped body's skin matched to the head by eye
+    //
+    // The head and body share one skin colour, but the body's skin texture is its own (another gender's or race's,
+    // lighter or darker): so its skin material gets a colour multiplier (skin.shpk's g_DiffuseColor, white by
+    // default). Only this character's: its skin materials are copied under a private path (with the tint), handed to
+    // the mod manager, and its lookups answered with that path; the textures stay the body's own.
+
+    private const uint DiffuseColor = 0x2C2A34DD; // g_DiffuseColor (CRC from 0)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, System.Numerics.Vector3> Tints = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(ushort Index, string Path), byte> SkinSeen = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(ushort Index, string Path), string> Tinted = new();
+    private static readonly List<string> TintFiles = new();
+
+    /// <summary>The swapped body's skin tint (white: none). Redrawn to take it.</summary>
+    public static void SetSkinTint(nint address, ushort index, System.Numerics.Vector3 tint)
+    {
+        bool none = System.Numerics.Vector3.DistanceSquared(tint, System.Numerics.Vector3.One) < 1e-6f;
+        if(none ? !Tints.TryRemove(index, out _) : Tints.TryGetValue(index, out var was) && was == tint)
+            return;
+        if(!none)
+            Tints[index] = tint;
+        foreach(var key in Tinted.Keys.Where(k => k.Index == index).ToList())
+            Tinted.TryRemove(key, out _);
+        Appearance.RedrawNative(index);
+    }
+
+    public static System.Numerics.Vector3 SkinTintOf(ushort index)
+        => Tints.TryGetValue(index, out var t) ? t : System.Numerics.Vector3.One;
+
+    // A skin material lookup (loading thread): this character's tinted copy's path when there is one; else noted, for
+    // a copy to be made (framework thread) and the character redrawn.
+    private static nint TintSkin(nint human, nint buffer, nuint size, uint slot, bool skin, nint path)
+    {
+        if(path == 0 || !skin || !BodySlot(slot) || Tints.IsEmpty || BodySwaps.Count == 0 || SwapFor(human) is not { } swap
+           || !Tints.ContainsKey(swap.Index))
+            return path;
+        try
+        {
+            string got = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(path) ?? "";
+            if(got.Length == 0 || !got.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase))
+                return path;
+            if(Tinted.TryGetValue((swap.Index, got), out var mine))
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(mine);
+                if((nuint)bytes.Length + 1 > size)
+                    return path;
+                System.Runtime.InteropServices.Marshal.Copy(bytes, 0, buffer, bytes.Length);
+                *((byte*)buffer + bytes.Length) = 0;
+                return buffer;
+            }
+            SkinSeen[(swap.Index, got)] = 0;
+        }
+        catch
+        {
+        }
+        return path;
+    }
+
+    // (framework thread) Tinted copies of the skin materials seen, handed to the mod manager; the characters redrawn.
+    private static void MakeTints()
+    {
+        if(SkinSeen.IsEmpty)
+            return;
+        var redraw = new HashSet<ushort>();
+        var dir = System.IO.Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), "skintint");
+        foreach(var key in SkinSeen.Keys.ToList())
+        {
+            SkinSeen.TryRemove(key, out _);
+            if(!Tints.TryGetValue(key.Index, out var tint) || Tinted.ContainsKey(key))
+                continue;
+            try
+            {
+                // the file the character really draws (its mods' or the game's)
+                string real = key.Path;
+                try
+                {
+                    real = Plugin.PluginInterface.GetIpcSubscriber<string, int, string>("Penumbra.ResolveGameObjectPath.V5").InvokeFunc(key.Path, key.Index);
+                }
+                catch
+                {
+                }
+                byte[]? data = System.IO.Path.IsPathRooted(real) && System.IO.File.Exists(real)
+                    ? System.IO.File.ReadAllBytes(real)
+                    : Plugin.DataManager.GetFile(real)?.Data ?? Plugin.DataManager.GetFile(key.Path)?.Data;
+                if(data == null)
+                    continue;
+                var tinted = Limber.Koi.Props.MtrlBuilder.SetConstant(data, DiffuseColor, [tint.X, tint.Y, tint.Z]);
+                string tag = $"i{key.Index}_{(uint)HashCode.Combine(tint.X, tint.Y, tint.Z, key.Path):x8}";
+                string name = System.IO.Path.GetFileName(key.Path);
+                string game = $"chara/limber/skintint/{tag}/{name}";
+                System.IO.Directory.CreateDirectory(dir);
+                string disk = System.IO.Path.Combine(dir, $"{tag}_{name}");
+                System.IO.File.WriteAllBytes(disk, tinted);
+                Limber.Koi.Props.KoiProps.Extra[game] = disk;
+                TintFiles.Add(game);
+                Tinted[key] = game;
+                redraw.Add(key.Index);
+            }
+            catch(Exception e)
+            {
+                Plugin.Log.Warning(e, "Limber body swap: couldn't tint the skin");
+            }
+        }
+        if(redraw.Count == 0)
+            return;
+        Limber.Koi.Props.KoiProps.Register();
+        foreach(var index in redraw)
+            Appearance.RedrawNative(index);
+    }
 
     // ---- Colours: the character's own
     //

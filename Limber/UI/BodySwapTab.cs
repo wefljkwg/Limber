@@ -12,6 +12,7 @@ public sealed class BodySwapTab
     private readonly Selection _selection;
     private readonly ActorTransforms? _moves;
     private string _status = "";
+    private readonly System.Collections.Generic.Dictionary<nint, (System.Numerics.Vector3 Colour, float Brightness)> _tints = new();
 
     // (for the page's presets)
     public int Race { get; set; } = 0;     // index into Appearance.Races
@@ -104,9 +105,12 @@ public sealed class BodySwapTab
         using(ImRaii.Disabled(!swapped))
         {
             if(ImGui.Button("Swap back###swap_back"))
+            {
+                _tints.Remove(actor.Address);
                 _status = BodySwap.IsBodySwapped(actor.Address)
                     ? BodySwap.SwapBodyBack(actor.Address, actor.ObjectIndex)
                     : BodySwap.SwapBack(actor.Address, actor.ObjectIndex, _moves);
+            }
         }
         if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip("Its own race, clan, gender and size again.");
@@ -121,11 +125,48 @@ public sealed class BodySwapTab
                             from = $"{c.Name} {r.Name}";
             ImGui.TextDisabled($"Swapped (its own body: {from}).");
         }
+        if(BodySwap.IsBodySwapped(actor.Address))
+            DrawSkinTint(actor.Address, actor.ObjectIndex);
         if(_status.Length > 0)
             ImGui.TextDisabled(_status);
         ImGui.Spacing();
         ImGui.TextDisabled("Hairstyles only some races have may not show on another race (the hair goes back when you swap back).\n"
             + "Body mods follow the mod manager's setup for the new race.\n"
             + "Body only: the neck join may show a gap between very different races; Body shape sliders still work on the new body.");
+    }
+
+    // The swapped body's skin tint: its own skin texture (another gender's or race's) matched to the head by eye.
+    private void DrawSkinTint(nint address, ushort index)
+    {
+        ImGui.Spacing();
+        if(!_tints.TryGetValue(address, out var t))
+        {
+            var now = BodySwap.SkinTintOf(index);
+            float most = MathF.Max(now.X, MathF.Max(now.Y, now.Z));
+            t = most > 1f ? (now / most, most) : (now, 1f);
+        }
+        var colour = t.Colour;
+        float brightness = t.Brightness;
+        bool apply = false;
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        if(ImGui.ColorEdit3("Body skin tint###swap_tint", ref colour, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.PickerHueWheel))
+            t.Colour = colour;
+        apply |= ImGui.IsItemDeactivatedAfterEdit();
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Multiplies the swapped body's skin colour, to match the head.\nWhite: no tint. The body's own textures stay.");
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Brightness###swap_tint_bright", ref brightness, 0.5f, 1.5f, "%.2f"))
+            t.Brightness = brightness;
+        apply |= ImGui.IsItemDeactivatedAfterEdit();
+        ImGui.SameLine();
+        if(ImGui.Button("Reset###swap_tint_reset"))
+        {
+            t = (System.Numerics.Vector3.One, 1f);
+            apply = true;
+        }
+        _tints[address] = t;
+        if(apply)
+            BodySwap.SetSkinTint(address, index, t.Colour * t.Brightness);
+        ImGui.TextDisabled("The tint applies when you let go (the character redraws).");
     }
 }
