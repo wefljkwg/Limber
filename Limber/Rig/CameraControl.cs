@@ -227,6 +227,12 @@ public static unsafe class CameraControl
     // move forward / back / left / right, strafe, jump, ascend, descend, and the controller's move stick answer "no",
     // as Cammy's free camera does), so the character stays put; Limber reads the keys itself.
     private delegate byte InputIdDelegate(nint inputData, uint id);
+    // The player's walking / flying input as the game sums it up each frame (what vnavmesh overrides to steer):
+    // zeroed while the free camera is on, so neither the keys nor the stick move the character.
+    private delegate void WalkInputDelegate(nint self, float* left, float* forward, float* turnLeft, byte* backwardOrStrafe, byte* a6, byte additive);
+    private delegate void FlyInputDelegate(nint self, float* result);
+    private static Hook<WalkInputDelegate>? _walk;
+    private static Hook<FlyInputDelegate>? _fly;
     private delegate int AxisDelegate(nint inputData, uint id);
     private static Hook<InputIdDelegate>? _held, _pressed;
     private static Hook<AxisDelegate>? _axis;
@@ -246,6 +252,27 @@ public static unsafe class CameraControl
                     (d, id) => _holdingMovement && MoveInputs.Contains(id) ? (byte)0 : _pressed!.Original(d, id));
                 _axis = Plugin.GameInterop.HookFromAddress<AxisDelegate>(Plugin.SigScanner.ScanText("E8 ?? ?? ?? ?? 66 44 0F 6E C3"),
                     (d, id) => _holdingMovement && id is 3 or 4 ? 0 : _axis!.Original(d, id));
+                _walk = Plugin.GameInterop.HookFromAddress<WalkInputDelegate>(Plugin.SigScanner.ScanText("E8 ?? ?? ?? ?? 80 7B 3E 00 48 8D 3D"),
+                    (self, left, forward, turn, back, a6, additive) =>
+                    {
+                        _walk!.Original(self, left, forward, turn, back, a6, additive);
+                        if(_holdingMovement)
+                        {
+                            *left = 0f;
+                            *forward = 0f;
+                            *turn = 0f;
+                        }
+                    });
+                _fly = Plugin.GameInterop.HookFromAddress<FlyInputDelegate>(Plugin.SigScanner.ScanText("E8 ?? ?? ?? ?? 0F B6 0D ?? ?? ?? ?? B8"),
+                    (self, result) =>
+                    {
+                        _fly!.Original(self, result);
+                        if(_holdingMovement)
+                            for(int i = 0; i < 4; i++)
+                                result[i] = 0f; // forward, left, up, turn
+                    });
+                _walk.Enable();
+                _fly.Enable();
                 _held.Enable();
                 _pressed.Enable();
                 _axis.Enable();
@@ -432,6 +459,8 @@ public static unsafe class CameraControl
         _held?.Dispose();
         _pressed?.Dispose();
         _axis?.Dispose();
+        _walk?.Dispose();
+        _fly?.Dispose();
         try
         {
             SetNoCollision(false);
