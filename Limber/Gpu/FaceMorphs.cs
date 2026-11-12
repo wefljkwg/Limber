@@ -340,6 +340,16 @@ public static class FaceMorphs
         ("Mouth corners in", "Lips", "The corners drawn toward the middle."),
         ("Mouth corners out", "Lips", "The corners pulled out wide."),
         ("Mouth corners down", "Lips", "The corners pulled down."),
+        ("Smile", "Lips", "The corners drawn up and back, the cheeks lifting a little."),
+        ("Smirk left", "Lips", "The left corner drawn up."),
+        ("Smirk right", "Lips", "The right corner drawn up."),
+        ("Lips parted", "Lips", "The lips apart (the jaw stays): upper lip up, lower lip down."),
+        ("Lips pressed", "Lips", "The lips pressed together and thinned, rolled in a little."),
+        ("Mouth open", "Jaw", "The mouth opened: the lower lip, chin and jaw drop and go back a little (the upper lip lifts a touch)."),
+        ("Mouth open wide", "Jaw", "Opened as far as it goes: the jaw right down, the corners drawn in and down (a gasp or scream)."),
+        ("Jaw left", "Jaw", "The lower jaw and lip moved to the left."),
+        ("Jaw right", "Jaw", "The lower jaw and lip moved to the right."),
+        ("Jaw forward", "Jaw", "The lower jaw pushed forward (underbite)."),
         ("Cheeks hollow", "Cheeks", "The cheeks sucked in (vacuum)."),
         ("Cheeks puffed", "Cheeks", "The cheeks blown out."),
         ("Cheek bulge left", "Cheeks", "A bulge in the left cheek from inside (something pressing it)."),
@@ -357,6 +367,9 @@ public static class FaceMorphs
         ("Eye bags", "Eyes", "Puffy skin under the eyes."),
         ("Brows knit", "Eyes", "The inner brows pulled down and together (a strained furrow)."),
         ("Brows up inside", "Eyes", "The inner brows raised (worried, helpless)."),
+        ("Brows raised", "Eyes", "The whole brows lifted (surprise)."),
+        ("Brows down", "Eyes", "The whole brows lowered (anger, focus)."),
+        ("Eyes wide", "Eyes", "The upper lids up and the lower lids down (eyes wide open)."),
     ];
 
     private static void BuildOwn(Face face)
@@ -422,6 +435,11 @@ public static class FaceMorphs
                     Put("Mouth corners in", mesh, v, new Vector3(-side * 0.3f * h, 0f, 0.06f * h) * cornerness * mouthZone * keep);
                     Put("Mouth corners out", mesh, v, new Vector3(side * 0.32f * h, 0.02f * h, -0.08f * h) * cornerness * mouthZone * keep);
                     Put("Mouth corners down", mesh, v, new Vector3(0f, -0.22f * h, 0f) * cornerness * mouthZone * keep);
+                    Put("Smile", mesh, v, new Vector3(side * 0.16f * h, 0.24f * h, -0.08f * h) * cornerness * mouthZone * keep);
+                    Put(side > 0f ? "Smirk left" : "Smirk right", mesh, v, new Vector3(side * 0.1f * h, 0.24f * h, -0.06f * h) * cornerness * mouthZone * keep);
+                    float lipMid = lip * (1f - cornerness * 0.7f);
+                    Put("Lips parted", mesh, v, new Vector3(0f, (upper > 0.5f ? 0.09f : -0.13f) * h, 0.01f * h) * lipMid * keep);
+                    Put("Lips pressed", mesh, v, new Vector3(0f, -(p.Y - lineY) * 0.45f, -0.07f * h * lip) * mouthZone * keep);
                 }
                 // The skin between the nose and the upper lip.
                 {
@@ -465,6 +483,23 @@ public static class FaceMorphs
                     Put("Nose scrunched", mesh, v, new Vector3(0f, 0.13f * h, -0.02f * h) * nose * (p.Y > m.NoseBaseY ? 1f : 0.4f) * keep);
                     Put("Nose pulled down", mesh, v, new Vector3(0f, -0.22f * h, 0.04f * h) * nose * keep);
                 }
+                // The mouth opening: the lower lip and everything the jaw carries drop and swing back a little; the upper
+                // lip lifts a touch. Full right below where the lips meet, out to the jaw's sides (not the cheeks).
+                {
+                    float acrossJaw = Fall(MathF.Max(0f, MathF.Abs(u) - 1.5f) / 1.2f);
+                    float open = (1f - upper) * acrossJaw * front;
+                    // (the corners open less: they stretch between the lips)
+                    float cornerOpen = 1f - 0.55f * cornerness * mouthZone;
+                    // (dropped by turning round the jaw's hinge: the further down, the further back too)
+                    float down = MathF.Max(0f, -vy);
+                    var lift = new Vector3(0f, 0.07f * h, 0.01f * h) * upper * mouthZone * (1f - cornerness);
+                    Put("Mouth open", mesh, v, (new Vector3(0f, -0.55f * h, -(0.12f + 0.12f * down) * h) * open * cornerOpen + lift) * keep);
+                    Put("Mouth open wide", mesh, v, (new Vector3(0f, -1.0f * h, -(0.2f + 0.2f * down) * h) * open * cornerOpen
+                        + new Vector3(-side * 0.18f * h, -0.1f * h, 0f) * cornerness * mouthZone + lift * 1.4f) * keep);
+                    Put("Jaw left", mesh, v, new Vector3(0.25f * h, 0f, 0f) * open * keep);
+                    Put("Jaw right", mesh, v, new Vector3(-0.25f * h, 0f, 0f) * open * keep);
+                    Put("Jaw forward", mesh, v, new Vector3(0f, 0f, 0.22f * h) * open * keep);
+                }
                 // Jaw
                 if(p.Y < lineY)
                 {
@@ -492,6 +527,10 @@ public static class FaceMorphs
                     float inner = Math.Clamp(x.InnerBrow * 1.5f + x.Brow * Fall(MathF.Max(0f, MathF.Abs(p.X - cx) - 0.6f * h) / (0.8f * h)), 0f, 1f);
                     Put("Brows knit", mesh, v, new Vector3(-MathF.Sign(p.X - cx) * 0.08f * h, -0.12f * h, 0.02f * h) * inner * keep);
                     Put("Brows up inside", mesh, v, new Vector3(0f, 0.14f * h, 0f) * inner * keep);
+                    float brow = Math.Clamp((x.Brow + x.InnerBrow) * 1.4f, 0f, 1f);
+                    Put("Brows raised", mesh, v, new Vector3(0f, 0.16f * h, 0.01f * h) * brow * keep);
+                    Put("Brows down", mesh, v, new Vector3(0f, -0.12f * h, 0.02f * h) * brow * keep);
+                    Put("Eyes wide", mesh, v, (new Vector3(0f, 0.09f * h, 0.01f * h) * lidUp + new Vector3(0f, -0.06f * h, 0f) * lidDown) * keep);
                 }
             }
         foreach(var (name, group, tip) in Own)
