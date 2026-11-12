@@ -229,7 +229,8 @@ public sealed class MainWindow : Window
                     .Add("Race", () => swap.Race, v => swap.Race = v)
                     .Add("Clan", () => swap.Clan, v => swap.Clan = v)
                     .Add("KeepHeight", () => swap.KeepHeight, v => swap.KeepHeight = v)
-                    .Add("BodyOnly", () => swap.BodyOnly, v => swap.BodyOnly = v),
+                    .Add("BodyOnly", () => swap.BodyOnly, v => swap.BodyOnly = v).Default(false)
+                    .Add("Gender", () => swap.Gender, v => swap.Gender = v).Default(0),
             },
             "facemorphs" => PerCharacter(n => new() { ["FaceMorphs"] = For(ik.FaceMorphs ??= new(), n) }),
             "bust" => PerCharacter(n => new() { ["BustShape"] = For(ik.BustShapes ??= new(), n) }),
@@ -459,8 +460,16 @@ public sealed class MainWindow : Window
             SizeCondition = ImGuiCond.FirstUseEver;
         }
 
+        // (its X: see ActorListWindow - closed since last frame means the X was used)
+        private bool _wasOpen;
+
         public override void PreOpenCheck()
-            => IsOpen = _main.Cfg.PoppedPages.Contains(_page.Id) && (_page.Shown?.Invoke() ?? true);
+        {
+            if (_wasOpen && !IsOpen)
+                OnClose();
+            IsOpen = _main.Cfg.PoppedPages.Contains(_page.Id) && (_page.Shown?.Invoke() ?? true);
+            _wasOpen = IsOpen;
+        }
 
         // (closing it with its X puts the page back in the main window)
         public override void OnClose()
