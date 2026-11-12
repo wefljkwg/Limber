@@ -457,6 +457,42 @@ public static unsafe class Animations
     private static string FileOf(ushort body, string key) => $"chara/human/c{body:D4}/animation/a0001/bt_common/{key}.pap";
 
     /// <summary>
+    /// A race and the races whose animations it falls back on, nearest first (the game's own way: Highlanders use the
+    /// Midlanders', Lalafell women the Lalafell men's, other women the Midlander woman's, everyone the Midlander man's).
+    /// </summary>
+    public static List<ushort> Chain(ushort body)
+    {
+        var chain = new List<ushort> { body };
+        void Add(ushort b)
+        {
+            if(b != 0 && !chain.Contains(b))
+                chain.Add(b);
+        }
+        Add(body switch
+        {
+            301 => 101, 401 => 201, 1201 => 1101, 1501 => 901, 1601 => 1001, 1701 => 1801,
+            _ => 0,
+        });
+        if(body / 100 % 2 == 0)
+            Add(201);
+        Add(101);
+        return chain;
+    }
+
+    /// <summary>The file a race really has for an animation: its own, or the nearest race's it falls back on ("" if none).</summary>
+    public static string NearestFile(ushort body, string key, out ushort from)
+    {
+        foreach(var b in Chain(body))
+            if(Plugin.DataManager.FileExists(FileOf(b, key)))
+            {
+                from = b;
+                return FileOf(b, key);
+            }
+        from = 0;
+        return "";
+    }
+
+    /// <summary>
     /// Plays another race's version of an animation: asks Penumbra to give this character's race that race's file
     /// (a temporary swap, in this character's collection only), then plays it. If the game already has this race's
     /// file loaded, the swap may only show from the next time it loads it.
@@ -469,9 +505,17 @@ public static unsafe class Animations
             return "Can't tell which animation file that is.";
         if(raceBody == own)
             return Play(address, index, id);
-        string from = FileOf(own, key), to = FileOf(raceBody, key);
-        if(!Plugin.DataManager.FileExists(to))
-            return "That race has no version of this animation.";
+        // That race's file, or (if it has none of its own) the nearest race's it falls back on.
+        string to = NearestFile(raceBody, key, out ushort used);
+        if(to.Length == 0)
+            return "No race has a version of this animation (it isn't a body animation?).";
+        // Every file the game may ask for this character's race (its own, or the ones it falls back on) gives that one.
+        var swaps = new Dictionary<string, string>();
+        foreach(var b in Chain(own))
+            if(b != used)
+                swaps[FileOf(b, key)] = to;
+        if(swaps.Count == 0)
+            return Play(address, index, id);
         try
         {
             var collection = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index);
@@ -480,7 +524,7 @@ public static unsafe class Animations
             ClearRace();
             _swapCollection = collection.Item3.Item1;
             int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
-                .InvokeFunc(SwapTag, _swapCollection, new Dictionary<string, string> { [from] = to }, "", SwapPriority);
+                .InvokeFunc(SwapTag, _swapCollection, swaps, "", SwapPriority);
             if(result != 0)
                 return $"The mod manager didn't take the swap (it said {result}).";
         }
@@ -489,7 +533,9 @@ public static unsafe class Animations
             return "The mod manager isn't reachable: " + e.Message;
         }
         Play(address, index, id);
-        return $"Playing {key} as {Races.FirstOrDefault(r => r.Body == raceBody).Name}.";
+        string name = Races.FirstOrDefault(r => r.Body == raceBody).Name;
+        return used == raceBody ? $"Playing {key} as {name}."
+            : $"Playing {key} as {name} (that race has no file of its own: {Races.FirstOrDefault(r => r.Body == used).Name}'s, which it uses).";
     }
 
     /// <summary>Takes the race swap away again.</summary>
