@@ -47,6 +47,8 @@ public static class MeshSculpt
         public required Dictionary<int, int[]> PointOf;      // per mesh: each vertex's point (-1: none)
         public required Dictionary<int, ushort[]> Triangles; // per mesh (with the shape keys' triangles)
         public float Size;                                   // how big the face is (model metres across)
+        public int[] PointTriangles = [];                    // the face as drawn, as point triangles (for the map)
+        public Vector3 Centre;                               // the middle of the face (rest space)
     }
 
     /// <summary>A character's edits on one face model: rest-space moves, per point.</summary>
@@ -141,6 +143,7 @@ public static class MeshSculpt
         var pointOf = new Dictionary<int, int[]>();
         var tris = new Dictionary<int, ushort[]>();
         var near = new List<HashSet<int>>();
+        var pointTris = new List<int>();
         foreach(var layout in layouts.Where(l => l.Lod == lod))
         {
             var skin = skins.FirstOrDefault(s => s.Mesh == layout.Mesh);
@@ -253,6 +256,12 @@ public static class MeshSculpt
                 int pa = map[a], pb = map[b], pc = map[c];
                 if(pa < 0 || pb < 0 || pc < 0)
                     continue;
+                if(pa != pb && pb != pc && pa != pc)
+                {
+                    pointTris.Add(pa);
+                    pointTris.Add(pb);
+                    pointTris.Add(pc);
+                }
                 near[pa].Add(pb); near[pa].Add(pc);
                 near[pb].Add(pa); near[pb].Add(pc);
                 near[pc].Add(pa); near[pc].Add(pb);
@@ -313,6 +322,8 @@ public static class MeshSculpt
         {
             File = file, Key = key, ByteWidth = (int)size[lod], Bones = bones.ToArray(), Points = points.ToArray(),
             Layouts = lays, Rest = rests, PointOf = pointOf, Triangles = tris, Size = MathF.Max(0.02f, across),
+            PointTriangles = pointTris.ToArray(),
+            Centre = shown.Count > 0 ? shown.Aggregate(Vector3.Zero, (a, p) => a + p.Rest) / shown.Count : Vector3.Zero,
         };
         if(Models.Count > 6)
             Models.Clear();
