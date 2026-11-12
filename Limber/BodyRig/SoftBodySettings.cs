@@ -35,6 +35,9 @@ public sealed class SoftBodySettings
     public float Spacing { get; set; } = 0f;       // apart (+) / together (-), in breast-bone separations
     // Breasts: the size of each part from the base to the tip (1 = unchanged): Breast 1 the base on the chest,
     // 2 a bit out from it, 3 the middle (the bulk), 4 the areolas, 5 the tip.
+    // Breasts: the whole breast turned about its base: out (+) / in (-), up (+) / down (-), degrees.
+    public float TiltOut { get; set; }
+    public float TiltUp { get; set; }
     public float Part1 { get; set; } = 1f;
     public float Part2 { get; set; } = 1f;
     public float Part3 { get; set; } = 1f;
@@ -50,6 +53,7 @@ public sealed class SoftBodySettings
 
     public bool ShapeIsDefault =>
         Size == 1f && Width == 1f && Height == 1f && Projection == 1f && Lift == 0f && Spacing == 0f
+        && TiltOut == 0f && TiltUp == 0f
         && Part1 == 1f && Part2 == 1f && Part3 == 1f && Part4 == 1f && Part5 == 1f
         && (PartMove == null || PartMove.All(v => v == 0f))
         && (Shapes == null || Shapes.Values.All(v => v == 0f));

@@ -2140,10 +2140,12 @@ public sealed partial class LimberTab
         Slider("Width##lmb_shape", soft.Width, v => soft.Width = v, "Side to side (1 = unchanged).", 0.1f, 3f);
         Slider("Height##lmb_shape", soft.Height, v => soft.Height = v, "Up and down (1 = unchanged).", 0.1f, 3f);
         Slider("Projection##lmb_shape", soft.Projection, v => soft.Projection = v, "How far it sticks out forward (1 = unchanged).", 0.1f, 3f);
-        Slider("Lift##lmb_shape", soft.Lift, v => soft.Lift = v, "Moves it up (+) or down (-) (0 = unchanged).", -1f, 1f);
+        Slider("Lift##lmb_shape", soft.Lift, v => soft.Lift = v, "Moves it up (+) or down (-) (0 = unchanged).", -3f, 3f);
         Slider("Spacing##lmb_shape", soft.Spacing, v => soft.Spacing = v, "Moves the two apart (+) or together (-) (0 = unchanged).", -1f, 1f);
         if(part == Limber.BodyRig.RigParts.Breasts)
         {
+            Slider("Tilt out / in##lmb_shape", soft.TiltOut, v => soft.TiltOut = v, "Turns each breast out to the side (+) or in toward the middle (-), about its base (degrees).", -45f, 45f);
+            Slider("Tilt up / down##lmb_shape", soft.TiltUp, v => soft.TiltUp = v, "Turns each breast up (+) or down (-), about its base (degrees).", -45f, 45f);
             // Each part: its size, then where it is (X out / in, Y up / down, Z forward / back).
             void Move(int part)
             {
@@ -2217,6 +2219,7 @@ public sealed partial class LimberTab
             soft.Lift = soft.Spacing = 0f;
             soft.Part1 = soft.Part2 = soft.Part3 = soft.Part4 = soft.Part5 = 1f;
             soft.PartMove = new float[15];
+            soft.TiltOut = soft.TiltUp = 0f;
             soft.Shapes = new();
             changed = true;
         }
@@ -2235,6 +2238,7 @@ public sealed partial class LimberTab
             fresh.Lift = soft.Lift; fresh.Spacing = soft.Spacing;
             (fresh.Part1, fresh.Part2, fresh.Part3, fresh.Part4, fresh.Part5) = (soft.Part1, soft.Part2, soft.Part3, soft.Part4, soft.Part5);
             fresh.PartMove = (float[])(soft.PartMove ?? new float[15]).Clone();
+            (fresh.TiltOut, fresh.TiltUp) = (soft.TiltOut, soft.TiltUp);
             fresh.Shapes = new Dictionary<string, float>(soft.Shapes ?? new());
             if(part == Limber.BodyRig.RigParts.Testicles)
                 _config.SoftBodyTesticles = fresh;

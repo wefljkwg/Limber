@@ -680,8 +680,10 @@ public sealed unsafe class SoftBody
             ApplyShapes(state.Right, false, shapes, middle);
             if (_part == RigParts.Breasts)
             {
-                ApplyParts(state.Left, s, middle);
-                ApplyParts(state.Right, s, middle);
+                ApplyParts(skeleton, state.Left, s, middle);
+                ApplyParts(skeleton, state.Right, s, middle);
+                ApplyTilt(skeleton, state.Left, s, middle);
+                ApplyTilt(skeleton, state.Right, s, middle);
                 // (the areolas and the tip are on the nipple bone: they size it too)
                 nippleScale *= MathF.Pow(Math.Clamp(s.Part4, 0.1f, 5f), 0.7f) * MathF.Pow(Math.Clamp(s.Part5, 0.1f, 5f), 0.5f);
             }
@@ -1435,7 +1437,7 @@ public sealed unsafe class SoftBody
     // Breast 1..5: each layer of the lattice (base, middle, front) widened or narrowed about its own middle, across
     // (not along) the breast, by the parts that lie in it: 1 the base, 2 a bit out (between base and middle), 3 the
     // middle, 4 the areolas and 5 the tip (both at the front; they size the nipple bone too).
-    private void ApplyParts(Breast b, SoftBodySettings s, Vector3 middle)
+    private void ApplyParts(in RigSkeleton skeleton, Breast b, SoftBodySettings s, Vector3 middle)
     {
         float p1 = Math.Clamp(s.Part1, 0.1f, 5f), p2 = Math.Clamp(s.Part2, 0.1f, 5f), p3 = Math.Clamp(s.Part3, 0.1f, 5f);
         float p4 = Math.Clamp(s.Part4, 0.1f, 5f), p5 = Math.Clamp(s.Part5, 0.1f, 5f);
@@ -1445,7 +1447,12 @@ public sealed unsafe class SoftBody
             moved |= move[k] != 0f && float.IsFinite(move[k]);
         if (p1 == 1f && p2 == 1f && p3 == 1f && p4 == 1f && p5 == 1f && !moved)
             return;
-        if (!_part.Lattice || !Axes(b, middle, out var outward, out var upAxis, out var forward))
+        if (!_part.Lattice)
+            return;
+        // Along the way the breast's own bone points (as it's held now: a body mod's breasts pointing out and down
+        // shape along that), not the character's axes; the lattice's own axes if the bone can't be read.
+        if (!BoneAxes(skeleton, b, middle, out var outward, out var upAxis, out var forward)
+            && !Axes(b, middle, out outward, out upAxis, out forward))
             return;
         // (moves are in breast-bone separations, like Lift and Spacing)
         float separation = 0.17f;
@@ -1485,6 +1492,76 @@ public sealed unsafe class SoftBody
                 b.Target[i] = centre + along + (d - along) * f + shift;
             }
         }
+    }
+
+    // Tilt: the whole breast turned about the middle of its base (where it meets the chest), out / in and up / down,
+    // along its own bone's axes.
+    private void ApplyTilt(in RigSkeleton skeleton, Breast b, SoftBodySettings s, Vector3 middle)
+    {
+        float outDeg = Math.Clamp(s.TiltOut, -80f, 80f), upDeg = Math.Clamp(s.TiltUp, -80f, 80f);
+        if ((outDeg == 0f && upDeg == 0f) || !_part.Lattice)
+            return;
+        if (!BoneAxes(skeleton, b, middle, out var outward, out var up, out var forward)
+            && !Axes(b, middle, out outward, out up, out forward))
+            return;
+        var pivot = Vector3.Zero;
+        for (int k = 0; k < _part.PerLayer; k++)
+            pivot += b.Target[k];
+        pivot /= _part.PerLayer;
+        float o = outDeg * MathF.PI / 180f, u = upDeg * MathF.PI / 180f;
+        var turnOut = MathUtil.FromTo(forward, Vector3.Normalize(forward * MathF.Cos(o) + outward * MathF.Sin(o)));
+        var turnUp = MathUtil.FromTo(forward, Vector3.Normalize(forward * MathF.Cos(u) + up * MathF.Sin(u)));
+        var turn = Quaternion.Normalize(turnUp * turnOut);
+        for (int i = 0; i < Side; i++)
+            b.Target[i] = pivot + Vector3.Transform(b.Target[i] - pivot, turn);
+    }
+
+    // The part's own bone's axes (world): which of its axes is "forward" is the one nearest the character's forward,
+    // "up" the one nearest its up (so a bone turned to point out and down keeps its own way), "outward" away from the
+    // middle between the two sides.
+    private static bool BoneAxes(in RigSkeleton skeleton, Breast b, Vector3 middle, out Vector3 outward, out Vector3 up, out Vector3 forward)
+    {
+        outward = up = forward = default;
+        int bone = b.Parents.Length > 0 ? b.Parents[0] : -1;
+        if (bone < 0)
+            return false;
+        var rotation = skeleton.GetModelFrame(bone).Rotation;
+        if (!MathUtil.IsFinite(rotation))
+            return false;
+        Vector3[] axes =
+        [
+            Vector3.Transform(Vector3.UnitX, rotation), Vector3.Transform(Vector3.UnitY, rotation), Vector3.Transform(Vector3.UnitZ, rotation),
+        ];
+        Vector3 Nearest(Vector3 want, Vector3? not)
+        {
+            Vector3 best = Vector3.Zero;
+            float bestDot = -2f;
+            foreach (var a in axes)
+                foreach (var s in new[] { a, -a })
+                {
+                    if (not is { } n && MathF.Abs(Vector3.Dot(s, n)) > 0.9f)
+                        continue;
+                    float d = Vector3.Dot(s, want);
+                    if (d > bestDot)
+                    {
+                        bestDot = d;
+                        best = s;
+                    }
+                }
+            return best;
+        }
+        var f = Nearest(Vector3.UnitZ, null);
+        var u = Nearest(Vector3.UnitY, f);
+        if (f == Vector3.Zero || u == Vector3.Zero)
+            return false;
+        var root = skeleton.RootRotation;
+        forward = Vector3.Normalize(Vector3.Transform(f, root));
+        up = Vector3.Normalize(Vector3.Transform(u, root));
+        outward = Vector3.Normalize(Vector3.Cross(up, forward));
+        // (away from the middle between the two sides)
+        if (Vector3.Dot(outward, b.Origin - middle) < 0f)
+            outward = -outward;
+        return MathUtil.IsFinite(outward) && MathUtil.IsFinite(up) && MathUtil.IsFinite(forward);
     }
 
     private void ApplyShapes(Breast b, bool left, IReadOnlyDictionary<string, float>? amounts, Vector3 middle)
