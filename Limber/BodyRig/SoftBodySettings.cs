@@ -33,6 +33,13 @@ public sealed class SoftBodySettings
     public float Projection { get; set; } = 1f;    // how far it sticks out forward
     public float Lift { get; set; } = 0f;          // up (+) / down (-), in breast-bone separations
     public float Spacing { get; set; } = 0f;       // apart (+) / together (-), in breast-bone separations
+    // Breasts: the size of each part from the base to the tip (1 = unchanged): Breast 1 the base on the chest,
+    // 2 a bit out from it, 3 the middle (the bulk), 4 the areolas, 5 the tip.
+    public float Part1 { get; set; } = 1f;
+    public float Part2 { get; set; } = 1f;
+    public float Part3 { get; set; } = 1f;
+    public float Part4 { get; set; } = 1f;
+    public float Part5 { get; set; } = 1f;
 
     // Blend shapes (BodyShapes), by name: 0 = off, 1 = full, in between blends, beyond exaggerates. Replaced as a
     // whole when changed (never edited in place), so the physics always reads a complete set.
@@ -40,6 +47,7 @@ public sealed class SoftBodySettings
 
     public bool ShapeIsDefault =>
         Size == 1f && Width == 1f && Height == 1f && Projection == 1f && Lift == 0f && Spacing == 0f
+        && Part1 == 1f && Part2 == 1f && Part3 == 1f && Part4 == 1f && Part5 == 1f
         && (Shapes == null || Shapes.Values.All(v => v == 0f));
 
     public SoftBodySettings Clone()

@@ -9,7 +9,7 @@ namespace Limber.BodyRig;
 /// rig, and blends smoothly from 0 to 1 and beyond): an offset for every lattice node, an exact size change, and
 /// (breasts) a nipple size change.
 /// </summary>
-public sealed record BodyShape(string Name, string Tip, float Scale, float NippleScale, float[]? Left, float[]? Right)
+public sealed record BodyShape(string Name, string Tip, float Scale, float NippleScale, float[]? Left, float[]? Right, float NippleTilt = 0f)
 {
     /// <summary>Node <paramref name="i"/>'s offset on one side, in box units (outward, up, forward).</summary>
     public Vector3 Node(bool left, int i)
@@ -32,6 +32,16 @@ public static partial class BodyShapes
     /// <summary>How much of a shape is set (0 if it isn't).</summary>
     public static float Amount(IReadOnlyDictionary<string, float>? amounts, string name)
         => amounts != null && amounts.TryGetValue(name, out var v) && float.IsFinite(v) ? Math.Clamp(v, -1f, 3f) : 0f;
+
+    /// <summary>How far the set shapes turn the nipples up (+) or down (-), in degrees.</summary>
+    public static float TiltOf(RigPart part, IReadOnlyDictionary<string, float>? amounts)
+    {
+        float tilt = 0f;
+        foreach (var shape in For(part))
+            if (shape.NippleTilt != 0f)
+                tilt += shape.NippleTilt * Amount(amounts, shape.Name);
+        return Math.Clamp(tilt, -80f, 80f);
+    }
 
     /// <summary>The size change of all the set shapes together (1 = none).</summary>
     public static float ScaleOf(RigPart part, IReadOnlyDictionary<string, float>? amounts, bool nipple = false)

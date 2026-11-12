@@ -2142,6 +2142,14 @@ public sealed partial class LimberTab
         Slider("Projection##lmb_shape", soft.Projection, v => soft.Projection = v, "How far it sticks out forward (1 = unchanged).", 0.1f, 3f);
         Slider("Lift##lmb_shape", soft.Lift, v => soft.Lift = v, "Moves it up (+) or down (-) (0 = unchanged).", -1f, 1f);
         Slider("Spacing##lmb_shape", soft.Spacing, v => soft.Spacing = v, "Moves the two apart (+) or together (-) (0 = unchanged).", -1f, 1f);
+        if(part == Limber.BodyRig.RigParts.Breasts)
+        {
+            Slider("Breast 1 (base)##lmb_shape", soft.Part1, v => soft.Part1 = v, "How wide the base is, where it meets the chest (1 = unchanged).", 0.2f, 3f);
+            Slider("Breast 2 (lower)##lmb_shape", soft.Part2, v => soft.Part2 = v, "A bit out from the base (1 = unchanged).", 0.2f, 3f);
+            Slider("Breast 3 (middle)##lmb_shape", soft.Part3, v => soft.Part3 = v, "The middle, where most of it is (1 = unchanged).", 0.2f, 3f);
+            Slider("Breast 4 (areolas)##lmb_shape", soft.Part4, v => soft.Part4 = v, "The front round the areolas, and the areolas (1 = unchanged).", 0.2f, 3f);
+            Slider("Breast 5 (tip)##lmb_shape", soft.Part5, v => soft.Part5 = v, "The very front: the tip and the nipples (1 = unchanged).", 0.2f, 3f);
+        }
         ImGui.TreePop();
         }
 
@@ -2172,6 +2180,7 @@ public sealed partial class LimberTab
         {
             soft.Size = soft.Width = soft.Height = soft.Projection = 1f;
             soft.Lift = soft.Spacing = 0f;
+            soft.Part1 = soft.Part2 = soft.Part3 = soft.Part4 = soft.Part5 = 1f;
             soft.Shapes = new();
             changed = true;
         }
@@ -2188,6 +2197,7 @@ public sealed partial class LimberTab
             fresh.Enabled = soft.Enabled;
             fresh.Size = soft.Size; fresh.Width = soft.Width; fresh.Height = soft.Height; fresh.Projection = soft.Projection;
             fresh.Lift = soft.Lift; fresh.Spacing = soft.Spacing;
+            (fresh.Part1, fresh.Part2, fresh.Part3, fresh.Part4, fresh.Part5) = (soft.Part1, soft.Part2, soft.Part3, soft.Part4, soft.Part5);
             fresh.Shapes = new Dictionary<string, float>(soft.Shapes ?? new());
             if(part == Limber.BodyRig.RigParts.Testicles)
                 _config.SoftBodyTesticles = fresh;

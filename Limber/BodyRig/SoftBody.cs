@@ -666,7 +666,7 @@ public sealed unsafe class SoftBody
         }
 
         // Shape sliders: scale / move each grid as a whole (this becomes the rest shape the physics springs toward).
-        float uniform = 1f, nippleScale = 1f;
+        float uniform = 1f, nippleScale = 1f, nippleTilt = 0f;
         if (!s.ShapeIsDefault)
         {
             float separation = Math.Clamp(Vector3.Distance(state.Left.Origin, state.Right.Origin), 0.03f, 1f);
@@ -675,8 +675,16 @@ public sealed unsafe class SoftBody
             var shapes = s.Shapes;
             float shapeScale = BodyShapes.ScaleOf(_part, shapes);
             nippleScale = BodyShapes.ScaleOf(_part, shapes, nipple: true);
+            nippleTilt = BodyShapes.TiltOf(_part, shapes);
             ApplyShapes(state.Left, true, shapes, middle);
             ApplyShapes(state.Right, false, shapes, middle);
+            if (_part == RigParts.Breasts)
+            {
+                ApplyParts(state.Left, s, middle);
+                ApplyParts(state.Right, s, middle);
+                // (the areolas and the tip are on the nipple bone: they size it too)
+                nippleScale *= MathF.Pow(Math.Clamp(s.Part4, 0.1f, 5f), 0.7f) * MathF.Pow(Math.Clamp(s.Part5, 0.1f, 5f), 0.5f);
+            }
             // Testicles grow as one sac: both sides about the same point (the middle, at the top and the back, where
             // they hang from), so together they're scaled exactly like one rigid shape and keep their modelled form.
             Vector3? shared = null;
@@ -841,7 +849,7 @@ public sealed unsafe class SoftBody
                 breast.PrevTip = restTip;
                 breast.PrevPivot = pivot;
                 breast.Started = s.Enabled;
-                Write(skeleton, breast, uniform, nippleScale);
+                Write(skeleton, breast, uniform, nippleScale, nippleTilt);
                 continue;
             }
 
@@ -1105,7 +1113,7 @@ public sealed unsafe class SoftBody
                 var outward = rest - centre;
                 _grabNormals.Add(outward.LengthSquared() > 1e-12f ? Vector3.Normalize(outward) : Vector3.UnitZ);
             }
-            Write(skeleton, breast, uniform, nippleScale);
+            Write(skeleton, breast, uniform, nippleScale, nippleTilt);
             for (int i = 0; i < Side; i++)
                 if (skeleton.NameOf(breast.Bones[i]) is { Length: > 0 } boneName)
                     shifts[boneName] = Vector3.TransformNormal(breast.Display[i] - breast.Target[i], skeleton.WorldToModel);
@@ -1323,7 +1331,7 @@ public sealed unsafe class SoftBody
     }
 
     /// <summary>Each grid bone's position (its rotation stays as the body set it), and its size from the shape sliders.</summary>
-    private void Write(in RigSkeleton skeleton, Breast breast, float uniform, float nippleScale = 1f)
+    private void Write(in RigSkeleton skeleton, Breast breast, float uniform, float nippleScale = 1f, float nippleTilt = 0f)
     {
         // The nipple bone rides on the lattice around it, sized with everything else and by the nipple shapes.
         if (breast.NippleBone >= 0)
@@ -1337,6 +1345,14 @@ public sealed unsafe class SoftBody
             float k2 = uniform * nippleScale;
             if (k2 != 1f)
                 skeleton.SetModelScale(breast.NippleBone, skeleton.GetModelScale(breast.NippleParent) * k2);
+            // Nipples up / down: the bone turned (the nipple, and the areola weighted round it, point up or down)
+            // round the body's side to side axis, from how the body holds it this frame.
+            if (nippleTilt != 0f)
+            {
+                var now = skeleton.GetModelFrame(breast.NippleBone).Rotation;
+                var turn = Quaternion.CreateFromAxisAngle(Vector3.UnitX, -nippleTilt * MathF.PI / 180f);
+                skeleton.SetModelRotation(breast.NippleBone, Quaternion.Normalize(turn * now));
+            }
         }
         var root = skeleton.RootRotation;
         var inverseRoot = Quaternion.Inverse(root);
@@ -1416,6 +1432,41 @@ public sealed unsafe class SoftBody
     /// The blend shapes: each set shape moves every node by its sculpted offset (in the box's own axes and size, so it
     /// fits any body and follows the pose), times its amount.
     /// </summary>
+    // Breast 1..5: each layer of the lattice (base, middle, front) widened or narrowed about its own middle, across
+    // (not along) the breast, by the parts that lie in it: 1 the base, 2 a bit out (between base and middle), 3 the
+    // middle, 4 the areolas and 5 the tip (both at the front; they size the nipple bone too).
+    private void ApplyParts(Breast b, SoftBodySettings s, Vector3 middle)
+    {
+        float p1 = Math.Clamp(s.Part1, 0.1f, 5f), p2 = Math.Clamp(s.Part2, 0.1f, 5f), p3 = Math.Clamp(s.Part3, 0.1f, 5f);
+        float p4 = Math.Clamp(s.Part4, 0.1f, 5f), p5 = Math.Clamp(s.Part5, 0.1f, 5f);
+        if (p1 == 1f && p2 == 1f && p3 == 1f && p4 == 1f && p5 == 1f)
+            return;
+        if (!_part.Lattice || !Axes(b, middle, out _, out _, out var forward))
+            return;
+        int perLayer = _part.PerLayer, layers = _part.Layers;
+        for (int l = 0; l < layers; l++)
+        {
+            float t = layers > 1 ? l / (float)(layers - 1) : 1f; // 0 the base, 1 the front
+            // each part's share of this layer: by how near its place along the breast is (0, 0.25, 0.5, 0.75, 1)
+            float W(float at) => MathF.Max(0f, 1f - MathF.Abs(t - at) / 0.5f);
+            float f = MathF.Pow(p1, W(0f)) * MathF.Pow(p2, W(0.25f)) * MathF.Pow(p3, W(0.5f))
+                      * MathF.Pow(p4, W(0.75f) * 0.8f) * MathF.Pow(p5, W(1f) * 0.6f);
+            if (MathF.Abs(f - 1f) < 1e-4f)
+                continue;
+            var centre = Vector3.Zero;
+            for (int k = 0; k < perLayer; k++)
+                centre += b.Target[l * perLayer + k];
+            centre /= perLayer;
+            for (int k = 0; k < perLayer; k++)
+            {
+                int i = l * perLayer + k;
+                var d = b.Target[i] - centre;
+                var along = forward * Vector3.Dot(d, forward);
+                b.Target[i] = centre + along + (d - along) * f;
+            }
+        }
+    }
+
     private void ApplyShapes(Breast b, bool left, IReadOnlyDictionary<string, float>? amounts, Vector3 middle)
     {
         if (!_part.Lattice || amounts == null || amounts.Count == 0 || !Axes(b, middle, out var outward, out var up, out var forward))
