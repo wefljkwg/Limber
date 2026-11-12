@@ -166,8 +166,8 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(inWindow ? "Untick to put this page back in the main window." : "This page in a window of its own (move and size it anywhere). Untick to put it back.");
         ImGui.Separator();
-        if (PresetParts(page.Id) is { } parts)
-            PresetBar.Draw(Cfg.Ik, page.Id, parts);
+        if (PresetParts(page.Id, Cfg) is { } parts)
+            PresetBar.Draw(Cfg.Ik, page.Id, parts, () => PresetParts(page.Id, new Configuration())?.Invoke());
         ImGui.Spacing();
         page.Draw();
     }
@@ -181,9 +181,11 @@ public sealed class MainWindow : Window
 
     // What each page's presets hold (the chosen character's settings for the pages that keep them per character).
     // Pages that already save their own (looks, body shapes, hands, pose files, camera shots) aren't here.
-    private Func<Dictionary<string, object>?>? PresetParts(string page)
+    // <paramref name="cfg"/>: the settings they're read from and written to (a fresh one: the defaults, for Reset to
+    // default).
+    private Func<Dictionary<string, object>?>? PresetParts(string page, Configuration cfg)
     {
-        var ik = Cfg.Ik;
+        var ik = cfg.Ik;
         string Name() => _limberTab.ChosenActor.IsSet ? _limberTab.ChosenActor.Name ?? "" : "";
         Func<Dictionary<string, object>?> PerCharacter(Func<string, Dictionary<string, object>> make)
             => () => Name() is { Length: > 0 } n ? make(n) : null;
@@ -258,10 +260,10 @@ public sealed class MainWindow : Window
             "move" => () => _limberTab.ChosenActor is { IsSet: true } a && _limberTab.Actors is { } moves ? new()
             {
                 ["Move"] = new PresetValues()
-                    .Add("Move", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Move, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Move = v; })
-                    .Add("Turn", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Turn = v; })
+                    .Add("Move", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Move, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Move = v; }).Default(System.Numerics.Vector3.Zero)
+                    .Add("Turn", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Turn, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Turn = v; }).Default(System.Numerics.Vector3.Zero)
                     .Add("Facing", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Facing, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Facing = v; })
-                    .Add("Scale", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Scale = Math.Clamp(v, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale); })
+                    .Add("Scale", () => moves.GetOrAdd(a.Address, a.ObjectIndex).Scale, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).Scale = Math.Clamp(v, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale); }).Default(1f)
                     .Add("KeepWhileMoving", () => moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving, v => { lock(moves.Sync) moves.GetOrAdd(a.Address, a.ObjectIndex).KeepWhileMoving = v; }),
             } : null,
             "voice" => () => _limberTab.ChosenActor is { IsSet: true } a ? new()
@@ -371,60 +373,60 @@ public sealed class MainWindow : Window
             {
                 ["Advanced"] = new PresetValues()
                     .Add("WorkOutsideGPose", () => ik.WorkOutsideGPose, v => ik.WorkOutsideGPose = v)
-                    .Add("ShowBust", () => Cfg.ShowBustTab, v => Cfg.ShowBustTab = v)
-                    .Add("ShowVideo", () => Cfg.ShowVideoTab, v => Cfg.ShowVideoTab = v)
-                    .Add("ShowOral", () => Cfg.ShowOralTab, v => Cfg.ShowOralTab = v)
-                    .Add("ShowClimax", () => Cfg.ShowClimaxTab, v => Cfg.ShowClimaxTab = v)
-                    .Add("ShowVlc", () => Cfg.ShowVlcTab, v => Cfg.ShowVlcTab = v)
-                    .Add("HideWindowWithGameUi", () => Cfg.HideWindowWithGameUi, v => Cfg.HideWindowWithGameUi = v),
+                    .Add("ShowBust", () => cfg.ShowBustTab, v => cfg.ShowBustTab = v)
+                    .Add("ShowVideo", () => cfg.ShowVideoTab, v => cfg.ShowVideoTab = v)
+                    .Add("ShowOral", () => cfg.ShowOralTab, v => cfg.ShowOralTab = v)
+                    .Add("ShowClimax", () => cfg.ShowClimaxTab, v => cfg.ShowClimaxTab = v)
+                    .Add("ShowVlc", () => cfg.ShowVlcTab, v => cfg.ShowVlcTab = v)
+                    .Add("HideWindowWithGameUi", () => cfg.HideWindowWithGameUi, v => cfg.HideWindowWithGameUi = v),
             },
             "link" => () => new()
             {
                 ["Link"] = new PresetValues()
-                    .Add("DriveTorso", () => Cfg.DriveTorso, v => Cfg.DriveTorso = v)
-                    .Add("DriveHead", () => Cfg.DriveHead, v => Cfg.DriveHead = v)
-                    .Add("DriveArms", () => Cfg.DriveArms, v => Cfg.DriveArms = v)
-                    .Add("DriveHands", () => Cfg.DriveHands, v => Cfg.DriveHands = v)
-                    .Add("DriveLegs", () => Cfg.DriveLegs, v => Cfg.DriveLegs = v)
-                    .Add("DriveGenitals", () => Cfg.DriveGenitals, v => Cfg.DriveGenitals = v)
-                    .Add("DriveBreasts", () => Cfg.DriveBreasts, v => Cfg.DriveBreasts = v)
-                    .Add("BreastStrength", () => Cfg.BreastStrength, v => Cfg.BreastStrength = v)
-                    .Add("DriveFace", () => Cfg.DriveFace, v => Cfg.DriveFace = v)
-                    .Add("ExpressionMode", () => Cfg.ExpressionMode, v => Cfg.ExpressionMode = v)
-                    .Add("ApplyRootHeight", () => Cfg.ApplyRootHeight, v => Cfg.ApplyRootHeight = v)
-                    .Add("ApplyRootHorizontal", () => Cfg.ApplyRootHorizontal, v => Cfg.ApplyRootHorizontal = v)
-                    .Add("MirrorLeftRight", () => Cfg.MirrorLeftRight, v => Cfg.MirrorLeftRight = v)
-                    .Add("FlipFacing", () => Cfg.FlipFacing, v => Cfg.FlipFacing = v)
-                    .Add("Smoothing", () => Cfg.Smoothing, v => Cfg.Smoothing = v)
-                    .Add("HeadPitchOffset", () => Cfg.HeadPitchOffset, v => Cfg.HeadPitchOffset = v)
-                    .Add("Interpolate", () => Cfg.Interpolate, v => Cfg.Interpolate = v)
-                    .Add("TimeoutSeconds", () => Cfg.TimeoutSeconds, v => Cfg.TimeoutSeconds = v),
+                    .Add("DriveTorso", () => cfg.DriveTorso, v => cfg.DriveTorso = v)
+                    .Add("DriveHead", () => cfg.DriveHead, v => cfg.DriveHead = v)
+                    .Add("DriveArms", () => cfg.DriveArms, v => cfg.DriveArms = v)
+                    .Add("DriveHands", () => cfg.DriveHands, v => cfg.DriveHands = v)
+                    .Add("DriveLegs", () => cfg.DriveLegs, v => cfg.DriveLegs = v)
+                    .Add("DriveGenitals", () => cfg.DriveGenitals, v => cfg.DriveGenitals = v)
+                    .Add("DriveBreasts", () => cfg.DriveBreasts, v => cfg.DriveBreasts = v)
+                    .Add("BreastStrength", () => cfg.BreastStrength, v => cfg.BreastStrength = v)
+                    .Add("DriveFace", () => cfg.DriveFace, v => cfg.DriveFace = v)
+                    .Add("ExpressionMode", () => cfg.ExpressionMode, v => cfg.ExpressionMode = v)
+                    .Add("ApplyRootHeight", () => cfg.ApplyRootHeight, v => cfg.ApplyRootHeight = v)
+                    .Add("ApplyRootHorizontal", () => cfg.ApplyRootHorizontal, v => cfg.ApplyRootHorizontal = v)
+                    .Add("MirrorLeftRight", () => cfg.MirrorLeftRight, v => cfg.MirrorLeftRight = v)
+                    .Add("FlipFacing", () => cfg.FlipFacing, v => cfg.FlipFacing = v)
+                    .Add("Smoothing", () => cfg.Smoothing, v => cfg.Smoothing = v)
+                    .Add("HeadPitchOffset", () => cfg.HeadPitchOffset, v => cfg.HeadPitchOffset = v)
+                    .Add("Interpolate", () => cfg.Interpolate, v => cfg.Interpolate = v)
+                    .Add("TimeoutSeconds", () => cfg.TimeoutSeconds, v => cfg.TimeoutSeconds = v),
             },
             "video" => () => new()
             {
                 ["Video"] = new PresetValues()
-                    .Add("TrackFingers", () => Cfg.VideoTrackFingers, v => Cfg.VideoTrackFingers = v)
-                    .Add("GuessHiddenLimbs", () => Cfg.VideoGuessHiddenLimbs, v => Cfg.VideoGuessHiddenLimbs = v)
-                    .Add("MaxFps", () => Cfg.VideoMaxFps, v => Cfg.VideoMaxFps = v)
-                    .Add("Smoothing", () => Cfg.VideoSmoothing, v => Cfg.VideoSmoothing = v)
-                    .Add("People", () => Cfg.VideoPeople, v => Cfg.VideoPeople = v)
-                    .Add("SwapSides", () => Cfg.VideoSwapSides, v => Cfg.VideoSwapSides = v)
-                    .Add("Mirror", () => Cfg.VideoMirror, v => Cfg.VideoMirror = v)
-                    .Add("Loop", () => Cfg.VideoLoop, v => Cfg.VideoLoop = v)
-                    .Add("Speed", () => Cfg.VideoSpeed, v => Cfg.VideoSpeed = v)
-                    .Add("LoopBlend", () => Cfg.VideoLoopBlend, v => Cfg.VideoLoopBlend = v)
-                    .Add("StaticCamera", () => Cfg.GvhmrStaticCamera, v => Cfg.GvhmrStaticCamera = v),
+                    .Add("TrackFingers", () => cfg.VideoTrackFingers, v => cfg.VideoTrackFingers = v)
+                    .Add("GuessHiddenLimbs", () => cfg.VideoGuessHiddenLimbs, v => cfg.VideoGuessHiddenLimbs = v)
+                    .Add("MaxFps", () => cfg.VideoMaxFps, v => cfg.VideoMaxFps = v)
+                    .Add("Smoothing", () => cfg.VideoSmoothing, v => cfg.VideoSmoothing = v)
+                    .Add("People", () => cfg.VideoPeople, v => cfg.VideoPeople = v)
+                    .Add("SwapSides", () => cfg.VideoSwapSides, v => cfg.VideoSwapSides = v)
+                    .Add("Mirror", () => cfg.VideoMirror, v => cfg.VideoMirror = v)
+                    .Add("Loop", () => cfg.VideoLoop, v => cfg.VideoLoop = v)
+                    .Add("Speed", () => cfg.VideoSpeed, v => cfg.VideoSpeed = v)
+                    .Add("LoopBlend", () => cfg.VideoLoopBlend, v => cfg.VideoLoopBlend = v)
+                    .Add("StaticCamera", () => cfg.GvhmrStaticCamera, v => cfg.GvhmrStaticCamera = v),
             },
             "vlc" => () => new()
             {
                 ["Live"] = new PresetValues()
-                    .Add("Nlf", () => Cfg.LiveNlf, v => Cfg.LiveNlf = v)
-                    .Add("People", () => Cfg.LivePeople, v => Cfg.LivePeople = v)
-                    .Add("SwapSides", () => Cfg.LiveSwapSides, v => Cfg.LiveSwapSides = v)
-                    .Add("Fingers", () => Cfg.LiveFingers, v => Cfg.LiveFingers = v)
-                    .Add("GuessHiddenLimbs", () => Cfg.LiveGuessHiddenLimbs, v => Cfg.LiveGuessHiddenLimbs = v)
-                    .Add("Mirror", () => Cfg.LiveMirror, v => Cfg.LiveMirror = v)
-                    .Add("Smoothing", () => Cfg.LiveSmoothing, v => Cfg.LiveSmoothing = v),
+                    .Add("Nlf", () => cfg.LiveNlf, v => cfg.LiveNlf = v)
+                    .Add("People", () => cfg.LivePeople, v => cfg.LivePeople = v)
+                    .Add("SwapSides", () => cfg.LiveSwapSides, v => cfg.LiveSwapSides = v)
+                    .Add("Fingers", () => cfg.LiveFingers, v => cfg.LiveFingers = v)
+                    .Add("GuessHiddenLimbs", () => cfg.LiveGuessHiddenLimbs, v => cfg.LiveGuessHiddenLimbs = v)
+                    .Add("Mirror", () => cfg.LiveMirror, v => cfg.LiveMirror = v)
+                    .Add("Smoothing", () => cfg.LiveSmoothing, v => cfg.LiveSmoothing = v),
             },
             _ => null,
         };
