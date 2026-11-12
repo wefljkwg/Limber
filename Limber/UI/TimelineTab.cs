@@ -504,7 +504,15 @@ public sealed class TimelineTab
                 foreach(var (key, label, tip) in LimberAnimationsTab.Startable)
                 {
                     if(ImGui.MenuItem($"{label}###tl_m_lanim_{key}"))
-                        Add(clip, name, "lanim", key);
+                    {
+                        // (its first key "on" at the playhead: keyed as it is now it was "off", and nothing started)
+                        Checkpoint();
+                        var track = _timeline.AddTrack(clip, name, "lanim", key, key: false);
+                        TimelineService.SetKey(track, _timeline.Time, [1f]);
+                        _closed.Remove(name);
+                        _timeline.Refresh();
+                        _config.Save();
+                    }
                     if(ImGui.IsItemHovered())
                         ImGui.SetTooltip(tip + "\nKey it on (or off): it starts (stops) when the key is reached, as with its Start button.");
                 }
@@ -646,6 +654,20 @@ public sealed class TimelineTab
         ImGui.SameLine();
         if(ImGui.Button("Delete###tl_key_del"))
             DeletePicked(clip);
+
+        // An on / off key (Limber Animations, a switch setting): on or off here.
+        if(_picked.Count == 1 && key.Value.Length >= 1 && (track.Kind == "lanim" || (track.Kind == "path" && track.Extra == "b")))
+        {
+            bool on = key.Value[0] >= 0.5f;
+            if(ImGui.Checkbox("On at this key###tl_key_on", ref on))
+            {
+                Checkpoint();
+                key.Value = [on ? 1f : 0f];
+                _timeline.Refresh();
+                _config.Save();
+            }
+            Tooltip(track.Kind == "lanim" ? "On: it starts when this key is reached (as its Start button). Off: it stops." : "The switch on or off from this key.");
+        }
 
         // A game animation key: which animation, and how fast.
         if(_picked.Count == 1 && track.Kind == "anim")
