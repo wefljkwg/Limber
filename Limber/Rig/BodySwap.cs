@@ -130,6 +130,7 @@ public static unsafe class BodySwap
         if(BodySwaps.Count > 0)
         {
             FitHeads();
+            KeepColours();
             // (each slot's model race for the other body, kept up to date as gear changes: twice a second)
             if(++_raceFrames >= 30)
             {
@@ -236,6 +237,7 @@ public static unsafe class BodySwap
             return "That's its own body already.";
         if(!Hook((nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject))
             return "Couldn't hook the game's file lookup: " + _hookProblem;
+        TakeColours(address);
         BodySwaps[address] = new BodyOnly(index, own, body);
         WorkOutModelRaces(address, BodySwaps[address]);
         Logged.Clear();
@@ -251,6 +253,8 @@ public static unsafe class BodySwap
         if(!BodySwaps.Remove(address))
             return "Not swapped.";
         ModelRaces.TryRemove(index, out _);
+        OwnColours.Remove(address);
+        GameColours.Remove(address);
         RefreshDraws();
         Appearance.Redraw(index);
         return "Its own body again.";
@@ -264,6 +268,8 @@ public static unsafe class BodySwap
         BodyDraws.Clear();
         FittedTables.Clear();
         ModelRaces.Clear();
+        OwnColours.Clear();
+        GameColours.Clear();
         foreach(var (address, swap) in was)
             if(Get(address, swap.Index) != null)
                 Appearance.Redraw(swap.Index);
@@ -351,13 +357,11 @@ public static unsafe class BodySwap
             _imc = gi.HookFromAddress<PathByIndex>(F(89), (h, b, n, i) => BodySlotCall(h, i, true, () => _imc!.Original(h, b, n, i)));
             // (skin stays the character's own - its tone, scales and markings - so skin materials, the skin material and
             // body decals aren't asked as the other race; the gear's own materials are)
-            // (the skin is always the character's own race's - the head's colours - and for a body of the other gender,
-            // that race's skin for that gender: laid out for that body. See SkinCall.)
-            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => IsSkin(m)
-                ? SkinCall(h, BodySlot(i), () => _mtrl!.Original(h, b, n, i, m))
-                : BodySlotCall(h, i, true, () => _mtrl!.Original(h, b, n, i, m)));
-            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => SkinCall(h, BodySlot(i), () => _skinMtrl!.Original(h, b, n, i)));
-            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => SkinCall(h, BodySlot(i), () => _decal!.Original(h, b, n, i)));
+            // (a body of the other gender takes its own skin material: only its own fits it - another race's or gender's
+            // skin comes out glitched. The skin's colour is the character's own either way: see KeepColours.)
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m)));
+            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => _skinMtrl!.Original(h, b, n, i));
+            _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
             _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => BodySlotCall(h, s, true, () => _deformer!.Original(h, s)));
             _race = gi.HookFromAddress<RaceDelegate>(F(88), RaceDetour);
             _sklb.Enable(); _mdl.Enable(); _skp.Enable(); _phyb.Enable(); _kdb.Enable(); _bnmb.Enable(); _pap.Enable();
@@ -411,31 +415,67 @@ public static unsafe class BodySwap
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, ushort[]> ModelRaces = new(); // by object index
     private static readonly Dictionary<(ushort Race, bool Accessory), byte[]?> Eqdp = new();
 
-    // The skin of a swapped body: the character's own race's (its head's colours, scales, markings), and when the body
-    // is the other gender's, that race's skin for that gender (men's and women's skin are laid out differently): a
-    // Miqo'te woman with a Roegadyn man's body gets the Miqo'te man's skin. (Given the body's own race's skin it took
-    // that race's colours: a Roegadyn's pale skin under a Miqo'te head.)
-    private static T SkinCall<T>(nint human, bool bodyPart, Func<T> original)
+    private static bool OtherSex(nint human)
+        => SwapFor(human) is { } swap && (swap.Own / 100 % 2) != (swap.Body / 100 % 2);
+
+    // ---- Colours: the character's own
+    //
+    // The game turns the skin, lip, hair and eye colour picks into colours through the race's palette (the same pick is
+    // a different colour on each race), into the character's one CustomizeParameter block that the head and body both
+    // read. For a swapped body it used the other race's palette (the body's race is what the character says it is, for
+    // its animations), so the skin came out that race's tone at the same pick - a Roegadyn's pale skin under a Miqo'te
+    // head. The block is kept as it was before the swap: taken then, and put back whenever the game has made it
+    // again (a redraw); left alone when something else changed it (Skin effects' flush, say).
+
+    private static readonly Dictionary<nint, byte[]> OwnColours = new();   // by the character, taken before the swap
+    private static readonly Dictionary<nint, byte[]> GameColours = new();  // what the game made of them after it
+
+    private static FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Human* HumanOf(nint address)
     {
-        if(!bodyPart || BodySwaps.Count == 0 || SwapFor(human) is not { } swap)
-            return original();
-        bool ownFemale = swap.Own / 100 % 2 == 0, bodyFemale = swap.Body / 100 % 2 == 0;
-        if(ownFemale == bodyFemale)
-            return original();
-        ushort ownMale = (ushort)(ownFemale ? swap.Own - 100 : swap.Own);
-        ushort skin = (ushort)(bodyFemale ? ownMale + 100 : ownMale);
-        ushort* race = (ushort*)(human + RaceSexIdOffset);
-        ushort was = *race;
-        if(was != swap.Own)
-            return original();
-        *race = skin;
-        try
+        var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
+        if(go == null)
+            return null;
+        var draw = go->DrawObject;
+        if(draw == null || draw->Object.GetObjectType() != FFXIVClientStructs.FFXIV.Client.Graphics.Scene.ObjectType.CharacterBase)
+            return null;
+        var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)draw;
+        return cb->GetModelType() == FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase.ModelType.Human ? (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Human*)cb : null;
+    }
+
+    private static byte* ColoursOf(nint address)
+    {
+        var human = HumanOf(address);
+        if(human == null || human->CustomizeParameterCBuffer == null)
+            return null;
+        return (byte*)human->CustomizeParameterCBuffer->UnsafeSourcePointer;
+    }
+
+    private static void TakeColours(nint address)
+    {
+        var p = ColoursOf(address);
+        if(p == null)
+            return;
+        OwnColours[address] = new ReadOnlySpan<byte>(p, sizeof(FFXIVClientStructs.FFXIV.Shader.CustomizeParameter)).ToArray();
+        GameColours.Remove(address);
+    }
+
+    private static void KeepColours()
+    {
+        foreach(var (address, swap) in BodySwaps)
         {
-            return original();
-        }
-        finally
-        {
-            *race = was;
+            if(!OwnColours.TryGetValue(address, out var own) || Get(address, swap.Index) == null)
+                continue;
+            var p = ColoursOf(address);
+            if(p == null)
+                continue;
+            var now = new Span<byte>(p, own.Length);
+            if(now.SequenceEqual(own))
+                continue;
+            // (the game's own make of them: when it's first seen, or the same again after a redraw)
+            if(GameColours.TryGetValue(address, out var made) && !now.SequenceEqual(made))
+                continue; // (changed on purpose by something else: left)
+            GameColours[address] = now.ToArray();
+            own.CopyTo(now);
         }
     }
 
