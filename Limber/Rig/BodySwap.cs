@@ -128,7 +128,16 @@ public static unsafe class BodySwap
     public static void Tick()
     {
         if(BodySwaps.Count > 0)
+        {
             FitHeads();
+            // (each slot's model race for the other body, kept up to date as gear changes: twice a second)
+            if(++_raceFrames >= 30)
+            {
+                _raceFrames = 0;
+                foreach(var (address, swap) in BodySwaps)
+                    WorkOutModelRaces(address, swap);
+            }
+        }
         // Characters that left (GPose ended, actor removed): forgotten; draw objects looked up again (a redraw makes a
         // new one).
         if(++_pruneFrames >= 60)
@@ -136,7 +145,10 @@ public static unsafe class BodySwap
             _pruneFrames = 0;
             foreach(var (address, swap) in new List<KeyValuePair<nint, BodyOnly>>(BodySwaps))
                 if(Get(address, swap.Index) == null)
+                {
                     BodySwaps.Remove(address);
+                    ModelRaces.TryRemove(swap.Index, out _);
+                }
             RefreshDraws();
             foreach(var (address, b) in new List<KeyValuePair<nint, Before>>(Swapped))
                 if(Get(address, b.Index) == null)
@@ -225,6 +237,7 @@ public static unsafe class BodySwap
         if(!Hook((nint)((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)c)->DrawObject))
             return "Couldn't hook the game's file lookup: " + _hookProblem;
         BodySwaps[address] = new BodyOnly(index, own, body);
+        WorkOutModelRaces(address, BodySwaps[address]);
         Logged.Clear();
         FitLogged.Clear();
         Plugin.Log.Information($"Limber body swap: #{index} c{own:D4} -> body c{body:D4}");
@@ -237,6 +250,7 @@ public static unsafe class BodySwap
     {
         if(!BodySwaps.Remove(address))
             return "Not swapped.";
+        ModelRaces.TryRemove(index, out _);
         RefreshDraws();
         Appearance.Redraw(index);
         return "Its own body again.";
@@ -249,6 +263,7 @@ public static unsafe class BodySwap
         BodySwaps.Clear();
         BodyDraws.Clear();
         FittedTables.Clear();
+        ModelRaces.Clear();
         foreach(var (address, swap) in was)
             if(Get(address, swap.Index) != null)
                 Appearance.Redraw(swap.Index);
@@ -326,20 +341,22 @@ public static unsafe class BodySwap
             nint F(int slot) => *(nint*)(vt + slot * 8);
             var gi = Plugin.GameInterop;
             _sklb = gi.HookFromAddress<PathByIndex>(F(76), (h, b, n, i) => Body(h, BodyPartial(i), () => _sklb!.Original(h, b, n, i)));
-            _mdl = gi.HookFromAddress<PathByIndex>(F(77), (h, b, n, i) => Body(h, BodySlot(i), () => _mdl!.Original(h, b, n, i)));
+            _mdl = gi.HookFromAddress<PathByIndex>(F(77), (h, b, n, i) => BodySlotCall(h, i, true, () => _mdl!.Original(h, b, n, i)));
             _skp = gi.HookFromAddress<PathByIndex>(F(78), (h, b, n, i) => Body(h, BodyPartial(i), () => _skp!.Original(h, b, n, i)));
             _phyb = gi.HookFromAddress<PathByIndex>(F(79), (h, b, n, i) => Body(h, BodyPartial(i), () => _phyb!.Original(h, b, n, i)));
             _kdb = gi.HookFromAddress<PathByIndex>(F(80), (h, b, n, i) => Body(h, BodyPartial(i), () => _kdb!.Original(h, b, n, i)));
             _bnmb = gi.HookFromAddress<PathByIndex>(F(82), (h, b, n, i) => Body(h, BodyPartial(i), () => _bnmb!.Original(h, b, n, i)));
             _pap = gi.HookFromAddress<PathByIndexName>(F(84), PapDetour);
-            _matPap = gi.HookFromAddress<PathByIndexUnk>(F(87), (h, b, n, i, u) => Body(h, BodySlot(i), () => _matPap!.Original(h, b, n, i, u)));
-            _imc = gi.HookFromAddress<PathByIndex>(F(89), (h, b, n, i) => Body(h, BodySlot(i), () => _imc!.Original(h, b, n, i)));
+            _matPap = gi.HookFromAddress<PathByIndexUnk>(F(87), (h, b, n, i, u) => BodySlotCall(h, i, true, () => _matPap!.Original(h, b, n, i, u)));
+            _imc = gi.HookFromAddress<PathByIndex>(F(89), (h, b, n, i) => BodySlotCall(h, i, true, () => _imc!.Original(h, b, n, i)));
             // (skin stays the character's own - its tone, scales and markings - so skin materials, the skin material and
             // body decals aren't asked as the other race; the gear's own materials are)
-            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => Body(h, BodySlot(i) && !IsSkin(m), () => _mtrl!.Original(h, b, n, i, m)));
+            // (a body of the other gender takes its own skin material too: men's and women's skin textures are laid out
+            // differently; the tone still comes from the character's own colours)
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m)));
             _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => _skinMtrl!.Original(h, b, n, i));
             _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
-            _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => Body(h, BodySlot(s), () => _deformer!.Original(h, s)));
+            _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => BodySlotCall(h, s, true, () => _deformer!.Original(h, s)));
             _race = gi.HookFromAddress<RaceDelegate>(F(88), RaceDetour);
             _sklb.Enable(); _mdl.Enable(); _skp.Enable(); _phyb.Enable(); _kdb.Enable(); _bnmb.Enable(); _pap.Enable();
             _matPap.Enable(); _imc.Enable(); _mtrl.Enable(); _skinMtrl.Enable(); _decal.Enable(); _deformer.Enable(); _race.Enable();
@@ -375,6 +392,115 @@ public static unsafe class BodySwap
         if(BodySwaps.TryGetValue(gameObject, out var swap) && drawObject != 0)
             BodyDraws[drawObject] = swap;
         _creatingFor = 0;
+    }
+
+    // ---- Each gear slot's model race
+    //
+    // The game doesn't build a slot's model path from the character's race alone: when the gear goes on it works out
+    // which race's model to use (its own if the race has one for that item, else the women's or men's base model - most
+    // gear and the smallclothes are the Midlander woman's c0201 or man's c0101, reshaped to the race), and keeps it in
+    // the slot (+0x16). So only swapping the race kept a woman's body on a man's skeleton. For a swapped body it's worked
+    // out for the other body the same way (Penumbra's ResolveEqdpRaceCode: the race's own model, its one fallback, else
+    // Midlander man; from the game's equipment / accessory deformer parameter tables) and put in during the slot's
+    // lookups.
+
+    private static int _raceFrames;
+    private const int SlotBase = 0xC50, SlotStride = 0x20, SlotModelRace = 0x16;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ushort, ushort[]> ModelRaces = new(); // by object index
+    private static readonly Dictionary<(ushort Race, bool Accessory), byte[]?> Eqdp = new();
+
+    private static bool OtherSex(nint human)
+        => SwapFor(human) is { } swap && (swap.Own / 100 % 2) != (swap.Body / 100 % 2);
+
+    private static T BodySlotCall<T>(nint human, uint slot, bool swapThis, Func<T> original)
+    {
+        if(!swapThis || !BodySlot(slot) || BodySwaps.Count == 0 || SwapFor(human) is not { } swap)
+            return original();
+        if(!ModelRaces.TryGetValue(swap.Index, out var races) || slot >= races.Length || races[slot] == 0)
+            return Body(human, true, original);
+        ushort* modelRace = (ushort*)(human + SlotBase + (nint)slot * SlotStride + SlotModelRace);
+        ushort was = *modelRace;
+        *modelRace = races[slot];
+        try
+        {
+            return Body(human, true, original);
+        }
+        finally
+        {
+            *modelRace = was;
+        }
+    }
+
+    // The other body's model race for each slot, from the gear the character has on (framework thread).
+    private static void WorkOutModelRaces(nint address, BodyOnly swap)
+    {
+        var look = Appearance.Read(address, swap.Index);
+        if(look == null || look.Gear.Length < 10)
+            return;
+        var races = new ushort[10];
+        for(int slot = 0; slot < 10; slot++)
+            if(BodySlot((uint)slot))
+                races[slot] = ModelRace(swap.Body, (ushort)(look.Gear[slot] & 0xFFFF), slot);
+        ModelRaces[swap.Index] = races;
+    }
+
+    // Penumbra's ResolveEqdpRaceCode: its own model, else its fallback's, else the Midlander man's.
+    private static ushort ModelRace(ushort race, ushort set, int slot)
+    {
+        const ushort MidlanderMale = 101;
+        if(race == MidlanderMale)
+            return MidlanderMale;
+        bool accessory = slot >= 5;
+        if(race % 10 != 1 && accessory)
+            return MidlanderMale;
+        if(HasModel(race, accessory, set, slot))
+            return race;
+        ushort fallback = race switch
+        {
+            201 => MidlanderMale,                 // Midlander woman
+            1501 => 901,                          // Hrothgar man -> Roegadyn man
+            1201 => 1101,                         // Lalafell woman -> Lalafell man
+            _ when race / 100 % 2 == 0 => 201,    // other women -> Midlander woman
+            _ => MidlanderMale,
+        };
+        if(fallback == MidlanderMale)
+            return MidlanderMale;
+        return HasModel(fallback, accessory, set, slot) ? fallback : MidlanderMale;
+    }
+
+    // The deformer parameter table's "has its own model" bit for this race, item and slot.
+    private static bool HasModel(ushort race, bool accessory, ushort set, int slot)
+    {
+        if(!Eqdp.TryGetValue((race, accessory), out var data))
+        {
+            string kind = accessory ? "accessorydeformerparameter" : "equipmentdeformerparameter";
+            try
+            {
+                data = Plugin.DataManager.GetFile($"chara/xls/charadb/{kind}/c{race:D4}.eqdp")?.Data;
+            }
+            catch
+            {
+                data = null;
+            }
+            Eqdp[(race, accessory)] = data;
+        }
+        if(data == null || data.Length < 6)
+            return false;
+        int blockSize = BitConverter.ToUInt16(data, 2), blockCount = BitConverter.ToUInt16(data, 4);
+        if(blockSize == 0)
+            return false;
+        int block = set / blockSize;
+        if(block >= blockCount)
+            return false;
+        int control = BitConverter.ToUInt16(data, 6 + block * 2);
+        if(control == 0xFFFF)
+            return false;
+        int at = 6 + blockCount * 2 + (control + set % blockSize) * 2;
+        if(at + 2 > data.Length)
+            return false;
+        int entry = BitConverter.ToUInt16(data, at);
+        int bit = 2 * (accessory ? slot - 5 : slot) + 1; // (the second bit of the slot's pair: it has a model)
+        return (entry >> bit & 1) != 0;
     }
 
     // One of the game's lookups, as the other race when it's for a swapped character's body.
