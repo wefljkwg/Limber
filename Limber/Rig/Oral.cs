@@ -62,9 +62,12 @@ public sealed class OralSettings
     public float Pout { get; set; } = 0.5f;
     /// <summary>How full the lips are while it runs (1 = as they are).</summary>
     public float LipThickness { get; set; } = 1f;
-    /// <summary>Where the mouth is put on the shaft, nudged (metres, in the head's axes).</summary>
+    /// <summary>The head moved (metres, in the head's axes) while the mouth stays on the shaft (the lips reach over to it).</summary>
     public float OffsetRight { get; set; }
     public float OffsetUp { get; set; }
+    /// <summary>The head moved with its mouth (metres, in the head's axes): the lips' opening goes along with the head.</summary>
+    public float HeadMouthRight { get; set; }
+    public float HeadMouthUp { get; set; }
 
     /// <summary>Lip bones placed by hand in the mouth shape editor: bone -> [x across, y up] (1 = the shaft's edge).</summary>
     public Dictionary<string, float[]> LipShape { get; set; } = new();
@@ -939,7 +942,7 @@ public sealed unsafe partial class OralService
         // Nudged by the Mouth position sliders (in the head's own axes: right as the character sees it, up),
         // for faces whose lips sit a little off where Limber measures them.
         var localRight = Norm(Vector3.Cross(localUp, localForward));
-        var nudge = localRight * s.OffsetRight + localUp * s.OffsetUp;
+        var nudge = localRight * (s.OffsetRight + s.HeadMouthRight) + localUp * (s.OffsetUp + s.HeadMouthUp);
         // With the lips' live mesh, the way a real mouth takes it: the upper lip (with the upper teeth) stays nearly
         // where it is and the shaft sits under it, the jaw dropping to make room. So the mouth's middle goes above
         // the shaft's line by nearly its radius (the lips only lift the upper lip a few mm).
@@ -1642,12 +1645,20 @@ public sealed unsafe partial class OralService
             skinning[i] = _lipRestInverse[i] * now;
         }
         float unit = 1f / MathF.Max(0.01f, giver.RootScale.Y);
+        // (the head moved with its mouth: the lips are fitted to the shaft moved the same way, so they keep their
+        // place on the face instead of reaching back over to it)
+        var shift = Vector3.Zero;
+        if((s.HeadMouthRight != 0f || s.HeadMouthUp != 0f) && TryMouth(giver, out _, out var mouthForward, out var mouthUp, out var headFrame, out _))
+        {
+            var mouthRight = Norm(Vector3.Cross(mouthUp, mouthForward));
+            shift = Vector3.Transform(mouthRight * s.HeadMouthRight + mouthUp * s.HeadMouthUp, headFrame.Rotation) * blend;
+        }
         var line = new Vector3[shaft.Points.Length];
         var radii = new float[shaft.Points.Length];
         float fallback = MathF.Max(0.004f, s.Thickness);
         for(int i = 0; i < line.Length; i++)
         {
-            line[i] = giver.WorldToModelPoint(shaft.Points[i]);
+            line[i] = giver.WorldToModelPoint(shaft.Points[i]) + shift;
             radii[i] = shaft.Radii != null ? shaft.Radii[i] * unit : fallback * (i == line.Length - 1 ? 0.5f : 1f);
             radii[i] = MathF.Max(0.002f, radii[i] + s.Tightness);
         }

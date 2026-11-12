@@ -126,10 +126,14 @@ public sealed class OralTab
             if(s.Style == OralStyle.Classic)
                 changed |= Slider("Follow the bend", "", () => s.FollowBend * 100f, v => s.FollowBend = v / 100f, 0f, 100f, "%.0f%%",
                     "0%: the head lines up with the shaft as a whole. Higher: it also turns with the shaft's bend where the lips are.");
-            changed |= Slider("Mouth up / down", "mm", () => s.OffsetUp * 1000f, v => s.OffsetUp = v / 1000f, -30f, 30f, "%.1f",
-                "Moves the head so the mouth lines up with the shaft, if it sits a little high or low.");
-            changed |= Slider("Mouth left / right", "mm", () => s.OffsetRight * 1000f, v => s.OffsetRight = v / 1000f, -30f, 30f, "%.1f",
-                "Moves the head so the mouth lines up with the shaft, if it sits a little to one side.");
+            changed |= Slider("Head + mouth left / right", "mm", () => s.HeadMouthRight * 1000f, v => s.HeadMouthRight = v / 1000f, -30f, 30f, "%.1f",
+                "Moves the head and its mouth together (the lips keep their place on the face), if the mouth sits to one side of the shaft.");
+            changed |= Slider("Head + mouth up / down", "mm", () => s.HeadMouthUp * 1000f, v => s.HeadMouthUp = v / 1000f, -30f, 30f, "%.1f",
+                "Moves the head and its mouth together (the lips keep their place on the face), if the mouth sits high or low.");
+            changed |= Slider("Head only left / right", "mm", () => s.OffsetRight * 1000f, v => s.OffsetRight = v / 1000f, -30f, 30f, "%.1f",
+                "Moves the head while the mouth stays on the shaft (the lips reach over to it): for a head that sits off to one side.");
+            changed |= Slider("Head only up / down", "mm", () => s.OffsetUp * 1000f, v => s.OffsetUp = v / 1000f, -30f, 30f, "%.1f",
+                "Moves the head while the mouth stays on the shaft (the lips reach over to it): for a head that sits high or low.");
         }
 
         // ---- Mouth (the lips' live mesh)

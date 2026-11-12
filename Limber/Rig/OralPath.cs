@@ -72,7 +72,7 @@ public sealed unsafe partial class OralService
         // Where the shaft goes in: the lips' centre, nudged by the Mouth position sliders, and (with the lips' live
         // mesh) under the upper lip, as in Classic.
         var right = Norm(Vector3.Cross(up, forward));
-        var nudge = right * s.OffsetRight + up * s.OffsetUp;
+        var nudge = right * (s.OffsetRight + s.HeadMouthRight) + up * (s.OffsetUp + s.HeadMouthUp);
         if(LipMeshOn(s))
         {
             float r = GirthAt(fromTip, shaftLength, s) * Math.Clamp(s.OpenSize, 0.5f, 2f) * Math.Clamp(s.OpenHeight, 0.5f, 2f);
