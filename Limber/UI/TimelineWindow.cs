@@ -18,7 +18,17 @@ public sealed class TimelineWindow : Window
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
-    public override void PreOpenCheck() => IsOpen = _config.TimelineOwnWindow;
+    // Its X: Dalamud closes it, but this re-opened it from the setting on the next frame before OnClose ever ran, so
+    // the X did nothing. Closed since last frame (by the X) -> OnClose first, then the setting decides.
+    private bool _wasOpen;
+
+    public override void PreOpenCheck()
+    {
+        if(_wasOpen && !IsOpen)
+            OnClose();
+        IsOpen = _config.TimelineOwnWindow;
+        _wasOpen = IsOpen;
+    }
 
     // (closing it with its X puts the Timeline back on its page)
     public override void OnClose()

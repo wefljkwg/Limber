@@ -35,7 +35,17 @@ public sealed class ActorListWindow : Window
         RespectCloseHotkey = false;
     }
 
-    public override void PreOpenCheck() => IsOpen = _config.ShowActorList;
+    // Its X: Dalamud closes it, but this re-opened it from the setting on the next frame before OnClose ever ran, so
+    // the X did nothing. Closed since last frame (by the X) -> OnClose first, then the setting decides.
+    private bool _wasOpen;
+
+    public override void PreOpenCheck()
+    {
+        if(_wasOpen && !IsOpen)
+            OnClose();
+        IsOpen = _config.ShowActorList;
+        _wasOpen = IsOpen;
+    }
 
     public override void OnClose()
     {
