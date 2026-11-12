@@ -473,6 +473,12 @@ public static unsafe class Appearance
     // Characters taken out of the scene to be drawn again, and how many frames they've waited.
     private static readonly Dictionary<ushort, (nint Address, int Frames)> Redrawing = new();
 
+    /// <summary>
+    /// Drawn again the game's way: taken out, then back in once it's ready (as Brio does). After a mod collection
+    /// change: the mod manager's own redraw doesn't always reload a GPose actor, so the new collection didn't show.
+    /// </summary>
+    public static void RedrawNative(ushort index) => NativeRedraw(index);
+
     private static void NativeRedraw(ushort index)
     {
         var obj = ActorSkeleton.GetObject(index);

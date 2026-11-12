@@ -909,17 +909,12 @@ public sealed class AppearanceTab
             }
             Tooltip("Which mod collection this character is drawn with. Picking one gives this character its own;\n"
                 + "\"(the default)\" takes that away again. It's redrawn either way.");
-            DrawCollectionConfirm();
         }
         catch
         {
             ImGui.TextDisabled("Mod collection: the mod manager isn't available.");
         }
     }
-
-    // A collection picked for a character the mod manager counts as the same one as others: asked first.
-    private (ActorRef Actor, Guid Id, string Name, List<string> Others)? _confirm;
-    private bool _openConfirm;
 
     // Who else the mod manager would draw with a collection given to this character: it knows characters by name
     // and home world, and a copy (a GPose actor, an actor added by another tool) by the character it was copied from.
@@ -960,41 +955,7 @@ public sealed class AppearanceTab
         return result.Distinct().ToList();
     }
 
-    private void DrawCollectionConfirm()
-    {
-        if(_openConfirm)
-        {
-            ImGui.OpenPopup("###app_coll_confirm");
-            _openConfirm = false;
-        }
-        if(!ImGui.BeginPopup("###app_coll_confirm"))
-            return;
-        if(_confirm is { } c)
-        {
-            ImGui.TextUnformatted($"The mod manager counts these as the same character as {c.Actor.Name}:");
-            foreach(var o in c.Others)
-                ImGui.BulletText(o);
-            ImGui.TextUnformatted($"Giving {c.Actor.Name} \"{c.Name}\" gives it to them too (and the mod manager remembers it).");
-            if(ImGui.Button("Change them all###app_coll_yes"))
-            {
-                _confirm = null;
-                ImGui.CloseCurrentPopup();
-                SetCollection(c.Actor, c.Id, confirmed: true);
-            }
-            ImGui.SameLine();
-            if(ImGui.Button("Cancel###app_coll_no"))
-            {
-                _confirm = null;
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.TextDisabled("An actor Limber added can have one of its own instead: add one on the Actors page.");
-        }
-        else
-            ImGui.CloseCurrentPopup();
-        ImGui.EndPopup();
-    }
-
-    private void SetCollection(ActorRef actor, Guid? id, bool confirmed = false)
+    private void SetCollection(ActorRef actor, Guid? id)
     {
         try
         {
@@ -1027,20 +988,7 @@ public sealed class AppearanceTab
                 }
             }
             else if(id != null)
-            {
-                if(!confirmed)
-                {
-                    var others = SharingWith(index);
-                    if(others.Count > 0)
-                    {
-                        string name = _collections != null && _collections.TryGetValue(id.Value, out var n) ? n : "that collection";
-                        _confirm = (actor, id.Value, name, others);
-                        _openConfirm = true;
-                        return;
-                    }
-                }
                 (ec, _) = set.InvokeFunc(index, id, true, true);
-            }
             else
             {
                 // (an added actor that's still a copy has no collection of its own to take away: removing "its" one
@@ -1054,8 +1002,12 @@ public sealed class AppearanceTab
                 if(spawned && spawner!.HasOwnIdentity(index))
                     spawner.SetOwnIdentity(index, false);
             }
-            Limber.Rig.Appearance.Redraw(index);
+            // (drawn again the game's way, as Brio does: the mod manager's own redraw didn't always reload it)
+            Limber.Rig.Appearance.RedrawNative(index);
             _status = ec is 0 or 1 ? (id == null ? "Back to the default (redrawn)." : "Collection set (redrawn).") : $"The mod manager couldn't set it (error {ec}).";
+            // (who else the mod manager draws with it: said, not asked)
+            if(ec is 0 or 1 && !(spawned && spawner!.HasOwnIdentity(index)) && SharingWith(index) is { Count: > 0 } others)
+                _status += $" The mod manager counts these as the same character, so they have it too: {string.Join(", ", others)}.";
             if(ec is 0 or 1)
             {
                 if(id != null)
