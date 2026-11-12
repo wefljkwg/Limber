@@ -97,6 +97,7 @@ public static unsafe class LipMesh
         public string File = "";
         public int ByteWidth;
         public bool Clean = true; // the buffer holds the model's own vertices
+        public int SculptVersion = -1; // the mesh sculpt's edits last written while the lips are still
     }
 
     /// <summary>What the bone hook hands over each frame.</summary>
@@ -539,12 +540,14 @@ public static unsafe class LipMesh
                                 p.Offset = Vector3.Zero;
                                 p.RestOffset = Vector3.Zero;
                             }
-                        LiveMesh.Upload(buffer, state.Target.Desc, state.Original);
+                        WriteStill(state, buffer);
                         state.Clean = true;
                     }
                     else
                         Write(state, buffer, state.LastFrame as Frame);
                 }
+                else if(state.SculptVersion != (MeshSculpt.Applies(state.Address) ? MeshSculpt.Version : -1))
+                    WriteStill(state, buffer);
                 return;
             }
             if(ReferenceEquals(frame, state.LastFrame))
@@ -1247,6 +1250,27 @@ public static unsafe class LipMesh
                 }
             }
         }
+        MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address);
+        state.SculptVersion = -2; // (the lips moving: written again once they're still)
+        LiveMesh.Upload(buffer, state.Target.Desc, state.Work);
+    }
+
+    // The lips still (nothing touching): the face as it is, with the morphs and the mesh sculpt's edits.
+    private static void WriteStill(State state, nint buffer)
+    {
+        bool sculpt = MeshSculpt.Applies(state.Address);
+        bool morphs = FaceMorphs.Active && FaceMorphs.Wanted == state.Address;
+        state.SculptVersion = sculpt ? MeshSculpt.Version : -1;
+        if(!sculpt && !morphs)
+        {
+            LiveMesh.Upload(buffer, state.Target.Desc, state.Original);
+            return;
+        }
+        Buffer.BlockCopy(state.Original, 0, state.Work, 0, state.Original.Length);
+        if(morphs)
+            FaceMorphs.ApplyTo(state.Work, state.File, state.ByteWidth);
+        if(sculpt)
+            MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address);
         LiveMesh.Upload(buffer, state.Target.Desc, state.Work);
     }
 }

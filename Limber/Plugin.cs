@@ -390,6 +390,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.BodyShapeTab = new BodyShapeTab(_selection, _config.Ik) { RigEverything = limberTab.RigEverything };
             _mainWindow.OralTab = new OralTab(_oral, _selection, _config.Ik);
             _mainWindow.FaceMorphsTab = new FaceMorphsTab(_faceMorphs, _selection, _config.Ik);
+            _mainWindow.MeshSculptTab = new MeshSculptTab(_selection);
             _mainWindow.AnimationsTab = new AnimationsTab(_selection);
             Favorites.Settings = _config.Ik;
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
@@ -934,6 +935,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 _overlay.Draw();
                 _faceTab?.DrawScene();
+                _mainWindow?.MeshSculptTab?.DrawScene();
                 _propOverlay.Draw();
                 Limber.Koi.Props.KoiPropNodes.Draw(GameGui);
                 _motions.Draw();
@@ -1215,6 +1217,8 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Gpu.LipMesh.Stop();
         Limber.Gpu.FaceRig.Stop();
         Limber.Gpu.FaceMorphs.Clear();
+        Limber.Gpu.MeshSculpt.Save();
+        Limber.Gpu.MeshSculpt.Stop();
         Limber.Gpu.BustShapes.Stop();
         Limber.Gpu.SkinCapture.Dispose();
         // Unhook first so nothing runs against the parts being torn down.

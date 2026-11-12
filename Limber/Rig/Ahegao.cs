@@ -233,6 +233,11 @@ public sealed unsafe class AhegaoService
         if(want == 0 && morphOwner != 0 && Limber.Gpu.FaceMorphs.Active
            && !(Limber.Gpu.LipMesh.Running && Limber.Gpu.LipMesh.Owner == morphOwner))
             want = morphOwner;
+        // (and the mesh sculpt's edits)
+        var sculptOwner = Limber.Gpu.MeshSculpt.Owner;
+        if(want == 0 && Limber.Gpu.MeshSculpt.Applies(sculptOwner)
+           && !(Limber.Gpu.LipMesh.Running && Limber.Gpu.LipMesh.Owner == sculptOwner))
+            want = sculptOwner;
         if(want == 0)
         {
             if(Limber.Gpu.FaceRig.Running)

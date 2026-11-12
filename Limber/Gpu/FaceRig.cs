@@ -65,6 +65,7 @@ public static unsafe class FaceRig
         public string File = "";
         public int ByteWidth;
         public int MorphVersion = -1;   // the face morphs' weights last written
+        public int SculptVersion = -1;  // the mesh sculpt's edits last written
     }
 
     private static readonly Pose Rest = new(); // no offsets (for the face morphs on their own)
@@ -491,11 +492,13 @@ public static unsafe class FaceRig
             }
             var pose = _pose;
             bool morphs = FaceMorphs.Active && FaceMorphs.Wanted == state.Address;
-            if(pose == null && morphs)
+            bool sculpt = MeshSculpt.Applies(state.Address);
+            if(pose == null && (morphs || sculpt))
                 pose = Rest;
             if(pose == null)
             {
                 state.MorphVersion = -1;
+                state.SculptVersion = -1;
                 if(!state.Clean)
                 {
                     LiveMesh.Upload(buffer, state.Target.Desc, state.Original);
@@ -505,10 +508,12 @@ public static unsafe class FaceRig
                 return;
             }
             int morphVersion = morphs ? FaceMorphs.Version : -1;
-            if(ReferenceEquals(pose, state.Last) && morphVersion == state.MorphVersion)
+            int sculptVersion = sculpt ? MeshSculpt.Version : -1;
+            if(ReferenceEquals(pose, state.Last) && morphVersion == state.MorphVersion && sculptVersion == state.SculptVersion)
                 return;
             state.Last = pose;
             state.MorphVersion = morphVersion;
+            state.SculptVersion = sculptVersion;
             Buffer.BlockCopy(state.Original, 0, state.Work, 0, state.Original.Length);
             if(morphs)
                 morphs = FaceMorphs.ApplyTo(state.Work, state.File, state.ByteWidth);
@@ -530,6 +535,8 @@ public static unsafe class FaceRig
                         MdlRigger.WriteVector(state.Work, pa, layout.PositionType, mesh.Rest[i] + move);
                 }
             }
+            if(sculpt)
+                MeshSculpt.ApplyTo(state.Work, state.File, state.ByteWidth, state.Address);
             LiveMesh.Upload(buffer, state.Target.Desc, state.Work);
             state.Clean = false;
         }
