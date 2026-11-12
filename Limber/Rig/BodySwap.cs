@@ -25,7 +25,8 @@ public static unsafe class BodySwap
     public static (byte Race, byte Tribe)? OriginalOf(nint address)
         => Swapped.TryGetValue(address, out var b) ? (b.Look.Customize[0], b.Look.Customize[4]) : null;
 
-    public static string Swap(nint address, ushort index, byte race, byte tribe, bool keepHeight, ActorTransforms? moves)
+    /// <param name="sex">0 male, 1 female; null: its own.</param>
+    public static string Swap(nint address, ushort index, byte race, byte tribe, bool keepHeight, ActorTransforms? moves, byte? sex = null)
     {
         var c = Get(address, index);
         if(c == null)
@@ -37,8 +38,9 @@ public static unsafe class BodySwap
             return "Changing a child's body isn't allowed.";
         if(IsBodySwapped(address))
             return "Swap the body back first.";
-        if(now.Customize[0] == race && now.Customize[4] == tribe)
-            return "It's that race and clan already.";
+        byte newSex = sex ?? now.Customize[1];
+        if(now.Customize[0] == race && now.Customize[4] == tribe && now.Customize[1] == newSex)
+            return "It's that race, clan and gender already.";
 
         float heightBefore = Height(c);
         // The first swap remembers the original; swapping again from a swapped body keeps that original.
@@ -50,6 +52,7 @@ public static unsafe class BodySwap
 
         var look = now.Copy();
         look.Customize[0] = race;
+        look.Customize[1] = newSex;
         look.Customize[4] = tribe;
         // Values every race has (an out-of-range face or tail/ears type can leave a part undrawn).
         if(look.Customize[5] is 0 or > 4)
@@ -200,7 +203,8 @@ public static unsafe class BodySwap
         return pair == 0 ? (ushort)0 : (ushort)((pair + (sex == 1 ? 1 : 0)) * 100 + 1);
     }
 
-    public static string SwapBodyOnly(nint address, ushort index, byte race, byte tribe)
+    /// <param name="sex">The body's: 0 male, 1 female; null: its own.</param>
+    public static string SwapBodyOnly(nint address, ushort index, byte race, byte tribe, byte? sex = null)
     {
         var c = Get(address, index);
         if(c == null)
@@ -212,9 +216,8 @@ public static unsafe class BodySwap
             return "Changing a child's body isn't allowed.";
         if(IsSwapped(address))
             return "Swap the whole body back first.";
-        byte sex = now.Customize[1];
-        ushort own = BodyCode(now.Customize[0], now.Customize[4], sex);
-        ushort body = BodyCode(race, tribe, sex);
+        ushort own = BodyCode(now.Customize[0], now.Customize[4], now.Customize[1]);
+        ushort body = BodyCode(race, tribe, sex ?? now.Customize[1]);
         if(own == 0 || body == 0)
             return "Can't tell which race that is.";
         if(own == body)

@@ -18,6 +18,7 @@ public sealed class BodySwapTab
     public int Clan { get; set; } = 0;     // 0 or 1
     public bool KeepHeight { get; set; } = true;
     public bool BodyOnly { get; set; }
+    public int Gender { get; set; } = 0;  // 0 its own, 1 male, 2 female
 
     public BodySwapTab(Selection selection, ActorTransforms? moves)
     {
@@ -58,6 +59,20 @@ public sealed class BodySwapTab
                     Clan = clan = i;
             ImGui.EndCombo();
         }
+        string[] genders = ["Keep its own", "Male", "Female"];
+        int gender = Math.Clamp(Gender, 0, 2);
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        if(ImGui.BeginCombo("Gender###swap_gender", genders[gender]))
+        {
+            for(int i = 0; i < genders.Length; i++)
+                if(ImGui.Selectable(genders[i], i == gender))
+                    Gender = gender = i;
+            ImGui.EndCombo();
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("The new body's gender: its own, or male / female (with Body only, the head, face and hair stay its own).");
+        byte? sex = gender == 0 ? null : (byte)(gender - 1);
+
         if(ImGui.RadioButton("Whole character###swap_whole", !BodyOnly))
             BodyOnly = false;
         if(ImGui.IsItemHovered())
@@ -82,8 +97,8 @@ public sealed class BodySwapTab
 
         if(ImGui.Button("Swap body###swap_go", new System.Numerics.Vector2(160 * ImGuiHelpers.GlobalScale, 0)))
             _status = BodyOnly
-                ? BodySwap.SwapBodyOnly(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe)
-                : BodySwap.Swap(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe, KeepHeight, _moves);
+                ? BodySwap.SwapBodyOnly(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe, sex)
+                : BodySwap.Swap(actor.Address, actor.ObjectIndex, races[race].Race, clans[clan].Tribe, KeepHeight, _moves, sex);
         ImGui.SameLine();
         bool swapped = BodySwap.IsSwapped(actor.Address) || BodySwap.IsBodySwapped(actor.Address);
         using(ImRaii.Disabled(!swapped))
@@ -94,7 +109,7 @@ public sealed class BodySwapTab
                     : BodySwap.SwapBack(actor.Address, actor.ObjectIndex, _moves);
         }
         if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Its own race, clan and size again.");
+            ImGui.SetTooltip("Its own race, clan, gender and size again.");
 
         if(BodySwap.OriginalOf(actor.Address) is { } original)
         {
