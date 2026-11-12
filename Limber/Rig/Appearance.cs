@@ -540,8 +540,9 @@ public static unsafe class Appearance
                 break;
             case Outfit.Emperors:
                 // the Emperor's New set, from the item list (the hat, robe, gloves, breeches, boots and accessories)
+                // (the items are named "The Emperor's New Hat"..., and the game's text may use a curly apostrophe)
                 foreach(var item in Items)
-                    if(item.Slot is >= 0 and < 10 && item.Name.StartsWith("Emperor's New ", StringComparison.OrdinalIgnoreCase) && gear[item.Slot] == 0)
+                    if(item.Slot is >= 0 and < 10 && IsEmperors(item.Name) && gear[item.Slot] == 0)
                         gear[item.Slot] = item.Model & 0xFFFFFF;
                 // (the right ring slot takes the ring too)
                 if(gear[8] == 0)
@@ -553,6 +554,9 @@ public static unsafe class Appearance
         return gear;
     }
 
+    private static bool IsEmperors(string name)
+        => name.Replace('\u2019', '\'').Contains("Emperor's New ", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Puts a whole outfit on (weapons kept); the dyes come off with it.</summary>
     public static string PutOn(nint address, ushort index, Outfit outfit)
     {
@@ -563,7 +567,7 @@ public static unsafe class Appearance
         // The Emperor's New Fists in the hands (the item from the game's list), with no off hand of their own.
         bool fists = false;
         foreach(var item in Items)
-            if(item.Slot == 10 && item.Name.Equals("The Emperor's New Fists", StringComparison.OrdinalIgnoreCase))
+            if(item.Slot == 10 && IsEmperors(item.Name) && item.Name.EndsWith("Fists", StringComparison.OrdinalIgnoreCase))
             {
                 look.Weapons[0] = WeaponValue(item.Model, 0);
                 look.Weapons[1] = item.SubModel != 0 ? WeaponValue(item.SubModel, 0) : 0;
