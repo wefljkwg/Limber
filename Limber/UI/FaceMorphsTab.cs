@@ -192,6 +192,25 @@ public sealed class FaceMorphsTab
                         changed = true;
                     }
                     Tip(t + " Right-click: 0.");
+                    ImGui.SameLine();
+                    var conform = s.Conform ??= new();
+                    int c = (int)MathF.Round(conform.GetValueOrDefault(n, 1f));
+                    ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+                    if(ImGui.SliderInt($"###fm_c_{n}", ref c, 1, 100, "conform %d"))
+                    {
+                        if(c <= 1)
+                            conform.Remove(n);
+                        else
+                            conform[n] = c;
+                        changed = true;
+                    }
+                    Tip("Face conforming: how much the rest of the face follows this morph (1 = only its own area moves;\n"
+                        + "higher: the cheeks, jaw and skin round it go along instead of stretching). Right-click: 1.");
+                    if(ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                    {
+                        conform.Remove(n);
+                        changed = true;
+                    }
                     if(_service.Last.TryGetValue(n, out var now) && MathF.Abs(now - v) > 0.01f)
                     {
                         ImGui.SameLine();

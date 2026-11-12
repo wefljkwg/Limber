@@ -26,6 +26,7 @@ public static class FaceMorphs
     // ---- What's wanted (any thread) -------------------------------------------------------------------------------
 
     private static volatile Dictionary<string, float> _weights = new();
+    private static volatile Dictionary<string, int> _conform = new();
     private static volatile int _version;
     /// <summary>The character the morphs are for (0: none).</summary>
     public static nint Wanted;
@@ -37,12 +38,25 @@ public static class FaceMorphs
     public static bool Active => _weights.Count > 0;
 
     /// <summary>The morphs and how much of each (by name); names not found on the face are skipped.</summary>
-    public static void Set(nint owner, Dictionary<string, float> weights)
+    public static void Set(nint owner, Dictionary<string, float> weights, Dictionary<string, float>? conform = null)
     {
         var clean = new Dictionary<string, float>();
         foreach(var (k, v) in weights)
             if(MathF.Abs(v) > 1e-4f && float.IsFinite(v))
                 clean[k] = Math.Clamp(v, -2f, 2f);
+        // (how far the rest of the face conforms, per morph used: whole steps of 1..100)
+        var spread = new Dictionary<string, int>();
+        if(conform != null)
+            foreach(var k in clean.Keys)
+                if(conform.TryGetValue(k, out var c) && float.IsFinite(c) && (int)MathF.Round(c) > 1)
+                    spread[k] = Math.Clamp((int)MathF.Round(c), 1, 100);
+        var oldSpread = _conform;
+        bool sameSpread = oldSpread.Count == spread.Count && spread.All(kv => oldSpread.TryGetValue(kv.Key, out var o) && o == kv.Value);
+        if(!sameSpread)
+        {
+            _conform = spread;
+            _version++;
+        }
         var old = _weights;
         bool same = owner == Wanted && old.Count == clean.Count;
         if(same)
@@ -662,6 +676,143 @@ public static class FaceMorphs
     private static readonly Dictionary<string, Mixed> MixedFor = new();
 
     // The weighted sum of the morphs on this face (made again when the weights change).
+    // ---- Face conforming: a morph's move carried out over the face round it (the rest of the face follows) -----------
+
+    // The face's vertices as one graph: neighbours by triangle, and vertices at the same place (seams, meshes) joined.
+    private sealed class Graph
+    {
+        public required Dictionary<int, int> First;   // by mesh: the first vertex's id
+        public required (int Mesh, int Vertex)[] Of;  // by id
+        public required int[][] Near;                 // by id
+        public required bool[] Fixed;                 // eyes, teeth, tongue, the neck seam: never moved by spreading
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Face, Graph> Graphs = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Morph, Dictionary<int, Morph>> Spreads = new();
+
+    private static Graph GraphOf(Face face)
+    {
+        if(Graphs.TryGetValue(face, out var g))
+            return g;
+        var first = new Dictionary<int, int>();
+        var of = new List<(int, int)>();
+        foreach(var (mesh, list) in face.Vertices)
+        {
+            first[mesh] = of.Count;
+            for(int v = 0; v < list.Length; v++)
+                of.Add((mesh, v));
+        }
+        int n = of.Count;
+        var near = new HashSet<int>[n];
+        for(int i = 0; i < n; i++)
+            near[i] = new HashSet<int>();
+        foreach(var (mesh, t) in face.Triangles)
+        {
+            if(!first.TryGetValue(mesh, out int f) || !face.Vertices.TryGetValue(mesh, out var list))
+                continue;
+            for(int i = 0; i + 2 < t.Length; i += 3)
+            {
+                int a = t[i], b = t[i + 1], c = t[i + 2];
+                if(a >= list.Length || b >= list.Length || c >= list.Length)
+                    continue;
+                int ia = f + a, ib = f + b, ic = f + c;
+                near[ia].Add(ib); near[ia].Add(ic);
+                near[ib].Add(ia); near[ib].Add(ic);
+                near[ic].Add(ia); near[ic].Add(ib);
+            }
+        }
+        static (int, int, int) Cell(Vector3 p) => ((int)MathF.Round(p.X * 1e5f), (int)MathF.Round(p.Y * 1e5f), (int)MathF.Round(p.Z * 1e5f));
+        var cells = new Dictionary<(int, int, int), List<int>>();
+        var fix = new bool[n];
+        for(int i = 0; i < n; i++)
+        {
+            var x = face.Vertices[of[i].Item1][of[i].Item2];
+            fix[i] = x.Skip > 0.5f || x.Neck > 0.5f;
+            var c = Cell(x.P);
+            if(!cells.TryGetValue(c, out var l))
+                cells[c] = l = new List<int>();
+            l.Add(i);
+        }
+        foreach(var l in cells.Values)
+            if(l.Count > 1)
+                foreach(int a in l)
+                    foreach(int b in l)
+                        if(a != b)
+                            near[a].Add(b);
+        g = new Graph { First = first, Of = of.ToArray(), Near = near.Select(h => h.ToArray()).ToArray(), Fixed = fix };
+        Graphs.AddOrUpdate(face, g);
+        return g;
+    }
+
+    /// <summary>
+    /// The morph with the face round it conforming: its moves held where it moves, and carried out over the mesh round
+    /// it (each vertex the average of its neighbours, a step further out each pass), so the cheeks and jaw follow the
+    /// lips instead of stretching. 1 = the morph alone, 100 = far out over the face. Made once per amount and kept.
+    /// </summary>
+    private static Morph Spread(Face face, Morph morph, int conform)
+    {
+        var made = Spreads.GetValue(morph, _ => new Dictionary<int, Morph>());
+        lock(made)
+            if(made.TryGetValue(conform, out var known))
+                return known;
+        var g = GraphOf(face);
+        int n = g.Of.Length;
+        var d = new Vector3[n];
+        var held = new bool[n];
+        for(int i = 0; i < morph.Vertex.Length; i++)
+        {
+            if(!g.First.TryGetValue(morph.Mesh[i], out int f))
+                continue;
+            int id = f + morph.Vertex[i];
+            if(id >= n || g.Of[id].Mesh != morph.Mesh[i])
+                continue;
+            d[id] = morph.Delta[i];
+            held[id] = morph.Delta[i].LengthSquared() > 1e-14f;
+        }
+        int passes = (int)MathF.Round((conform - 1) * 2.5f);
+        var next = new Vector3[n];
+        for(int pass = 0; pass < passes; pass++)
+        {
+            for(int i = 0; i < n; i++)
+            {
+                if(held[i] || g.Fixed[i])
+                {
+                    next[i] = d[i];
+                    continue;
+                }
+                var near = g.Near[i];
+                if(near.Length == 0)
+                {
+                    next[i] = d[i];
+                    continue;
+                }
+                var sum = Vector3.Zero;
+                foreach(int j in near)
+                    sum += d[j];
+                next[i] = sum / near.Length;
+            }
+            (d, next) = (next, d);
+        }
+        var mesh = new List<int>();
+        var vertex = new List<int>();
+        var delta = new List<Vector3>();
+        for(int i = 0; i < n; i++)
+            if(d[i].LengthSquared() > 1e-14f)
+            {
+                mesh.Add(g.Of[i].Mesh);
+                vertex.Add(g.Of[i].Vertex);
+                delta.Add(d[i]);
+            }
+        var spread = new Morph
+        {
+            Name = morph.Name, Group = morph.Group, Source = morph.Source, Tip = morph.Tip,
+            Mesh = mesh.ToArray(), Vertex = vertex.ToArray(), Delta = delta.ToArray(),
+        };
+        lock(made)
+            made[conform] = spread;
+        return spread;
+    }
+
     private static Mixed? Mix(Face face)
     {
         var weights = _weights;
@@ -674,10 +825,13 @@ public static class FaceMorphs
         mix.Version = _version;
         mix.Delta.Clear();
         mix.Moved.Clear();
+        var conform = _conform;
         foreach(var (name, w) in weights)
         {
             if(!face.Morphs.TryGetValue(name, out var morph))
                 continue;
+            if(conform.TryGetValue(name, out int c) && c > 1)
+                morph = Spread(face, morph, c);
             for(int i = 0; i < morph.Vertex.Length; i++)
             {
                 int mesh = morph.Mesh[i];

@@ -13,6 +13,8 @@ public sealed class FaceMorphSettings
     public bool Enabled { get; set; }
     /// <summary>The sliders: morph name -> amount (Limber's shapes by name, imported ones as "Source: name").</summary>
     public Dictionary<string, float> Values { get; set; } = new();
+    /// <summary>Per morph: how much the rest of the face conforms to it (1 = only its own area, 100 = far out).</summary>
+    public Dictionary<string, float> Conform { get; set; } = new();
     /// <summary>The morphs follow Oral's stroke (when this character is the one with the mouth).</summary>
     public bool FollowOral { get; set; } = true;
     public float Stretch { get; set; } = 0.8f;      // lips stretched round the shaft, by how big it is for the mouth
@@ -25,7 +27,7 @@ public sealed class FaceMorphSettings
 
     public FaceMorphSettings Copy() => new()
     {
-        Enabled = Enabled, Values = new(Values), FollowOral = FollowOral, Stretch = Stretch, Vacuum = Vacuum, Deep = Deep,
+        Enabled = Enabled, Values = new(Values), Conform = new(Conform ?? new()), FollowOral = FollowOral, Stretch = Stretch, Vacuum = Vacuum, Deep = Deep,
         NosePress = NosePress, Breathing = Breathing, Strain = Strain, ThroatBulge = ThroatBulge,
     };
 }
@@ -125,6 +127,7 @@ public sealed unsafe class FaceMorphService
         int bestScore = 0;
         string skipped = "";
         string bestName = "";
+        Dictionary<string, float>? bestConform = null;
         foreach(var obj in _objects)
         {
             if(obj == null || obj.Address == 0)
@@ -169,6 +172,7 @@ public sealed unsafe class FaceMorphService
                 best = obj.Address;
                 bestIndex = obj.ObjectIndex;
                 bestName = name;
+                bestConform = s?.Conform;
                 throat = neck;
             }
         }
@@ -185,7 +189,7 @@ public sealed unsafe class FaceMorphService
             Status = "";
             return;
         }
-        Limber.Gpu.FaceMorphs.Set(best, weights);
+        Limber.Gpu.FaceMorphs.Set(best, weights, bestConform);
         Last = weights;
         _throatAt = best;
         _throatIndex = bestIndex;

@@ -382,10 +382,11 @@ public sealed class MeshSculptTab
         }
     }
 
-    // The Smooth brush: each edit eased toward its neighbours' (the edits even out; the face's own shape stays).
+    // The Smooth brush: the surface eased toward the average of its neighbours (bumps, creases and sharp edges smooth
+    // away, the face's own shape included, as a sculpting program's smooth brush does).
     private void SmoothAt(MeshSculpt.Model model, MeshSculpt.Sculpt sculpt, Dictionary<int, float> weights, float dt)
     {
-        float amount = Math.Clamp(_smooth * dt * 12f, 0f, 1f);
+        float amount = Math.Clamp(_smooth * MathF.Max(dt, 1f / 120f) * 15f, 0f, 1f);
         if(amount <= 0f)
             return;
         var now = sculpt.Edits;
@@ -397,10 +398,10 @@ public sealed class MeshSculptTab
                 continue;
             var avg = Vector3.Zero;
             foreach(int q in near)
-                avg += now.GetValueOrDefault(q);
+                avg += model.Points[q].Rest + now.GetValueOrDefault(q);
             avg /= near.Length;
             var e = now.GetValueOrDefault(p);
-            var after = e + (avg - e) * (amount * w);
+            var after = e + (avg - (model.Points[p].Rest + e)) * (amount * w);
             Put(edits, p, after);
             int m = model.Points[p].Mirror;
             if(_mirror && m >= 0 && !weights.ContainsKey(m))
