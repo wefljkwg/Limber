@@ -271,7 +271,9 @@ public sealed class FacePosingTab
             draw.AddLine(Edge(i / 48f * MathF.PI * 2f), Edge((i + 1) / 48f * MathF.PI * 2f), edge, 1.5f);
 
         var places = view.Bones.Select(b => (b.Name, At: ToMap(b.Model))).ToArray();
-        var at = places.ToDictionary(p => p.Name, p => p.At);
+        var at = new Dictionary<string, Vector2>();
+        foreach(var p in places)
+            at.TryAdd(p.Name, p.At);
 
         // Outlines: each side's row, from the middle out (sorted across).
         foreach(var starts in Outlines)

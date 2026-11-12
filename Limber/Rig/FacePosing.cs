@@ -430,12 +430,20 @@ public sealed unsafe class FacePosingService
             return;
         }
         var bones = new List<BoneView>();
+        var shown = new Dictionary<string, int>();
         for(int i = 0; i < info.Count; i++)
         {
-            // (shown by the players' names whatever the model calls them)
-            if(FaceName(info.Names[i], part == 0) is not { } name)
+            // (shown by the players' names whatever the model calls them; a skeleton with both j_X and j_f_X shows
+            // one, the one posing moves: j_f_X)
+            if(FaceName(info.Names[i], part == 0) is not { } name || Find(info, name) != i)
                 continue;
             var fr = sk.GetPartialFrame(part, i);
+            if(shown.TryGetValue(name, out int had))
+            {
+                bones[had] = new BoneView(name, fr.Position, sk.ModelToWorldPoint(fr.Position), fr.Rotation);
+                continue;
+            }
+            shown[name] = bones.Count;
             bones.Add(new BoneView(name, fr.Position, sk.ModelToWorldPoint(fr.Position), fr.Rotation));
         }
         View = new FaceView
