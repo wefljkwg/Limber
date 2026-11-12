@@ -30,7 +30,16 @@ public sealed class AnimationsTab
     public string Search { get => _search; set => _search = value ?? ""; }
     private string _status = "";
 
-    public AnimationsTab(Selection selection) => _selection = selection;
+    private readonly AnimationRetarget? _retarget;
+    private bool _viaSkeleton;
+    private AnimationRetarget.Source? _source;
+    private string _sourceSearch = "";
+
+    public AnimationsTab(Selection selection, AnimationRetarget? retarget = null)
+    {
+        _selection = selection;
+        _retarget = retarget;
+    }
 
     // (perf) The kinds, groups and animations found, worked out again only when the list, the search, a filter or the
     // favourites change (see Draw); they were worked out from every animation each frame.
@@ -65,6 +74,8 @@ public sealed class AnimationsTab
         }
         if(ImGui.Button("Stop (back to its own)###anim_stop"))
         {
+            if(_retarget?.Target == actor.Address)
+                _retarget.Stop();
             Animations.ClearRace();
             _status = Animations.Stop(actor.Address, actor.ObjectIndex);
             _speed = 1f;
@@ -147,6 +158,7 @@ public sealed class AnimationsTab
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("Play another race's version of the animation (experimental: the mod manager swaps the file for this character's "
                 + "collection). If the game already has the animation loaded, play another one first, then this one again.");
+        DrawOtherSkeleton(actor);
 
         // Filter: by what kind of animation it is (in plain words), the key's own group, and a search.
         // (perf: the kinds, groups and the list found are worked out again only when the list or a filter changes, not
@@ -267,8 +279,10 @@ public sealed class AnimationsTab
                             Favorites.Toggle("animations", e.Key);
                         if(picked && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                         {
-                            _status = Animations.PlayFrom(actor.Address, actor.ObjectIndex, e.Id, _startFrozen, _speed,
-                                _race < 0 ? (ushort)0 : Animations.Races[_race].Body);
+                            _status = _viaSkeleton && _retarget != null && _source != null
+                                ? _retarget.Start(actor.Address, actor.ObjectIndex, _source, e.Id)
+                                : Animations.PlayFrom(actor.Address, actor.ObjectIndex, e.Id, _startFrozen, _speed,
+                                    _race < 0 ? (ushort)0 : Animations.Races[_race].Body);
                         }
                         // The icon, or a plain tile for animations that aren't an emote.
                         var iconMin = start + new System.Numerics.Vector2(4f * scale, 4f * scale);
@@ -295,6 +309,80 @@ public sealed class AnimationsTab
                 }
             clipper.End();
             clipper.Destroy();
+        }
+    }
+
+    // ---- From another skeleton: a race's or creature's animation put on this character by bone names
+
+    private void DrawOtherSkeleton(ActorRef actor)
+    {
+        if(_retarget == null)
+            return;
+        ImGui.Checkbox("Play through another skeleton###anim_via", ref _viaSkeleton);
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("Experimental: double-click plays the animation on a hidden helper of the race or creature chosen below, and its\n"
+                + "bones are put on this character by name, so it works even when the skeletons don't match (a creature's\n"
+                + "animation on a player, one race's on another). Bones the source hasn't got follow their parents. GPose only.");
+        if(_viaSkeleton)
+        {
+            ImGui.Indent();
+            ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+            using(var combo = ImRaii.Combo("Source###anim_src", _source?.Name ?? "Choose a race or creature..."))
+                if(combo.Success)
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.InputTextWithHint("###anim_src_search", "Search creatures (name or m0123)", ref _sourceSearch, 64);
+                    if(_sourceSearch.Length == 0)
+                        foreach(var (body, name) in Animations.Races)
+                            if(ImGui.Selectable($"Race: {name}###anim_src_r{body}", _source?.RaceBody == body))
+                                _source = new AnimationRetarget.Source(name, body, 0);
+                    var all = Entities.All;
+                    if(all.Count == 0)
+                        ImGui.TextDisabled("Reading the creature list...");
+                    else
+                    {
+                        int shown = 0;
+                        foreach(var e in all)
+                        {
+                            if(e.Type == 1 || e.Id == 0)
+                                continue;
+                            if(_sourceSearch.Length > 0 && !e.Name.Contains(_sourceSearch, StringComparison.OrdinalIgnoreCase)
+                               && !e.Code.Contains(_sourceSearch, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            if(++shown > 80)
+                            {
+                                ImGui.TextDisabled("(more: search to narrow it down)");
+                                break;
+                            }
+                            string label = (e.Name.Length > 0 ? e.Name : e.Code) + $"  ({e.Code})";
+                            if(ImGui.Selectable($"{label}###anim_src_c{e.Id}", _source?.Model == (int)e.Id))
+                                _source = new AnimationRetarget.Source(e.Name.Length > 0 ? e.Name : e.Code, 0, (int)e.Id);
+                        }
+                    }
+                }
+            bool hips = _retarget.MoveHips;
+            if(ImGui.Checkbox("Move the hips###anim_via_hips", ref hips))
+                _retarget.MoveHips = hips;
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("The hips move (up, down, along) as the source's do, scaled to this character's size.");
+            ImGui.SameLine();
+            bool show = _retarget.ShowSource;
+            if(ImGui.Checkbox("Show the source###anim_via_show", ref show))
+                _retarget.ShowSource = show;
+            float weight = _retarget.Weight;
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("Amount###anim_via_weight", ref weight, 0f, 1f, "%.2f"))
+                _retarget.Weight = weight;
+            if(_retarget.Target == actor.Address)
+            {
+                ImGui.TextDisabled(_retarget.Status + (_retarget.Matched > 0 ? $" ({_retarget.Matched} bones matched)" : ""));
+                if(ImGui.SmallButton("Stop###anim_via_stop"))
+                    _retarget.Stop();
+            }
+            else if(_source == null)
+                ImGui.TextDisabled("Choose a source, then double-click an animation below (generic ones like idles, emotes,\n"
+                    + "battle and \"mon_sp\" animations play as that creature's own version).");
+            ImGui.Unindent();
         }
     }
 }

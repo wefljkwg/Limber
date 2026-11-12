@@ -90,6 +90,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Limber.Rig.ActorTransforms _actors = new();
     private readonly Limber.Rig.MotionFreeze _freeze = new();
     private readonly Limber.Rig.ActorSpawner _spawner = new();
+    private readonly Limber.Rig.AnimationRetarget _retarget;
     private Limber.Rig.Followers? _followers;
     private readonly PropOverlay _propOverlay;
     private readonly MainWindow _mainWindow;
@@ -97,6 +98,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
+        _retarget = new Limber.Rig.AnimationRetarget(_spawner);
         // (Limber's latest log lines also kept in memory, for Settings > Advanced > Copy diagnostics)
         Log = new LimberLog(Log);
         _config = LoadConfig();
@@ -363,7 +365,7 @@ public sealed class Plugin : IDalamudPlugin
             _hook.AddBefore("Limber game physics (before the game's physics)", _gamePhysics.BeforePhysics);
             _hook.AddFirst("Limber game physics (pose back after the game's physics)", _gamePhysics.AfterPhysics);
             _hook.AddLast("Limber game physics (end of frame)", _gamePhysics.EndOfFrame);
-            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber animation from another skeleton", _retarget.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
@@ -391,7 +393,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.OralTab = new OralTab(_oral, _selection, _config.Ik);
             _mainWindow.FaceMorphsTab = new FaceMorphsTab(_faceMorphs, _selection, _config.Ik);
             _mainWindow.MeshSculptTab = new MeshSculptTab(_selection);
-            _mainWindow.AnimationsTab = new AnimationsTab(_selection);
+            _mainWindow.AnimationsTab = new AnimationsTab(_selection, _retarget);
             Favorites.Settings = _config.Ik;
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
             _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik) { Motions = _motions };
@@ -620,6 +622,7 @@ public sealed class Plugin : IDalamudPlugin
             _actors.CheckPriorityHook();
             perf.Mark("actor hook check");
             _spawner.Update();
+            _retarget.Update();
             _gamePhysics?.Refresh();
             try
             {
@@ -1228,6 +1231,7 @@ public sealed class Plugin : IDalamudPlugin
         _followers?.RemoveAll();
         Limber.Koi.Props.KoiPropRuntime.Stop();
         Limber.Koi.Props.KoiProps.Unregister();
+        _retarget.Stop();
         _spawner.Dispose();
         Framework.Update -= OnFrameworkUpdate;
         _dataset.Stop();
