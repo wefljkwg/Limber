@@ -758,7 +758,15 @@ public static class FaceMorphs
         var g = GraphOf(face);
         int n = g.Of.Length;
         var d = new Vector3[n];
+        var own = new Vector3[n];
         var held = new bool[n];
+        float most = 0f;
+        foreach(var x in morph.Delta)
+            most = MathF.Max(most, x.Length());
+        // Held: where the morph really moves (a quarter of its biggest move or more). Its own thin fade-out round that
+        // is free, so the spread reaches over it too (otherwise nearly the whole face counted as "moved" and nothing
+        // could change).
+        float core = most * 0.25f;
         for(int i = 0; i < morph.Vertex.Length; i++)
         {
             if(!g.First.TryGetValue(morph.Mesh[i], out int f))
@@ -766,10 +774,12 @@ public static class FaceMorphs
             int id = f + morph.Vertex[i];
             if(id >= n || g.Of[id].Mesh != morph.Mesh[i])
                 continue;
-            d[id] = morph.Delta[i];
-            held[id] = morph.Delta[i].LengthSquared() > 1e-14f;
+            own[id] = morph.Delta[i];
+            held[id] = morph.Delta[i].Length() >= core && core > 0f;
+            if(held[id])
+                d[id] = morph.Delta[i];
         }
-        int passes = (int)MathF.Round((conform - 1) * 2.5f);
+        int passes = (int)MathF.Round((conform - 1) * 4f);
         var next = new Vector3[n];
         for(int pass = 0; pass < passes; pass++)
         {
@@ -793,6 +803,10 @@ public static class FaceMorphs
             }
             (d, next) = (next, d);
         }
+        // (never less than the morph itself: where its own move is bigger than what spread there, it stays)
+        for(int i = 0; i < n; i++)
+            if(own[i].LengthSquared() > d[i].LengthSquared())
+                d[i] = own[i];
         var mesh = new List<int>();
         var vertex = new List<int>();
         var delta = new List<Vector3>();
