@@ -516,8 +516,62 @@ public static unsafe class Animations
         string problem = SetDataPath(address, index, raceBody);
         if(problem.Length > 0)
             return problem;
+        string name = Races.FirstOrDefault(r => r.Body == raceBody).Name;
+        // The base animations (standing idle, walking, running...) are in the race's "resident" files, which the game
+        // loads once when the character is drawn and keeps: the data path alone doesn't change them. Those files are
+        // swapped for the other race's (this character's collection only) and the character is drawn again, then
+        // the animation played once it's back.
+        if(!Plugin.DataManager.FileExists(FileOf(own, key)) && NearestFile(own, key, out _).Length == 0)
+        {
+            string swapped = SwapResident(address, index, own, raceBody);
+            if(swapped.Length > 0)
+                return swapped;
+            Appearance.RedrawNative(index);
+            Restarts.RemoveAll(r => r.Address == address);
+            Restarts.Add(new Pending { Address = address, Index = index, Id = id, Frames = 45, Frozen = false, Speed = 1f });
+            return $"Playing {key} as {name} (a base animation: redrawn to load that race's).";
+        }
         Play(address, index, id);
-        return $"Playing {key} as {Races.FirstOrDefault(r => r.Body == raceBody).Name}.";
+        return $"Playing {key} as {name}.";
+    }
+
+    // The base animations' files (bt_common/resident), every one the game may ask for this race (its own or the ones
+    // it falls back on) given as the other race's (its own, or the nearest it falls back on).
+    private static readonly string[] ResidentFiles = ["idle", "move_a", "move_b"];
+
+    private static nint _swapAddress;
+
+    private static string SwapResident(nint address, ushort index, ushort own, ushort raceBody)
+    {
+        var swaps = new Dictionary<string, string>();
+        foreach(var file in ResidentFiles)
+        {
+            string key = "resident/" + file;
+            string to = NearestFile(raceBody, key, out ushort used);
+            if(to.Length == 0)
+                continue;
+            foreach(var b in Chain(own))
+                if(b != used)
+                    swaps[FileOf(b, key)] = to;
+        }
+        if(swaps.Count == 0)
+            return "";
+        try
+        {
+            var collection = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5").InvokeFunc(index);
+            if(!collection.Item1)
+                return "The mod manager doesn't know this character right now.";
+            ClearSwap();
+            _swapCollection = collection.Item3.Item1;
+            _swapAddress = address;
+            int result = Plugin.PluginInterface.GetIpcSubscriber<string, Guid, Dictionary<string, string>, string, int, int>("Penumbra.AddTemporaryMod.V5")
+                .InvokeFunc(SwapTag, _swapCollection, swaps, "", SwapPriority);
+            return result == 0 ? "" : $"The mod manager didn't take the base animations' swap (it said {result}).";
+        }
+        catch(Exception e)
+        {
+            return "The mod manager isn't reachable: " + e.Message;
+        }
     }
 
     // ---- The data path (Anamnesis's name): the race the game loads this character's files for
@@ -582,6 +636,13 @@ public static unsafe class Animations
     /// <summary>The character's own race's animations again.</summary>
     public static void ClearRace(nint address, ushort index)
     {
+        // (its base animations swapped: back to its own, drawn again to load them)
+        if(_swapAddress == address && _swapCollection != Guid.Empty)
+        {
+            ClearSwap();
+            _swapAddress = 0;
+            Appearance.RedrawNative(index);
+        }
         if(!Paths.Remove(address, out var d))
             return;
         var c = Get(address, index);
@@ -631,6 +692,11 @@ public static unsafe class Animations
         // (every character's own race's animations back: the data paths)
         foreach(var (address, d) in Paths.ToArray())
             ClearRace(address, d.Index);
+        ClearSwap();
+    }
+
+    private static void ClearSwap()
+    {
         if(_swapCollection == Guid.Empty)
             return;
         try
