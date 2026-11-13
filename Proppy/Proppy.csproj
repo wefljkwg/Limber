@@ -1,0 +1,20 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <!--
+    Proppy - Dalamud API 15. Build with buildproppy.bat (next to build.bat), or:  dotnet build Proppy\Proppy.csproj -c Release
+    Its own project and output folder (Proppy\bin\Release), separate from Limber. The manifest is Proppy.json.
+  -->
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Proppy</RootNamespace>
+    <AssemblyName>Proppy</AssemblyName>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=./Proppy/</PathMap>
+  </PropertyGroup>
+</Project>

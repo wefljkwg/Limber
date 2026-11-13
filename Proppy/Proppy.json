@@ -1,0 +1,15 @@
+{
+  "Author": "Proppy contributors",
+  "Name": "Proppy",
+  "InternalName": "Proppy",
+  "Punchline": "Place housing furniture anywhere, on your screen only, and stand, walk and jump on it.",
+  "Description": "Place any indoor or outdoor housing item anywhere in the world, only on your own screen (nothing is sent to the server).\nThe items have their real collision, so you can walk, stand and jump on them.\nMove, turn and resize them with a gizmo or sliders; your layouts are kept per zone and can come back by themselves.\nOthers don't see the items: standing on one looks like standing in the air to them.\nOpen it with /proppy.",
+  "ApplicableVersion": "any",
+  "Tags": [ "housing", "furniture", "props", "collision", "gpose" ],
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "AcceptsFeedback": false
+}
