@@ -15,6 +15,10 @@ public sealed class SavedProp
     public Vector3 Rotation { get; set; } // degrees: yaw, pitch, roll
     public Vector3 Scale { get; set; } = Vector3.One;
     public bool Collision { get; set; } = true;
+    public Vector3 SitOffset { get; set; } = new(0f, 0.45f, 0f);
+    public float SitTurn { get; set; }
+    public Vector3 LieOffset { get; set; } = new(0f, 0.55f, 0f);
+    public float LieTurn { get; set; }
 }
 
 [Serializable]

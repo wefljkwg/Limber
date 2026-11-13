@@ -26,12 +26,14 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static ITextureProvider Textures { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static ITargetManager Targets { get; private set; } = null!;
 
     private const string Command = "/proppy";
 
     internal Configuration Config { get; }
     internal PropService Props { get; }
     internal Furniture Furniture { get; }
+    internal Seat Seat { get; }
     private readonly WindowSystem _windows = new("Proppy");
     private readonly MainWindow _window;
     private bool _away = true;      // between zones (or logged out): no items
@@ -43,6 +45,7 @@ public sealed class Plugin : IDalamudPlugin
         Config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         Props = new PropService(SigScanner, Log);
         Furniture = new Furniture(Data);
+        Seat = new Seat(Data);
         _window = new MainWindow(this);
         _windows.AddWindow(_window);
         Commands.AddHandler(Command, new CommandInfo((_, _) => _window.Toggle())
@@ -64,6 +67,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnLogout(int type, int code)
     {
+        Seat.StandUp();
         Props.RemoveAll();
         _away = true;
     }
@@ -79,6 +83,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 if(!_away)
                 {
+                    Seat.StandUp();
                     Props.RemoveAll();
                     _away = true;
                 }
@@ -98,6 +103,7 @@ public sealed class Plugin : IDalamudPlugin
                     Restore();
             }
             Props.Update();
+            Seat.Update(Props);
         }
         catch(Exception e)
         {
@@ -116,8 +122,14 @@ public sealed class Plugin : IDalamudPlugin
             return 0;
         int n = 0;
         foreach(var s in saved)
-            if(Props.Place(s.Path, s.Name, s.Position, s.Rotation, s.Scale, s.Collision) != null)
+            if(Props.Place(s.Path, s.Name, s.Position, s.Rotation, s.Scale, s.Collision) is { } p)
+            {
+                p.SitOffset = s.SitOffset;
+                p.SitTurn = s.SitTurn;
+                p.LieOffset = s.LieOffset;
+                p.LieTurn = s.LieTurn;
                 n++;
+            }
         return n;
     }
 
@@ -129,6 +141,7 @@ public sealed class Plugin : IDalamudPlugin
         Config.Layouts[_zone] = Props.Props.Select(p => new SavedProp
         {
             Path = p.Path, Name = p.Name, Position = p.Position, Rotation = p.Rotation, Scale = p.Scale, Collision = p.Collision,
+            SitOffset = p.SitOffset, SitTurn = p.SitTurn, LieOffset = p.LieOffset, LieTurn = p.LieTurn,
         }).ToList();
         if(Config.Layouts[_zone].Count == 0)
             Config.Layouts.Remove(_zone);

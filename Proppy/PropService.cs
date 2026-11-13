@@ -25,6 +25,11 @@ public sealed unsafe class PropService : IDisposable
         public SharedGroupLayoutInstance* Layout;
         public bool Dirty = true;
         public int Settle = 600; // frames to keep making sure the collision is as wanted (it appears once loaded)
+        // Where a character sits / lies on it (in its own space, before its size), and which way they face (degrees).
+        public Vector3 SitOffset = new(0f, 0.45f, 0f);
+        public float SitTurn;
+        public Vector3 LieOffset = new(0f, 0.55f, 0f);
+        public float LieTurn;
 
         public Quaternion Quaternion => Quaternion.CreateFromYawPitchRoll(Rotation.X * MathF.PI / 180f, Rotation.Y * MathF.PI / 180f, Rotation.Z * MathF.PI / 180f);
     }

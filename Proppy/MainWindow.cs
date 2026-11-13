@@ -262,6 +262,7 @@ public sealed unsafe class MainWindow : Window
             Changed();
             return;
         }
+        DrawSeat(c);
         bool collide = c.Collision;
         if(ImGui.Checkbox("Solid (collision)###proppy_collide", ref collide))
         {
@@ -293,6 +294,59 @@ public sealed unsafe class MainWindow : Window
             c.Dirty = true;
             Changed();
         }
+    }
+
+    // ---- Sitting / lying on the chosen item (GPose only)
+
+    private void DrawSeat(PropService.Prop c)
+    {
+        var seat = _plugin.Seat;
+        bool gpose = Plugin.ClientState.IsGPosing;
+        using(Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!gpose))
+        {
+            if(ImGui.Button("Sit here###proppy_sit"))
+                seat.SitOn(c, lie: false);
+            ImGui.SameLine();
+            if(ImGui.Button("Lie here###proppy_lie"))
+                seat.SitOn(c, lie: true);
+        }
+        if(ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(gpose ? "The GPose target (or your own character) sits on this chair / lies on this bed, with the game's own animation."
+                : "In GPose only: outside it, moving your character onto an item only on your screen would be a teleport the server sees.");
+        if(seat.On == c)
+        {
+            ImGui.SameLine();
+            if(ImGui.Button("Stand up###proppy_stand"))
+                seat.StandUp();
+            bool lie = seat.Lying;
+            var offset = lie ? c.LieOffset : c.SitOffset;
+            float turn = lie ? c.LieTurn : c.SitTurn;
+            bool changed = false;
+            ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+            if(ImGui.DragFloat3(lie ? "Lying spot###proppy_lieoff" : "Seat spot###proppy_sitoff", ref offset, 0.005f, -3f, 3f, "%.3f"))
+                changed = true;
+            Tip("Across, up, forward on the item (yalms, before its size): where the character sits / lies.");
+            ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+            if(ImGui.DragFloat("Facing###proppy_turn", ref turn, 0.5f, -180f, 180f, "%.0f°"))
+                changed = true;
+            Tip("Which way the character faces, from the way the item faces.");
+            if(changed)
+            {
+                if(lie)
+                {
+                    c.LieOffset = offset;
+                    c.LieTurn = turn;
+                }
+                else
+                {
+                    c.SitOffset = offset;
+                    c.SitTurn = turn;
+                }
+                Changed();
+            }
+        }
+        if(seat.Status.Length > 0)
+            ImGui.TextDisabled(seat.Status);
     }
 
     // ---- Settings
