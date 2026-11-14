@@ -39,6 +39,7 @@ public sealed class GlobalPresetService
     private readonly RigSettings _config;
     private readonly IObjectTable _objects;
     private readonly HashSet<nint> _seen = new();
+    private readonly Dictionary<nint, long> _firstSeen = new(); // (when each one turned up: rules wait until they've settled)
     private long _nextScan;
 
     public GlobalPresetService(RigSettings config, IObjectTable objects)
@@ -146,8 +147,30 @@ public sealed class GlobalPresetService
     /// <summary>Set by the plugin: puts a saved look (by its name) on a character that just came into the scene.</summary>
     public Action<nint, ushort, string>? PutOnLook;
 
+    /// <summary>Puts every rule on everyone here again (as if they'd all just come into the scene).</summary>
+    public void Reapply()
+    {
+        _seen.Clear();
+        _firstSeen.Clear();
+        _nextScan = 0;
+    }
+
+    /// <summary>Finds the rule for this name, or makes one (on, no preset, no look).</summary>
+    public GlobalPresetRule RuleFor(string name)
+    {
+        var rules = _config.GlobalPresetRules ??= new();
+        var rule = rules.FirstOrDefault(r => r.Character.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if(rule == null)
+        {
+            rule = new GlobalPresetRule { Character = name };
+            rules.Add(rule);
+        }
+        rule.Enabled = true;
+        return rule;
+    }
+
     /// <summary>Framework thread, once a frame: characters new to the scene get the presets their rules give them.</summary>
-    public void Update()
+    public unsafe void Update()
     {
         long now = Environment.TickCount64;
         if(now < _nextScan)
@@ -161,6 +184,18 @@ public sealed class GlobalPresetService
                 continue;
             here.Add(obj.Address);
             if(_seen.Contains(obj.Address))
+                continue;
+            // Wait until they're drawn and have been here a moment (NPCs and squadron members load in over a few
+            // frames; a look put on too early is lost when the game finishes drawing them).
+            var native = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address;
+            if(native->DrawObject == null)
+                continue;
+            if(!_firstSeen.TryGetValue(obj.Address, out long first))
+            {
+                _firstSeen[obj.Address] = now;
+                continue;
+            }
+            if(now - first < 1000)
                 continue;
             _seen.Add(obj.Address);
             if(rules == null || rules.Count == 0)
@@ -179,5 +214,7 @@ public sealed class GlobalPresetService
             }
         }
         _seen.IntersectWith(here); // (gone ones are new again when they come back)
+        foreach(var gone in _firstSeen.Keys.Where(k => !here.Contains(k)).ToList())
+            _firstSeen.Remove(gone);
     }
 }

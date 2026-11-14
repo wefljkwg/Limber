@@ -831,6 +831,20 @@ public sealed class AppearanceTab
                 Remember(actor, mixed, $"Saved look (gear): {presets[i].Name}");
             }
             ImGui.SameLine();
+            if(!string.IsNullOrEmpty(actor.Name) && ImGui.SmallButton($"Always on {actor.Name}"))
+            {
+                var rules = _config.GlobalPresetRules ??= new();
+                var rule = rules.FirstOrDefault(r => r.Character.Equals(actor.Name, StringComparison.OrdinalIgnoreCase));
+                if(rule == null)
+                    rules.Add(rule = new GlobalPresetRule { Character = actor.Name! });
+                rule.Enabled = true;
+                rule.Look = presets[i].Name;
+                _config.Save();
+                _status = $"{actor.Name} now gets \"{presets[i].Name}\" whenever they turn up (Global presets lists the rule).";
+            }
+            Tooltip("Whenever a player, NPC (a squadron member, say) or actor with this name is around, this look goes on them.\n"
+                    + "The rule is kept in Global presets, where you can also give them a preset or turn it off.");
+            ImGui.SameLine();
             if(ImGui.SmallButton("x") && ImGui.GetIO().KeyCtrl)
                 remove = i;
             Tooltip("Hold Ctrl and click to delete this look.");

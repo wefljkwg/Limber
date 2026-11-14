@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
@@ -129,6 +130,17 @@ public sealed class GlobalPresetsTab
                     Tooltip("Edit this preset: set the chosen character up the way you want, then press this to save it over the preset.");
                 }
                 ImGui.SameLine();
+                using(ImRaii.Disabled(chosen.Length == 0))
+                {
+                    if(ImGui.SmallButton((chosen.Length > 0 ? $"Always on {chosen}" : "Always on the chosen character") + "###gp_always"))
+                    {
+                        _presets.RuleFor(chosen).Preset = preset.Name;
+                        _config.Save();
+                        _status = $"{chosen} now gets \"{preset.Name}\" whenever they turn up.";
+                    }
+                    Tooltip("Adds a rule below: whenever a player, NPC (a squadron member, say) or actor with this name is around, they get this preset.");
+                }
+                ImGui.SameLine();
                 if(ImGui.SmallButton("Rename###gp_rename_btn"))
                 {
                     _renaming = preset.Name;
@@ -194,9 +206,44 @@ public sealed class GlobalPresetsTab
         }
 
         // ---- Rules: put a preset (and a look) on characters by themselves
-        SeparatorText("Put on by themselves");
-        ImGui.TextDisabled("When a player or actor with this name comes into the scene (or is added), they get the preset and look.");
+        SeparatorText("Always on these characters and NPCs");
+        ImGui.TextWrapped("Whenever a player, NPC (a squadron member, a companion, a retainer) or actor with this name is around, "
+                          + "they get the global preset and the saved look. It goes on about a second after they turn up, every time.");
         var rules = _config.GlobalPresetRules ??= new();
+
+        // Pick someone around you (players and NPCs alike).
+        var around = _selection.ListCharacters().Where(c => !string.IsNullOrEmpty(c.Name)).ToList();
+        var labels = ActorNames.Of(around);
+        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("###gp_rule_near", "Add someone around you..."))
+        {
+            if(combo.Success)
+            {
+                var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach(var c in around)
+                {
+                    if(!done.Add(c.Name!))
+                        continue;
+                    bool has = rules.Any(r => r.Character.Equals(c.Name, StringComparison.OrdinalIgnoreCase));
+                    string label = (labels.TryGetValue(c.Address, out var l) ? l : c.Name!) + ActorNames.Distance(c) + (has ? "  (has a rule)" : "");
+                    if(ImGui.Selectable($"{label}###gp_near_{c.Address}"))
+                    {
+                        if(!has)
+                            rules.Add(new GlobalPresetRule { Character = c.Name!, Preset = all.FirstOrDefault()?.Name ?? "" });
+                        _config.Save();
+                    }
+                }
+            }
+        }
+        ImGui.SameLine();
+        if(ImGui.Button("Put them on again now###gp_reapply"))
+        {
+            _presets.Reapply();
+            _status = "Putting every rule on everyone around again.";
+        }
+        Tooltip("Puts each rule's preset and look on everyone here again, as if they'd just turned up.");
+        ImGui.TextDisabled("Or type a name:");
+        ImGui.SameLine();
         ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
         ImGui.InputTextWithHint("###gp_rule_name", chosen.Length > 0 ? chosen : "Character or actor name", ref _ruleName, 64);
         ImGui.SameLine();
