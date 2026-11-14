@@ -396,7 +396,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.FaceMorphsTab = new FaceMorphsTab(_faceMorphs, _selection, _config.Ik);
             _mainWindow.MeshSculptTab = new MeshSculptTab(_selection);
             _mainWindow.AnimationsTab = new AnimationsTab(_selection, _retarget);
-            _mainWindow.PairedAnimationsTab = new PairedAnimationsTab(_selection, _actors);
+            _mainWindow.PairedAnimationsTab = new PairedAnimationsTab(_selection, _actors, _rigs, _config.Ik);
             Favorites.Settings = _config.Ik;
             _mainWindow.DynamicBonesTab = new DynamicBonesTab(_selection, _config.Ik);
             _fkTab = new FkPosingTab(_selection, _rigs, _fk, _config.Ik) { Motions = _motions };

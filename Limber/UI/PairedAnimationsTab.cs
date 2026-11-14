@@ -18,7 +18,12 @@ public sealed unsafe class PairedAnimationsTab
 {
     private readonly Selection _selection;
     private readonly ActorTransforms _actors;
+    private readonly RigService? _rigs;
+    private readonly RigSettings? _config;
     private string _status = "";
+    private ushort _firstRace, _secondRace; // the race whose version each plays (body id), 0 = its own
+    private string _saveName = "";
+    private bool _saveIk = true, _saveFk = true, _loadPoses = true;
 
     private nint _first, _second;
     private ushort _firstAnim, _secondAnim;
@@ -39,10 +44,12 @@ public sealed unsafe class PairedAnimationsTab
         ("Same spot", 0f, 0f, 0f, 0f),
     ];
 
-    public PairedAnimationsTab(Selection selection, ActorTransforms actors)
+    public PairedAnimationsTab(Selection selection, ActorTransforms actors, RigService? rigs = null, RigSettings? config = null)
     {
         _selection = selection;
         _actors = actors;
+        _rigs = rigs;
+        _config = config;
     }
 
     private static void Tip(string text)
@@ -112,7 +119,11 @@ public sealed unsafe class PairedAnimationsTab
         ImGui.Spacing();
         ImGui.TextUnformatted("Animations");
         AnimationPicker("First's animation", "pair_a1", ref _firstAnim, ref _firstSearch);
+        ImGui.SameLine();
+        RacePicker("pair_r1", ref _firstRace);
         AnimationPicker("Second's animation", "pair_a2", ref _secondAnim, ref _secondSearch);
+        ImGui.SameLine();
+        RacePicker("pair_r2", ref _secondRace);
         ImGui.Checkbox("Start frozen###pair_frozen", ref _startFrozen);
         ImGui.SameLine();
         ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
@@ -134,11 +145,182 @@ public sealed unsafe class PairedAnimationsTab
             {
                 Animations.Stop(first.Address, first.ObjectIndex);
                 Animations.Stop(second.Address, second.ObjectIndex);
+                if(Animations.RaceOf(first.Address) != 0)
+                    Animations.ClearRace(first.Address, first.ObjectIndex);
+                if(Animations.RaceOf(second.Address) != 0)
+                    Animations.ClearRace(second.Address, second.ObjectIndex);
                 _status = "Both back to their own animations.";
             }
         }
         if(_status.Length > 0)
             ImGui.TextDisabled(_status);
+
+        DrawSaved(first, second, ready);
+    }
+
+    private static void RacePicker(string id, ref ushort body)
+    {
+        ushort now = body;
+        string label = now == 0 ? "Its own race" : Animations.Races.FirstOrDefault(r => r.Body == now).Name ?? "Its own race";
+        ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo($"###{id}", label))
+        {
+            if(combo.Success)
+            {
+                if(ImGui.Selectable($"Its own race###{id}_own", body == 0))
+                    body = 0;
+                foreach(var (b, name) in Animations.Races)
+                    if(ImGui.Selectable($"{name}###{id}_{b}", b == body))
+                        body = b;
+            }
+        }
+        Tip("Which race's version of the animation it plays (the game's, or your mods made for that race),\n"
+            + "keeping its own body - like Anamnesis's \"Data path\". \"Stop both\" puts it back to its own race.");
+    }
+
+    // ---- Saved paired animations: everything but who the two are (line-up, animations, races, speed, and each
+    // one's FK pose, IK goals and attached bones).
+    private void DrawSaved(ActorRef first, ActorRef second, bool ready)
+    {
+        if(_config == null)
+            return;
+        var saved = _config.PairedAnimations ??= new();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextUnformatted("Saved paired animations");
+        ImGui.TextDisabled("Everything above but who the two are, with each one's posing if you like.");
+        ImGui.Checkbox("With IK and attached bones###pair_save_ik", ref _saveIk);
+        Tip("Each one's IK Posing goals (held and pinned bones) and bones attached to the other (or to themselves).");
+        ImGui.SameLine();
+        ImGui.Checkbox("With FK poses###pair_save_fk", ref _saveFk);
+        Tip("Each one's FK Posing pose.");
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.InputTextWithHint("###pair_save_name", "Name", ref _saveName, 64);
+        ImGui.SameLine();
+        using(ImRaii.Disabled(_saveName.Trim().Length == 0))
+        {
+            if(ImGui.Button("Save###pair_save"))
+            {
+                var pair = Capture(_saveName.Trim(), first, second);
+                saved.RemoveAll(p => p.Name == pair.Name);
+                saved.Add(pair);
+                _config.Save();
+                _status = $"Saved \"{pair.Name}\".";
+                _saveName = "";
+            }
+        }
+        Tip("Saves over one with the same name.");
+        if(saved.Count == 0)
+            return;
+        ImGui.Checkbox("Put their posing on when loading###pair_load_poses", ref _loadPoses);
+        Tip("Loading also puts the saved FK poses, IK goals and attached bones on the two chosen characters\n"
+            + "(replacing theirs). Off: only the line-up, animations and races are loaded.");
+        PairedAnimation? remove = null;
+        foreach(var pair in saved)
+        {
+            using var pid = ImRaii.PushId(pair.Name);
+            ImGui.Bullet();
+            ImGui.SameLine();
+            ImGui.TextUnformatted(pair.Name);
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Load###pair_load"))
+                _status = Load(pair, first, second, false);
+            Tip("The settings come back; the two chosen characters get the saved posing (if that's on).");
+            ImGui.SameLine();
+            using(ImRaii.Disabled(!ready))
+            {
+                if(ImGui.SmallButton("Load and play###pair_load_play"))
+                    _status = Load(pair, first, second, true);
+            }
+            Tip("Loads it, lines the two up and starts both animations.");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("x###pair_del") && ImGui.GetIO().KeyCtrl)
+                remove = pair;
+            Tip("Hold Ctrl and click to delete.");
+        }
+        if(remove != null)
+        {
+            saved.Remove(remove);
+            _config.Save();
+        }
+    }
+
+    private PairedAnimation Capture(string name, ActorRef first, ActorRef second)
+    {
+        var pair = new PairedAnimation
+        {
+            Name = name, Forward = _forward, Side = _side, Up = _up, Facing = _facing, StartFrozen = _startFrozen, Speed = _speed,
+            First = new PairedSide { Animation = _firstAnim, RaceBody = _firstRace },
+            Second = new PairedSide { Animation = _secondAnim, RaceBody = _secondRace },
+        };
+        void Posing(ActorRef who, PairedSide side)
+        {
+            if(!who.IsSet)
+                return;
+            if(_saveFk && _config?.FkPoses != null && !string.IsNullOrEmpty(who.Name)
+               && _config.FkPoses.TryGetValue(who.Name, out var fk) && fk != null)
+                side.Fk = fk.Copy();
+            if(_saveIk && _rigs != null)
+                lock(_rigs.Sync)
+                    if(_rigs.GetRig(who.Address) is { } rig)
+                        side.Goals = rig.Goals.Select(g => SavedGoal.From(g, first.Address, second.Address)).OfType<SavedGoal>().ToList();
+        }
+        Posing(first, pair.First);
+        Posing(second, pair.Second);
+        return pair;
+    }
+
+    private string Load(PairedAnimation pair, ActorRef first, ActorRef second, bool play)
+    {
+        (_forward, _side, _up, _facing, _startFrozen, _speed) = (pair.Forward, pair.Side, pair.Up, pair.Facing, pair.StartFrozen, pair.Speed);
+        (_firstAnim, _firstRace) = (pair.First.Animation, pair.First.RaceBody);
+        (_secondAnim, _secondRace) = (pair.Second.Animation, pair.Second.RaceBody);
+        string said = $"Loaded \"{pair.Name}\".";
+        if(_loadPoses)
+        {
+            _rigs?.Checkpoint(); // (undo puts their posing back)
+            int put = PutPosing(first, pair.First, first, second) + PutPosing(second, pair.Second, first, second);
+            if(put > 0)
+                said += " Posing put on.";
+        }
+        if(play && first.IsSet && second.IsSet && first.Address != second.Address)
+            said += " " + LineUp(first, second) + " " + PlayBoth(first, second);
+        return said;
+    }
+
+    private int PutPosing(ActorRef who, PairedSide side, ActorRef first, ActorRef second)
+    {
+        if(!who.IsSet)
+            return 0;
+        int put = 0;
+        if(side.Fk != null && _config != null && !string.IsNullOrEmpty(who.Name))
+        {
+            (_config.FkPoses ??= new())[who.Name] = side.Fk.Copy();
+            _config.Save();
+            put++;
+        }
+        if(side.Goals != null && _rigs != null)
+        {
+            var others = _selection.ListCharacters();
+            (nint, ushort, string)? Parent(SavedGoal g)
+            {
+                if(g.ParentWho == 0 && first.IsSet)
+                    return (first.Address, first.ObjectIndex, first.Name);
+                if(g.ParentWho == 1 && second.IsSet)
+                    return (second.Address, second.ObjectIndex, second.Name);
+                var named = others.FirstOrDefault(c => !string.IsNullOrEmpty(c.Name) && c.Name == g.ParentName);
+                return named.IsSet ? (named.Address, named.ObjectIndex, named.Name) : null;
+            }
+            lock(_rigs.Sync)
+            {
+                var rig = _rigs.GetOrCreateRig(who.Address, who.ObjectIndex, who.Name ?? "");
+                rig.Goals.Clear();
+                foreach(var g in side.Goals)
+                    rig.Goals.Add(g.ToGoal(Parent));
+            }
+            put++;
+        }
+        return put;
     }
 
     private static void Picker(string label, List<ActorRef> all, ref nint chosen, Func<ActorRef, string> labelOf)
@@ -241,10 +423,15 @@ public sealed unsafe class PairedAnimationsTab
     private string PlayBoth(ActorRef first, ActorRef second)
     {
         // (the same frame: both queued now, so the game starts them together)
+        string said = "";
         if(_firstAnim != 0)
-            Animations.PlayFrom(first.Address, first.ObjectIndex, _firstAnim, _startFrozen, _speed);
+            said += Animations.PlayFrom(first.Address, first.ObjectIndex, _firstAnim, _startFrozen, _speed, _firstRace);
         if(_secondAnim != 0)
-            Animations.PlayFrom(second.Address, second.ObjectIndex, _secondAnim, _startFrozen, _speed);
-        return "Both started.";
+        {
+            string two = Animations.PlayFrom(second.Address, second.ObjectIndex, _secondAnim, _startFrozen, _speed, _secondRace);
+            if(two.Length > 0 && two != said)
+                said += (said.Length > 0 ? " " : "") + two;
+        }
+        return said.Length > 0 ? said : "Both started.";
     }
 }

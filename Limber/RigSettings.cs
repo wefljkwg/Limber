@@ -207,6 +207,8 @@ public sealed class RigSettings
 
     /// <summary>The Timeline page's animations, which one is open, and its options.</summary>
     public System.Collections.Generic.List<Limber.Rig.TimelineClip> Timelines { get; set; } = new();
+    /// <summary>Saved paired animations (Posing &gt; Paired Animations).</summary>
+    public System.Collections.Generic.List<Limber.Rig.PairedAnimation> PairedAnimations { get; set; } = new();
     public int TimelineIndex { get; set; }
     public bool TimelineAutoKey { get; set; }
     public float TimelineSnap { get; set; } = 1f / 30f;
