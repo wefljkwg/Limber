@@ -55,7 +55,8 @@ public sealed class SyncTab
         if (ImGui.Button("Instructions"))
             _help.IsOpen = true;
         ImGui.SameLine();
-        ImGui.TextColored(Dim, "Sync your poses with another player. Nothing goes through the game's servers.");
+        ImGui.TextColored(Dim, "Sync with another player: everything that moves your characters (Limber's posing and animations, Oral, "
+            + "the Koikatsu link, the game's own animations) shows on both screens. Nothing goes through the game's servers.");
         ImGui.Separator();
 
         DrawRelay();
@@ -273,7 +274,9 @@ public sealed class SyncTab
     {
         var p = S.Partner;
         ImGui.TextColored(Good, $"Synced with {p?.Name} ({p?.WorldName})");
-        ImGui.Text(S.IAmHost ? "You are the host: your Koikatsu moves both of you." : "Following: their Koikatsu moves both of you.");
+        ImGui.Text(S.IAmHost ? "You are the host (for the Koikatsu link: your Koikatsu moves both of you)." : "Following (for the Koikatsu link: their Koikatsu moves both of you).");
+        if (Cfg.SyncPoses)
+            ImGui.TextColored(Dim, "Whole poses: each of you sends your own character's pose.");
 
         using (ImRaiiDisabled(S.SwapRequested))
         {
@@ -293,6 +296,26 @@ public sealed class SyncTab
     private void DrawHostSettings()
     {
         var changed = false;
+        if (ImGui.CollapsingHeader("What's synced###sync_what", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            var poses = Cfg.SyncPoses;
+            if (ImGui.Checkbox("Whole poses, both ways###sync_poses", ref poses)) { Cfg.SyncPoses = poses; changed = true; }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Your character's pose as it ends up each frame, whatever moves it (Limber's posing, Limber Animations,\n"
+                    + "Oral, body physics, the Koikatsu link, the game's animations), goes to your partner; theirs comes to you.\n"
+                    + "Body bones only for now (the face follows its own animation).");
+            var drive = Cfg.SyncDrivePartner;
+            if (ImGui.Checkbox("What I do to my partner's character moves them on their screen###sync_drive", ref drive)) { Cfg.SyncDrivePartner = drive; changed = true; }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Pose your partner's character here (IK, FK, Limber Animations...) and it's sent to them; they need to allow it below.");
+            var let = Cfg.SyncLetPartnerDriveMe;
+            if (ImGui.Checkbox("Let my partner move my character###sync_let", ref let)) { Cfg.SyncLetPartnerDriveMe = let; changed = true; }
+            var poseRate = Cfg.SyncPoseRate;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderInt("Pose updates per second###sync_pose_rate", ref poseRate, 5, 60)) { Cfg.SyncPoseRate = poseRate; changed = true; }
+            ImGui.TextColored(Dim, "Smoothed in between. 20 looks smooth and keeps the relay's traffic low.");
+            ImGui.Spacing();
+        }
         if (ImGui.CollapsingHeader("When I'm the host"))
         {
             var mine = Math.Clamp(Cfg.SyncHostChannel, 0, 7);

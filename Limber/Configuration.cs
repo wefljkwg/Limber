@@ -89,6 +89,15 @@ public class Configuration : IPluginConfiguration
     /// <summary>On your screen, when following: allow showing these from the host's setup.</summary>
     public bool SyncShowGenitals { get; set; } = true;
     public bool SyncShowBreasts { get; set; } = true;
+    /// <summary>Whole poses synced both ways: whatever Limber (posing, animations, oral, the Koikatsu link...) or the game
+    /// does to your character is sent, and your partner's character takes theirs on your screen.</summary>
+    public bool SyncPoses { get; set; } = true;
+    /// <summary>What you do to your partner's character on your screen is sent to them too (it moves them on theirs).</summary>
+    public bool SyncDrivePartner { get; set; } = false;
+    /// <summary>Your partner may move your character on your screen (when they send it).</summary>
+    public bool SyncLetPartnerDriveMe { get; set; } = false;
+    /// <summary>Whole-pose updates per second (both ways).</summary>
+    public int SyncPoseRate { get; set; } = 20;
 
     /// <summary>The whole plugin on / off (/limber1 on|off): posing, soft bodies, props, the live mesh and the links.</summary>
     public bool PluginEnabled { get; set; } = true;

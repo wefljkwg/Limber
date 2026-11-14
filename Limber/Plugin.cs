@@ -46,6 +46,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Selection _selection;
     private readonly HandleOverlay _overlay;
     private readonly KoiLink _koi;
+    private readonly Limber.Rig.PoseSync _poseSync;
     private readonly VideoTab _video;
     private readonly LiveTab _live;
     private readonly Limber.BodyRig.SoftBody _softBody = new(Limber.BodyRig.RigParts.Breasts);
@@ -127,6 +128,7 @@ public sealed class Plugin : IDalamudPlugin
             _selection = new Selection(ObjectTable, TargetManager, ClientState, _config.Ik);
             _overlay = new HandleOverlay(_rigs, _selection, _config.Ik, GameGui);
             _koi = new KoiLink(_config);
+            _poseSync = new Limber.Rig.PoseSync(_koi);
             _softBody.Settings = () => _config.Ik.SoftBody ??= new Limber.BodyRig.SoftBodySettings();
             _softBodyTesticles.Settings = () => _config.Ik.SoftBodyTesticles ??= Limber.BodyRig.SoftBodySettings.TesticleDefaults();
             _softBodyButt.Settings = () => _config.Ik.SoftBodyButt ??= Limber.BodyRig.SoftBodySettings.ButtDefaults();
@@ -369,7 +371,7 @@ public sealed class Plugin : IDalamudPlugin
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
-                ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber attached props", _housing.CaptureBones), ("Limber attached effects", _effects.CaptureBones), ("Limber effect helpers", _effects.CopyPoses), ("Limber climax", _climax.UpdateFrame), ("Limber hide mounts", _hideMounts.UpdateFrame), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
+                ("Limber sync (whole poses)", _poseSync.UpdateFrame), ("Limber live mesh", Limber.Gpu.LiveSoftBody.Capture), ("Limber live rig", Limber.Gpu.LiveRig.Capture), ("Limber attached props", _housing.CaptureBones), ("Limber attached effects", _effects.CaptureBones), ("Limber effect helpers", _effects.CopyPoses), ("Limber climax", _climax.UpdateFrame), ("Limber hide mounts", _hideMounts.UpdateFrame), ("Limber body shape (end of frame)", _bodyShape.AfterFrame),
                 ("Limber freeze motion (end of frame)", _freeze.CaptureFrame));
 
             // Which game functions were found (Settings > Advanced): checked once, in the background.
@@ -625,6 +627,7 @@ public sealed class Plugin : IDalamudPlugin
             _actors.CheckPriorityHook();
             perf.Mark("actor hook check");
             _spawner.Update();
+            _poseSync.Tick();
             _retarget.Update();
             _gamePhysics?.Refresh();
             try

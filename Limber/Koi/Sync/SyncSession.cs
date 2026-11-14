@@ -33,8 +33,25 @@ public sealed class SyncSession : IDisposable
     private enum Msg : byte
     {
         Request = 1, Accept = 2, Decline = 3, Bye = 4, Ping = 5,
-        SwapRequest = 6, SwapAccept = 7, SwapDecline = 8, Settings = 9, Frames = 10, PoseFile = 11,
+        SwapRequest = 6, SwapAccept = 7, SwapDecline = 8, Settings = 9, Frames = 10, PoseFile = 11, Pose = 12,
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Whole poses (Limber.Rig.PoseSync), both ways: the latest one received, and when
+
+    private volatile byte[]? _pose;
+    private long _poseAt;
+
+    /// <summary>Sends a whole-pose message (made by PoseSync) to the partner.</summary>
+    public void SendPose(byte[] body)
+    {
+        if (State == Phase.Active && body.Length > 0 && body.Length < 60_000)
+            Send(Msg.Pose, body);
+    }
+
+    /// <summary>The latest whole-pose message from the partner, and how old it is (seconds); null when none.</summary>
+    public (byte[] Body, double Age)? LatestPose
+        => _pose is { } p ? (p, Seconds(Stopwatch.GetTimestamp() - _poseAt)) : null;
 
     public sealed record PlayerInfo(string Name, uint World, string WorldName);
 
@@ -443,6 +460,10 @@ public sealed class SyncSession : IDisposable
             case Msg.PoseFile when State == Phase.Active:
                 ReadPoseFile(body);
                 break;
+            case Msg.Pose when State == Phase.Active:
+                _pose = body.ToArray();
+                _poseAt = Stopwatch.GetTimestamp();
+                break;
         }
     }
 
@@ -506,6 +527,7 @@ public sealed class SyncSession : IDisposable
         SwapPending = SwapRequested = false;
         _pendingRequest = false;
         IAmHost = false;
+        _pose = null;
         Incoming.Stop(); // clears buffered poses
     }
 

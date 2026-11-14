@@ -127,6 +127,7 @@ public sealed class MainWindow : Window
         new("costume", "Scene", "Costume", "The chosen character is drawn as any creature instead of itself, until you take the costume off.", () => EntitiesTab?.DrawCostume(), () => EntitiesTab != null),
         new("voice", "Scene", "Voice Switcher", "Give any character, each actor on its own, any player voice: from the game's list, another character's, or by number.", () => VoiceTab?.Draw(), () => VoiceTab != null),
         new("camera", "Scene", "Camera", "The game camera's distance, field of view, angles and tilt; unlock its limits; save shots.", () => CameraTab?.Draw(), () => CameraTab != null),
+        new("sync", "Scene", "Sync", "Sync with another player: everything that moves your characters (posing, Limber Animations, Oral, the Koikatsu link, the game's animations) shows on both screens, over your own encrypted relay.", () => _syncTab.Draw()),
         new("timeline", "Scene", "Timeline", "Make animations from anything Limber does: FK / IK posing, moving characters, bone scale, body shape and every Limber feature's settings, with keyframes and curves.", () => TimelineTab?.Draw(), () => TimelineTab != null),
         new("limberanims", "Scene", "Limber Animations", "Animations Limber plays by itself (adult characters): penis and testicle throbbing, twerking, an ahegao face and expansion (breasts, butt, penis, a pregnant belly), with many patterns, styles and types.", () => LimberAnimationsTab?.Draw(), () => LimberAnimationsTab != null),
         new("oral", "Scene", "Oral", "A character's mouth follows a partner's shaft: head, jaw and lips (adult characters).", () => OralTab?.Draw(), () => OralTab != null && Cfg.ShowOralTab),
@@ -683,11 +684,7 @@ public sealed class MainWindow : Window
             using (Dalamud.Interface.Utility.Raii.ImRaii.PushId("kk_face"))
                 DrawFaceTab();
         }
-        if (ImGui.CollapsingHeader("Sync###limber_kk_sync"))
-        {
-            using (Dalamud.Interface.Utility.Raii.ImRaii.PushId("kk_sync"))
-                _syncTab.Draw();
-        }
+        ImGui.TextDisabled("Sync (with another player) is its own page now: Scene > Sync.");
         if (ImGui.CollapsingHeader("Advanced###limber_kk_advanced"))
         {
             using (Dalamud.Interface.Utility.Raii.ImRaii.PushId("kk_advanced"))
