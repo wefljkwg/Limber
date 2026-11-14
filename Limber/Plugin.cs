@@ -630,7 +630,7 @@ public sealed class Plugin : IDalamudPlugin
             _spawner.Update();
             try
             {
-                Limber.Rig.LobbyWalk.Update(_config.PluginEnabled && _config.Ik.LobbyWalk, ClientState.IsLoggedIn, KeyState,
+                Limber.Rig.LobbyWalk.Update(_config.PluginEnabled && _config.Ik.LobbyWalk, _config.Ik.LobbyCameraFollow, ClientState.IsLoggedIn, KeyState,
                     _typing || LimberTab.CapturingHotkey, (float)framework.UpdateDelta.TotalSeconds, _config.Ik.LobbyWalkSpeed, _config.Ik.LobbyRunSpeed);
             }
             catch(Exception e)

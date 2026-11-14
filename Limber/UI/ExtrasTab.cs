@@ -82,6 +82,8 @@ public sealed class ExtrasTab
 
     // ---- Walking round the character select screen
 
+    private string _lobbyStatus = "";
+
     private void DrawLobbyWalk()
     {
         if(_config == null)
@@ -114,13 +116,75 @@ public sealed class ExtrasTab
             _config.LobbyWalkSpeed = slow;
             _config.Save();
         }
-        using(ImRaii.Disabled(!LobbyWalk.InLobby))
+        bool follow = _config.LobbyCameraFollow;
+        if(ImGui.Checkbox("Camera follows them###extras_lobby_follow", ref follow))
+        {
+            _config.LobbyCameraFollow = follow;
+            _config.Save();
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("The camera goes along with whoever is walking (you still turn and zoom it as usual).");
+        bool inLobby = LobbyWalk.InLobby;
+        using(ImRaii.Disabled(!inLobby))
         {
             if(ImGui.Button("Back to the middle###extras_lobby_back"))
                 LobbyWalk.PutBack();
         }
         if(LobbyWalk.Status.Length > 0)
+        {
+            ImGui.SameLine();
             ImGui.TextDisabled(LobbyWalk.Status);
+        }
+
+        // Actors on the character select screen.
+        ImGui.TextUnformatted("Actors here");
+        using(ImRaii.Disabled(!inLobby))
+        {
+            if(ImGui.Button("Add a copy###extras_lobby_add"))
+                _lobbyStatus = LobbyWalk.AddActor(null);
+            if(ImGui.IsItemHovered())
+                ImGui.SetTooltip("Adds an actor that looks like the character shown, beside them.");
+            ImGui.SameLine();
+            var looks = _config.AppearancePresets ?? new();
+            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            using(var combo = ImRaii.Combo("###extras_lobby_look", "Add one wearing a saved look..."))
+            {
+                if(combo.Success)
+                    foreach(var look in looks)
+                        if(ImGui.Selectable($"{look.Name}###extras_lobby_look_{look.Name}"))
+                            _lobbyStatus = LobbyWalk.AddActor(look.Copy());
+            }
+        }
+        if(!inLobby)
+            ImGui.TextDisabled("(on the character select screen)");
+        // Who walks: the character shown or one of the actors.
+        string whoLabel = LobbyWalk.WalkerNumber < 0 ? "The character shown" : $"Lobby Actor {LobbyWalk.WalkerNumber}";
+        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        using(var combo = ImRaii.Combo("Who walks###extras_lobby_who", whoLabel))
+        {
+            if(combo.Success)
+            {
+                if(ImGui.Selectable("The character shown###extras_lobby_who_main", LobbyWalk.WalkerNumber < 0))
+                    LobbyWalk.WalkerNumber = -1;
+                foreach(var (number, name) in LobbyWalk.Actors)
+                    if(ImGui.Selectable($"{name}###extras_lobby_who_{number}", LobbyWalk.WalkerNumber == number))
+                        LobbyWalk.WalkerNumber = number;
+            }
+        }
+        int remove = 0;
+        foreach(var (number, name) in LobbyWalk.Actors)
+        {
+            ImGui.Bullet();
+            ImGui.SameLine();
+            ImGui.TextUnformatted(name);
+            ImGui.SameLine();
+            if(ImGui.SmallButton($"Remove###extras_lobby_rm_{number}"))
+                remove = number;
+        }
+        if(remove > 0)
+            LobbyWalk.RemoveActor(remove);
+        if(_lobbyStatus.Length > 0)
+            ImGui.TextDisabled(_lobbyStatus);
     }
 
     // ---- Dataset capture: a set of pictures of the chosen character, for training an image model (a LoRA)

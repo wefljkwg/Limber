@@ -32,7 +32,13 @@ public static unsafe class CameraControl
     private static GameCamera* Active()
     {
         var manager = GameCameraManager.Instance();
-        return manager == null ? null : manager->GetActiveCamera();
+        if(manager == null)
+            return null;
+        var c = manager->GetActiveCamera();
+        // (the character select screen: its own camera)
+        if(c == null && !Plugin.ClientState.IsLoggedIn && manager->LobbyCamera != null)
+            c = (GameCamera*)manager->LobbyCamera;
+        return c;
     }
 
     public static bool Available => Active() != null;
@@ -182,6 +188,16 @@ public static unsafe class CameraControl
     public static volatile bool HasOffset;
     private static Vector3 _offset;
     private static Vector3 _world; // straight up / along the world's axes (the backdrop's lift into the sky)
+    private static Vector3 _lobby; // following the character walking round the character select screen
+
+    /// <summary>The camera moved along with the character walking on the character select screen (world metres).</summary>
+    public static void SetLobbyOffset(Vector3 offset)
+    {
+        if(offset == _lobby)
+            return;
+        _lobby = offset;
+        Refresh();
+    }
 
     public static void SetOffset(Vector3 offset)
     {
@@ -344,7 +360,7 @@ public static unsafe class CameraControl
 
     private static void Refresh()
     {
-        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _aim != null || _free;
+        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _lobby != Vector3.Zero || _aim != null || _free;
         if(HasOffset)
             EnsureHook();
     }
@@ -394,7 +410,7 @@ public static unsafe class CameraControl
             var right = Vector3.Cross(forward, Vector3.UnitY);
             right = right.LengthSquared() < 1e-8f ? Vector3.UnitX : Vector3.Normalize(right);
             var up = Vector3.Cross(right, forward);
-            Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world;
+            Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world + _lobby;
             if(_aim is { } aim)
                 move = aim - look;
             if(_free)

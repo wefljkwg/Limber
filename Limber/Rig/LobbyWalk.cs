@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using ClientObjectManager = FFXIVClientStructs.FFXIV.Client.Game.Object.ClientObjectManager;
+using CopyFlags = FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterSetupContainer.CopyFlags;
 using NativeCharacter = FFXIVClientStructs.FFXIV.Client.Game.Character.Character;
 using NativeObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
 using SceneCameraManager = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager;
@@ -10,65 +13,107 @@ using SceneCameraManager = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Camera
 namespace Limber.Rig;
 
 /// <summary>
-/// Walking round the character select screen: the character shown there moves with W / A / S / D (from where the
-/// camera looks), runs (Shift: walks), turns to face the way it goes and plays the run / walk / idle animations.
-/// The lobby has no world to walk in (no ground, walls or collision): the character slides over the flat floor it
-/// stands on. Only on your screen; logging in puts everything back as the game has it. Framework thread.
+/// The character select screen: the character shown there (or an actor added there) walks with W / A / S / D (from
+/// where the camera looks), runs (Shift: walks), turns the way it goes and plays the run / walk / idle animations; the
+/// camera can follow it. Actors can be added there too: copies of the character shown, or wearing a saved look.
+/// The lobby has no world to walk in (no ground, walls or collision): characters slide over the flat floor. Only on
+/// your screen; the actors are removed when you log in or leave the screen. Framework thread.
 /// </summary>
 public static unsafe class LobbyWalk
 {
     // ActionTimeline rows: normal/idle, normal/walk, normal/run.
     private const ushort Idle = 3, Walk = 13, Run = 22;
+    private const string ActorPrefix = "Lobby Actor ";
 
-    private static nint _who;
-    private static ushort _playing;
+    private sealed class Walker
+    {
+        public nint Address;
+        public ushort Playing;
+        public float Yaw;
+    }
+
+    private sealed class LobbyActor
+    {
+        public ushort Slot;   // the client object list's slot
+        public nint Address;
+        public string Name = "";
+        public int Number;
+        public int WaitToDraw = 300;
+    }
+
+    private static nint _lobbyChar;
     private static Vector3 _home;
-    private static float _homeYaw, _yaw;
+    private static float _homeYaw;
     private static bool _haveHome;
+    private static readonly Dictionary<nint, Walker> _walkers = new();
+    private static readonly List<LobbyActor> _actors = new();
+
+    /// <summary>Who walks: -1 the character shown, else the number of an added actor.</summary>
+    public static int WalkerNumber = -1;
 
     public static string Status { get; private set; } = "";
 
-    /// <summary>Whether a character select character is there to walk (the game's lobby is open).</summary>
-    public static bool InLobby => CharaSelectCharacterList.GetCurrentCharacter() != null;
+    /// <summary>Whether a character select character is there (the game's lobby is open).</summary>
+    public static bool InLobby => !Plugin.ClientState.IsLoggedIn && CharaSelectCharacterList.GetCurrentCharacter() != null;
 
-    public static void Update(bool on, bool loggedIn, IKeyState keys, bool typing, float dt, float walkSpeed, float runSpeed)
+    /// <summary>The actors added on the character select screen: their numbers and names.</summary>
+    public static IEnumerable<(int Number, string Name)> Actors
     {
-        if(loggedIn)
+        get
         {
-            _who = 0;
-            _playing = 0;
-            _haveHome = false;
-            Status = "";
-            return;
+            foreach(var a in _actors)
+                yield return (a.Number, a.Name);
         }
-        var c = CharaSelectCharacterList.GetCurrentCharacter();
+    }
+
+    public static void Update(bool on, bool follow, bool loggedIn, IKeyState keys, bool typing, float dt, float walkSpeed, float runSpeed)
+    {
+        var c = loggedIn ? null : CharaSelectCharacterList.GetCurrentCharacter();
         if(c == null)
         {
-            _who = 0;
-            Status = on ? "Waiting for the character select screen." : "";
+            // (left the screen, or logged in: the actors go, the camera back to the game's)
+            RemoveAll();
+            _lobbyChar = 0;
+            _haveHome = false;
+            _walkers.Clear();
+            CameraControl.SetLobbyOffset(Vector3.Zero);
+            Status = on && !loggedIn ? "Waiting for the character select screen." : "";
             return;
         }
-        if((nint)c != _who)
+        if((nint)c != _lobbyChar)
         {
             // (another character chosen in the list: start from where the game put that one)
-            _who = (nint)c;
-            _playing = 0;
+            _lobbyChar = (nint)c;
             _haveHome = false;
+            _walkers.Remove((nint)c);
         }
-        var go = (NativeObject*)c;
+        var lobbyObj = (NativeObject*)c;
         if(!_haveHome)
         {
-            _home = (Vector3)go->Position;
-            _homeYaw = go->Rotation;
-            _yaw = _homeYaw;
+            _home = (Vector3)lobbyObj->Position;
+            _homeYaw = lobbyObj->Rotation;
             _haveHome = true;
         }
-        if(!on)
+        DrawNewActors();
+
+        var who = Walking(c);
+        if(!on || who == null)
         {
-            Stop(c);
+            foreach(var (address, w) in _walkers)
+                if(StillThere(address))
+                    Play((NativeCharacter*)address, w, Idle);
+            _walkers.Clear();
+            CameraControl.SetLobbyOffset(Vector3.Zero);
             Status = "";
             return;
         }
+        var go = (NativeObject*)who;
+        if(!_walkers.TryGetValue((nint)who, out var walker))
+            _walkers[(nint)who] = walker = new Walker { Address = (nint)who, Yaw = go->Rotation };
+
+        // The camera along with them (from where it was round the character shown).
+        Vector3 here = go->Position;
+        CameraControl.SetLobbyOffset(follow ? here - _home : Vector3.Zero);
 
         // Which way: W / S forward and back, A / D left and right (from the camera's view).
         var input = Vector2.Zero;
@@ -82,7 +127,7 @@ public static unsafe class LobbyWalk
         dt = Math.Clamp(dt, 0f, 0.1f);
         if(input == Vector2.Zero || dt <= 0f)
         {
-            Play(c, Idle);
+            Play(who, walker, Idle);
             Status = "Walk with W / A / S / D (hold Shift to walk instead of running).";
             return;
         }
@@ -107,39 +152,56 @@ public static unsafe class LobbyWalk
 
         bool walking = keys[VirtualKey.SHIFT];
         float speed = walking ? Math.Clamp(walkSpeed, 0.5f, 10f) : Math.Clamp(runSpeed, 1f, 20f);
-        Vector3 now = go->Position;
-        var at = now + dir * speed * dt;
+        var at = here + dir * speed * dt;
         // Turning to face the way it goes (quickly, not snapped).
         float want = MathF.Atan2(dir.X, dir.Z);
-        float diff = MathF.IEEERemainder(want - _yaw, MathF.Tau);
-        _yaw += diff * Math.Clamp(dt * 12f, 0f, 1f);
-        _yaw = MathF.IEEERemainder(_yaw, MathF.Tau);
-        if(!float.IsFinite(at.X) || !float.IsFinite(at.Z) || !float.IsFinite(_yaw))
+        float diff = MathF.IEEERemainder(want - walker.Yaw, MathF.Tau);
+        walker.Yaw = MathF.IEEERemainder(walker.Yaw + diff * Math.Clamp(dt * 12f, 0f, 1f), MathF.Tau);
+        if(!float.IsFinite(at.X) || !float.IsFinite(at.Z) || !float.IsFinite(walker.Yaw))
             return;
-        // (kept near where the game put it: the lobby's floor and lights are only round there)
+        // (kept near where the game put the character: the lobby's floor and lights are only round there)
         var away = at - _home;
         away.Y = 0f;
         if(away.Length() > 30f)
             at = _home + Vector3.Normalize(away) * 30f + new Vector3(0f, at.Y - _home.Y, 0f);
-        go->Position = at;
-        go->Rotation = _yaw;
-        if(go->DrawObject != null)
-        {
-            go->DrawObject->Object.Position = at;
-            go->DrawObject->Object.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, _yaw);
-        }
-        Play(c, walking ? Walk : Run);
+        Place(go, at, walker.Yaw);
+        Play(who, walker, walking ? Walk : Run);
         Status = walking ? "Walking." : "Running.";
     }
 
-    private static void Play(NativeCharacter* c, ushort id)
+    // The one walking: the character shown, or the chosen actor (if it's still there).
+    private static NativeCharacter* Walking(NativeCharacter* lobbyChar)
     {
-        if(_playing == id)
+        if(WalkerNumber < 0)
+            return lobbyChar;
+        foreach(var a in _actors)
+            if(a.Number == WalkerNumber && StillOurs(a))
+                return (NativeCharacter*)a.Address;
+        WalkerNumber = -1;
+        return lobbyChar;
+    }
+
+    private static void Place(NativeObject* go, Vector3 at, float yaw)
+    {
+        go->Position = at;
+        go->Rotation = yaw;
+        if(go->DrawObject != null)
+        {
+            go->DrawObject->Object.Position = at;
+            go->DrawObject->Object.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, yaw);
+        }
+    }
+
+    private static void Play(NativeCharacter* c, Walker w, ushort id)
+    {
+        if(w.Playing == id)
             return;
-        _playing = id;
+        bool first = w.Playing == 0;
+        w.Playing = id;
         if(id == Idle)
         {
-            // (back to whatever the game had it doing)
+            if(first)
+                return; // (standing as the game has it: left alone)
             c->Timeline.BaseOverride = 0;
             c->Timeline.TimelineSequencer.PlayTimeline(Idle);
             return;
@@ -148,27 +210,151 @@ public static unsafe class LobbyWalk
         c->Timeline.TimelineSequencer.PlayTimeline(id);
     }
 
-    private static void Stop(NativeCharacter* c)
-    {
-        if(_playing != 0 && _playing != Idle)
-            Play(c, Idle);
-    }
-
-    /// <summary>The character back where the game put it, facing the way it did.</summary>
+    /// <summary>The one walking back where the game put the character shown, facing the way it did.</summary>
     public static void PutBack()
     {
         var c = CharaSelectCharacterList.GetCurrentCharacter();
-        if(c == null || (nint)c != _who || !_haveHome)
+        if(c == null || (nint)c != _lobbyChar || !_haveHome)
             return;
-        var go = (NativeObject*)c;
-        go->Position = _home;
-        go->Rotation = _homeYaw;
-        _yaw = _homeYaw;
-        if(go->DrawObject != null)
+        var who = Walking(c);
+        var go = (NativeObject*)who;
+        var at = _home;
+        if(WalkerNumber >= 0)
+            at += new Vector3(MathF.Sin(_homeYaw), 0f, MathF.Cos(_homeYaw)) * 1.2f;
+        Place(go, at, _homeYaw);
+        if(_walkers.TryGetValue((nint)who, out var w))
         {
-            go->DrawObject->Object.Position = _home;
-            go->DrawObject->Object.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, _homeYaw);
+            w.Yaw = _homeYaw;
+            Play(who, w, Idle);
         }
-        Play(c, Idle);
+    }
+
+    // ---- Actors on the character select screen
+
+    /// <summary>Adds an actor: a copy of the character shown, or wearing <paramref name="look"/>. Returns a message.</summary>
+    public static string AddActor(AppearanceData? look)
+    {
+        var from = Plugin.ClientState.IsLoggedIn ? null : CharaSelectCharacterList.GetCurrentCharacter();
+        if(from == null)
+            return "Only on the character select screen.";
+        var com = ClientObjectManager.Instance();
+        if(com == null)
+            return "The game's object list isn't available.";
+        uint id = com->CreateBattleCharacter();
+        if(id == 0xFFFFFFFF)
+            return "The game wouldn't add another actor (too many?).";
+        ushort slot = (ushort)id;
+        var obj = (NativeObject*)com->GetObjectByIndex(slot);
+        if(obj == null)
+            return "The new actor didn't appear.";
+        var target = (NativeCharacter*)obj;
+        target->CharacterSetup.CopyFromCharacter(from, CopyFlags.WeaponHiding);
+        target->CharacterSetup.CopyFromCharacter(target, CopyFlags.None);
+        bool wearing = look != null && Appearance.WriteUndrawn(target, look);
+        int number = 1;
+        while(_actors.Exists(a => a.Number == number))
+            number++;
+        string name = ActorPrefix + number;
+        SetName(obj, name);
+        // (a step to the side of the character shown, a little further each time, facing the same way)
+        var fromObj = (NativeObject*)from;
+        Vector3 at = fromObj->Position;
+        float yaw = fromObj->Rotation;
+        var side = new Vector3(MathF.Cos(yaw), 0f, -MathF.Sin(yaw));
+        at += side * (1.1f * ((number + 1) / 2) * (number % 2 == 1 ? 1f : -1f));
+        target->GameObject.DefaultPosition = at;
+        target->GameObject.Position = at;
+        target->GameObject.Rotation = yaw;
+        target->GameObject.DefaultRotation = yaw;
+        _actors.Add(new LobbyActor { Slot = slot, Address = (nint)obj, Name = name, Number = number });
+        return look == null ? $"Added {name} (a copy of the character shown)." :
+            wearing ? $"Added {name}, wearing \"{look.Name}\"." : $"Added {name} (the look couldn't be used: a copy instead).";
+    }
+
+    public static void RemoveActor(int number)
+    {
+        var a = _actors.Find(x => x.Number == number);
+        if(a == null)
+            return;
+        Delete(a);
+        _actors.Remove(a);
+        _walkers.Remove(a.Address);
+        if(WalkerNumber == number)
+            WalkerNumber = -1;
+    }
+
+    public static void RemoveAll()
+    {
+        foreach(var a in _actors)
+            Delete(a);
+        _actors.Clear();
+        WalkerNumber = -1;
+    }
+
+    private static void Delete(LobbyActor a)
+    {
+        var com = ClientObjectManager.Instance();
+        if(com != null && StillOurs(a))
+            com->DeleteObjectByIndex(a.Slot, 0);
+    }
+
+    // New actors drawn once the game has them ready.
+    private static void DrawNewActors()
+    {
+        for(int i = _actors.Count - 1; i >= 0; i--)
+        {
+            var a = _actors[i];
+            if(!StillOurs(a))
+            {
+                _actors.RemoveAt(i); // (the game removed it itself)
+                continue;
+            }
+            if(a.WaitToDraw <= 0)
+                continue;
+            var obj = (NativeObject*)a.Address;
+            if(obj->IsReadyToDraw() || --a.WaitToDraw <= 0)
+            {
+                obj->EnableDraw();
+                a.WaitToDraw = 0;
+            }
+        }
+    }
+
+    // The client object at the actor's slot is still the one added (the game reuses slots and their memory).
+    private static bool StillOurs(LobbyActor a)
+    {
+        var com = ClientObjectManager.Instance();
+        if(com == null)
+            return false;
+        var obj = (NativeObject*)com->GetObjectByIndex(a.Slot);
+        return obj != null && (nint)obj == a.Address && NameIs(obj, a.Name);
+    }
+
+    private static bool StillThere(nint address)
+    {
+        if(address == _lobbyChar)
+            return CharaSelectCharacterList.GetCurrentCharacter() == (NativeCharacter*)address;
+        foreach(var a in _actors)
+            if(a.Address == address)
+                return StillOurs(a);
+        return false;
+    }
+
+    private static void SetName(NativeObject* obj, string name)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(name);
+        int n = Math.Min(bytes.Length, 63);
+        for(int i = 0; i < 64; i++)
+            obj->Name[i] = i < n ? bytes[i] : (byte)0;
+    }
+
+    private static bool NameIs(NativeObject* obj, string name)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(name);
+        int n = Math.Min(bytes.Length, 63);
+        for(int i = 0; i < n; i++)
+            if(obj->Name[i] != bytes[i])
+                return false;
+        return obj->Name[n] == 0;
     }
 }

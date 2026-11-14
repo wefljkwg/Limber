@@ -102,6 +102,7 @@ public sealed class RigSettings
     public bool LobbyWalk { get; set; }
     public float LobbyRunSpeed { get; set; } = 6f;
     public float LobbyWalkSpeed { get; set; } = 2.4f;
+    public bool LobbyCameraFollow { get; set; } = true;
     public bool HideMountsOnlyTicked { get; set; }
     public System.Collections.Generic.HashSet<string> HideMountsCharacters { get; set; } = new();
     public System.Collections.Generic.HashSet<string> PhysicsCharacters { get; set; } = new();
