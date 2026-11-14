@@ -33,6 +33,7 @@ public sealed class MainWindow : Window
     public FaceMorphsTab? FaceMorphsTab { get; set; }
     public MeshSculptTab? MeshSculptTab { get; set; }
     public AnimationsTab? AnimationsTab { get; set; }
+    public PairedAnimationsTab? PairedAnimationsTab { get; set; }
     public DynamicBonesTab? DynamicBonesTab { get; set; }
 
     public FkPosingTab? FkPosingTab { get; set; }
@@ -113,6 +114,7 @@ public sealed class MainWindow : Window
         new("scale", "Posing", "Bone scale", "Make any bone bigger or smaller, with control over the bones around it.", () => _limberTab.DrawBoneScalePage()),
         new("attach", "Posing", "Attach", "Hold a bone on to another character (hands on shoulders, holding hands...).", () => _limberTab.DrawAttachPage()),
         new("move", "Posing", "Move character", "Move, turn and resize the whole character.", () => _limberTab.DrawMovePage()),
+        new("paired", "Posing", "Paired Animations", "Two characters lined up with each other (face to face, behind, side by side...), an animation for each, started together on the same frame.", () => PairedAnimationsTab?.Draw(), () => PairedAnimationsTab != null),
         new("animations", "Posing", "Animations", "Play any of the game's animations on the character (emotes, poses...), also other races' versions.", () => AnimationsTab?.Draw(), () => AnimationsTab != null),
 
         new("rig", "Body", "Body physics", "Soft, jiggling breasts, butt and more: one click sets it up from your body mod.", () => _limberTab.DrawRiggingTab()),
