@@ -188,16 +188,24 @@ public static unsafe class CameraControl
     public static volatile bool HasOffset;
     private static Vector3 _offset;
     private static Vector3 _world; // straight up / along the world's axes (the backdrop's lift into the sky)
-    private static Vector3 _lobby; // following the character walking round the character select screen
+    // Following the character walking round the character select screen: how far they are from where the camera
+    // was framed round (world metres), asked for right when the camera is made, so it's never a frame behind.
+    private static Func<Vector3?>? _lobbyFollow;
 
-    /// <summary>The camera moved along with the character walking on the character select screen (world metres).</summary>
-    public static void SetLobbyOffset(Vector3 offset)
+    /// <summary>The camera goes along with the character walking on the character select screen (null: off).</summary>
+    public static void SetLobbyFollow(Func<Vector3?>? follow)
     {
-        if(offset == _lobby)
+        if(follow == _lobbyFollow)
             return;
-        _lobby = offset;
+        _lobbyFollow = follow;
         Refresh();
     }
+
+    // What Limber last wrote into the camera, and what the game had made: put back before the game's next update, so
+    // the game carries on from its own camera (the lobby's eases from where its camera was: from Limber's moved one it
+    // drifted further every frame).
+    private static nint _wroteCamera;
+    private static Vector3 _wrotePosition, _wroteLook, _gamePosition, _gameLook;
 
     public static void SetOffset(Vector3 offset)
     {
@@ -360,7 +368,7 @@ public static unsafe class CameraControl
 
     private static void Refresh()
     {
-        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _lobby != Vector3.Zero || _aim != null || _free;
+        HasOffset = _offset != Vector3.Zero || _world != Vector3.Zero || _lobbyFollow != null || _aim != null || _free;
         if(HasOffset)
             EnsureHook();
     }
@@ -388,6 +396,27 @@ public static unsafe class CameraControl
 
     private static void UpdateDetour(nint camera)
     {
+        if(_wroteCamera != 0)
+        {
+            try
+            {
+                if(camera == _wroteCamera)
+                {
+                    var s = &((FFXIVClientStructs.FFXIV.Client.Game.CameraBase*)camera)->SceneCamera;
+                    var o = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)s;
+                    if(*(Vector3*)&o->Position == _wrotePosition && *(Vector3*)&s->LookAtVector == _wroteLook)
+                    {
+                        *(Vector3*)&o->Position = _gamePosition;
+                        *(Vector3*)&s->LookAtVector = _gameLook;
+                    }
+                    _wroteCamera = 0;
+                }
+            }
+            catch
+            {
+                _wroteCamera = 0;
+            }
+        }
         _update!.Original(camera);
         if(!HasOffset)
             return;
@@ -410,7 +439,9 @@ public static unsafe class CameraControl
             var right = Vector3.Cross(forward, Vector3.UnitY);
             right = right.LengthSquared() < 1e-8f ? Vector3.UnitX : Vector3.Normalize(right);
             var up = Vector3.Cross(right, forward);
-            Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world + _lobby;
+            Vector3 move = right * _offset.X + up * _offset.Y + forward * _offset.Z + _world;
+            if(_lobbyFollow?.Invoke() is { } follow && float.IsFinite(follow.X) && float.IsFinite(follow.Y) && float.IsFinite(follow.Z))
+                move += follow;
             if(_aim is { } aim)
                 move = aim - look;
             if(_free)
@@ -418,6 +449,14 @@ public static unsafe class CameraControl
             Vector3 movedPosition = position + move, movedLook = look + move;
             *(Vector3*)&obj->Position = movedPosition;
             *(Vector3*)&scene->LookAtVector = movedLook;
+            if(move != Vector3.Zero)
+            {
+                _wroteCamera = camera;
+                _wrotePosition = movedPosition;
+                _wroteLook = movedLook;
+                _gamePosition = position;
+                _gameLook = look;
+            }
         }
         catch
         {

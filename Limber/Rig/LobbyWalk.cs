@@ -76,7 +76,7 @@ public static unsafe class LobbyWalk
             _lobbyChar = 0;
             _haveHome = false;
             _walkers.Clear();
-            CameraControl.SetLobbyOffset(Vector3.Zero);
+            CameraControl.SetLobbyFollow(null);
             Status = on && !loggedIn ? "Waiting for the character select screen." : "";
             return;
         }
@@ -103,7 +103,7 @@ public static unsafe class LobbyWalk
                 if(StillThere(address))
                     Play((NativeCharacter*)address, w, Idle);
             _walkers.Clear();
-            CameraControl.SetLobbyOffset(Vector3.Zero);
+            CameraControl.SetLobbyFollow(null);
             Status = "";
             return;
         }
@@ -111,9 +111,11 @@ public static unsafe class LobbyWalk
         if(!_walkers.TryGetValue((nint)who, out var walker))
             _walkers[(nint)who] = walker = new Walker { Address = (nint)who, Yaw = go->Rotation };
 
-        // The camera along with them (from where it was round the character shown).
+        // The camera along with them, as it is in the game: it keeps its own turn and zoom round them, centred on
+        // where they're drawn this frame.
+        _following = (nint)who;
+        CameraControl.SetLobbyFollow(follow ? Follow : null);
         Vector3 here = go->Position;
-        CameraControl.SetLobbyOffset(follow ? here - _home : Vector3.Zero);
 
         // Which way: W / S forward and back, A / D left and right (from the camera's view).
         var input = Vector2.Zero;
@@ -167,6 +169,19 @@ public static unsafe class LobbyWalk
         Place(go, at, walker.Yaw);
         Play(who, walker, walking ? Walk : Run);
         Status = walking ? "Walking." : "Running.";
+    }
+
+    private static nint _following;
+    private static readonly Func<Vector3?> Follow = FollowOffset;
+
+    // (camera thread of the game's update, same frame: how far the one walking is drawn from the character's place)
+    private static Vector3? FollowOffset()
+    {
+        var go = (NativeObject*)_following;
+        if(go == null || !_haveHome || !StillThere(_following))
+            return null;
+        Vector3 at = go->DrawObject != null ? go->DrawObject->Object.Position : go->Position;
+        return at - _home;
     }
 
     // The one walking: the character shown, or the chosen actor (if it's still there).
