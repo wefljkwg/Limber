@@ -25,6 +25,7 @@ public sealed unsafe class PropService : IDisposable
         public SharedGroupLayoutInstance* Layout;
         public bool Dirty = true;
         public int Settle = 600; // frames to keep making sure the collision is as wanted (it appears once loaded)
+        public bool? Solid;      // the collision as last set (null: not set yet)
         // Where a character sits / lies on it (in its own space, before its size), and which way they face (degrees).
         public Vector3 SitOffset = new(0f, 0.45f, 0f);
         public float SitTurn;
@@ -146,8 +147,9 @@ public sealed unsafe class PropService : IDisposable
         Props.Clear();
     }
 
-    /// <summary>Framework update: moved items put where they're wanted, and their collision kept on (or off).</summary>
-    public void Update()
+    /// <summary>Framework update: moved items put where they're wanted, and their collision kept on (or off).
+    /// <paramref name="allowSolid"/>: whether an item may be solid right now (null: whenever it's set to be).</summary>
+    public void Update(Func<Prop, bool>? allowSolid = null)
     {
         foreach(var p in Props)
         {
@@ -161,12 +163,18 @@ public sealed unsafe class PropService : IDisposable
                 p.Dirty = false;
                 p.Settle = Math.Max(p.Settle, 60);
             }
-            // (the collision appears once the item has loaded, and a move can reset it: set again for a while after)
-            if(p.Settle > 0)
+            // (the collision appears once the item has loaded, and a move can reset it: set again for a while after;
+            // otherwise only set when it changes)
+            bool want = p.Collision && (allowSolid?.Invoke(p) ?? true);
+            if(p.Settle > 0 || p.Solid != want)
             {
-                p.Settle--;
+                if(p.Settle > 0)
+                    p.Settle--;
                 if(IsLoaded(p))
-                    p.Layout->Instances.SetCollidersActive(p.Collision);
+                {
+                    p.Layout->Instances.SetCollidersActive(want);
+                    p.Solid = want;
+                }
             }
         }
     }

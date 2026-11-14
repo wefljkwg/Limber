@@ -360,6 +360,26 @@ public sealed unsafe class MainWindow : Window
             cfg.AutoRestore = restore;
             _plugin.SaveConfig();
         }
+        bool justYou = cfg.CollisionJustForYou;
+        if(ImGui.Checkbox("Solid only for you###proppy_justyou", ref justYou))
+        {
+            cfg.CollisionJustForYou = justYou;
+            _plugin.SaveConfig();
+        }
+        Tip("On: an item is solid only while you're near it and nobody else is (other players, NPCs).\n"
+            + "Anyone else coming near switches its collision off until they've gone, so the characters around\n"
+            + "you never touch it. Off: solid all the time, for everyone's movement and the game's checks.");
+        if(cfg.CollisionJustForYou)
+        {
+            float clear = cfg.ClearRadius;
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            if(ImGui.SliderFloat("Others' distance###proppy_clear", ref clear, 1f, 15f, "%.1f yalms"))
+            {
+                cfg.ClearRadius = clear;
+                _plugin.SaveConfig();
+            }
+            Tip("How near someone else has to be (to the item, times its size) for it to stop being solid.");
+        }
         bool gizmo = cfg.ShowGizmo;
         if(ImGui.Checkbox("Gizmo on the chosen item###proppy_gizmo", ref gizmo))
         {

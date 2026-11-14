@@ -102,13 +102,62 @@ public sealed class Plugin : IDalamudPlugin
                 if(Config.AutoRestore)
                     Restore();
             }
-            Props.Update();
+            Props.Update(Config.CollisionJustForYou ? JustForYou() : null);
             Seat.Update(Props);
         }
         catch(Exception e)
         {
             Log.Error(e, "Proppy: update failed");
         }
+    }
+
+    // ---- Solid only for you: who's around (looked at every few frames, not every frame)
+
+    private readonly System.Collections.Generic.List<Vector3> _others = new();
+    private Vector3 _you;
+    private bool _haveYou;
+    private int _scanWait;
+
+    private Func<PropService.Prop, bool> JustForYou()
+    {
+        if(--_scanWait <= 0)
+        {
+            _scanWait = 5;
+            _others.Clear();
+            _haveYou = false;
+            var me = Objects.LocalPlayer;
+            if(me != null)
+            {
+                _you = me.Position;
+                _haveYou = true;
+            }
+            ulong myId = me?.GameObjectId ?? 0;
+            uint myEntity = me?.EntityId ?? 0;
+            foreach(var obj in Objects)
+            {
+                if(obj == null || obj.Address == 0 || obj.ObjectIndex == 0 || obj.ObjectIndex == 201)
+                    continue; // (you, and your GPose copy)
+                if(obj is not Dalamud.Game.ClientState.Objects.Types.ICharacter)
+                    continue;
+                if(myEntity != 0 && obj.OwnerId == myEntity)
+                    continue; // (your minion, chocobo or pet)
+                if(me != null && obj.GameObjectId == myId)
+                    continue;
+                _others.Add(obj.Position);
+            }
+        }
+        return prop =>
+        {
+            float size = MathF.Max(prop.Scale.X, MathF.Max(prop.Scale.Y, prop.Scale.Z));
+            float clear = MathF.Max(1f, Config.ClearRadius) * MathF.Max(0.25f, size);
+            // (far from you: nothing needs it solid)
+            if(!_haveYou || Vector3.DistanceSquared(_you, prop.Position) > (clear + 6f) * (clear + 6f))
+                return false;
+            foreach(var at in _others)
+                if(Vector3.DistanceSquared(at, prop.Position) < clear * clear)
+                    return false;
+            return true;
+        };
     }
 
     internal uint Zone => _zone;

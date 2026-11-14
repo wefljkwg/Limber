@@ -41,4 +41,10 @@ public sealed class Configuration : IPluginConfiguration
     public float PlaceDistance { get; set; } = 2f;
 
     public List<string> Favourites { get; set; } = new();
+
+    /// <summary>Items are solid only for you: an item's collision is switched off while anyone else is near it, and
+    /// while you're far from it, so other players and NPCs around never touch it.</summary>
+    public bool CollisionJustForYou { get; set; } = true;
+    /// <summary>How near (yalms, from the item, times its size) someone else has to be for its collision to go off.</summary>
+    public float ClearRadius { get; set; } = 4f;
 }
