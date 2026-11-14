@@ -143,7 +143,8 @@ public sealed unsafe class PairedAnimationsTab
 
     private static void Picker(string label, List<ActorRef> all, ref nint chosen, Func<ActorRef, string> labelOf)
     {
-        var now = all.FirstOrDefault(a => a.Address == chosen);
+        nint pick = chosen; // (a ref parameter can't be used inside the lambda)
+        var now = all.FirstOrDefault(a => a.Address == pick);
         ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
         using var combo = ImRaii.Combo(label, now.IsSet ? labelOf(now) : "Choose a character");
         if(!combo.Success)
