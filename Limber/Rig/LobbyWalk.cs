@@ -58,7 +58,7 @@ public static unsafe class LobbyWalk
         var go = (NativeObject*)c;
         if(!_haveHome)
         {
-            _home = go->Position;
+            _home = (Vector3)go->Position;
             _homeYaw = go->Rotation;
             _yaw = _homeYaw;
             _haveHome = true;
@@ -93,7 +93,8 @@ public static unsafe class LobbyWalk
         var camera = manager != null ? manager->CurrentCamera : null;
         if(camera != null)
         {
-            var look = camera->LookAtVector - camera->Position;
+            Vector3 lookAt = camera->LookAtVector, from = camera->Position;
+            var look = lookAt - from;
             look.Y = 0f;
             if(look.LengthSquared() > 1e-6f)
                 forward = Vector3.Normalize(look);
@@ -106,7 +107,8 @@ public static unsafe class LobbyWalk
 
         bool walking = keys[VirtualKey.SHIFT];
         float speed = walking ? Math.Clamp(walkSpeed, 0.5f, 10f) : Math.Clamp(runSpeed, 1f, 20f);
-        var at = go->Position + dir * speed * dt;
+        Vector3 now = go->Position;
+        var at = now + dir * speed * dt;
         // Turning to face the way it goes (quickly, not snapped).
         float want = MathF.Atan2(dir.X, dir.Z);
         float diff = MathF.IEEERemainder(want - _yaw, MathF.Tau);
