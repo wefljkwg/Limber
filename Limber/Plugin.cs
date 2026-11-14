@@ -628,6 +628,15 @@ public sealed class Plugin : IDalamudPlugin
             _actors.CheckPriorityHook();
             perf.Mark("actor hook check");
             _spawner.Update();
+            try
+            {
+                Limber.Rig.LobbyWalk.Update(_config.PluginEnabled && _config.Ik.LobbyWalk, ClientState.IsLoggedIn, KeyState,
+                    _typing || LimberTab.CapturingHotkey, (float)framework.UpdateDelta.TotalSeconds, _config.Ik.LobbyWalkSpeed, _config.Ik.LobbyRunSpeed);
+            }
+            catch(Exception e)
+            {
+                Log.Debug(e, "Limber: walking on the character select screen");
+            }
             _poseSync.Tick();
             _retarget.Update();
             _gamePhysics?.Refresh();

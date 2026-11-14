@@ -75,8 +75,52 @@ public sealed class ExtrasTab
             Entities.DrawMinions();
         }
         DrawHideMounts();
+        DrawLobbyWalk();
         DrawBackdrop();
         DrawDataset();
+    }
+
+    // ---- Walking round the character select screen
+
+    private void DrawLobbyWalk()
+    {
+        if(_config == null)
+            return;
+        ImGui.Spacing();
+        ImGui.Separator();
+        bool walk = _config.LobbyWalk;
+        if(ImGui.Checkbox("Walk around on the character select screen###extras_lobby_walk", ref walk))
+        {
+            _config.LobbyWalk = walk;
+            _config.Save();
+        }
+        if(ImGui.IsItemHovered())
+            ImGui.SetTooltip("On the character select screen, the character shown moves with W / A / S / D (from where the camera\n"
+                + "looks), runs (hold Shift to walk) and turns the way it goes. The screen has no world in it, so there's no\n"
+                + "ground, walls or jumping: it slides over the floor it stands on. Only on your screen; logging in is as usual.");
+        if(!_config.LobbyWalk)
+            return;
+        float run = _config.LobbyRunSpeed, slow = _config.LobbyWalkSpeed;
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Run speed###extras_lobby_run", ref run, 1f, 20f, "%.1f yalms/s"))
+        {
+            _config.LobbyRunSpeed = run;
+            _config.Save();
+        }
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        if(ImGui.SliderFloat("Walk speed###extras_lobby_walkspeed", ref slow, 0.5f, 10f, "%.1f yalms/s"))
+        {
+            _config.LobbyWalkSpeed = slow;
+            _config.Save();
+        }
+        using(ImRaii.Disabled(!LobbyWalk.InLobby))
+        {
+            if(ImGui.Button("Back to the middle###extras_lobby_back"))
+                LobbyWalk.PutBack();
+        }
+        if(LobbyWalk.Status.Length > 0)
+            ImGui.TextDisabled(LobbyWalk.Status);
     }
 
     // ---- Dataset capture: a set of pictures of the chosen character, for training an image model (a LoRA)

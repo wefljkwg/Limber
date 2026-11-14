@@ -98,6 +98,10 @@ public sealed class RigSettings
 
     /// <summary>Hide mounts (Extras): riders look like they're floating; everyone, or only the characters ticked.</summary>
     public bool HideMounts { get; set; }
+    /// <summary>Walking round the character select screen with W / A / S / D (Extras).</summary>
+    public bool LobbyWalk { get; set; }
+    public float LobbyRunSpeed { get; set; } = 6f;
+    public float LobbyWalkSpeed { get; set; } = 2.4f;
     public bool HideMountsOnlyTicked { get; set; }
     public System.Collections.Generic.HashSet<string> HideMountsCharacters { get; set; } = new();
     public System.Collections.Generic.HashSet<string> PhysicsCharacters { get; set; } = new();
