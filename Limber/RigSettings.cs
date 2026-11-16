@@ -103,6 +103,8 @@ public sealed class RigSettings
     public float LobbyRunSpeed { get; set; } = 6f;
     public float LobbyWalkSpeed { get; set; } = 2.4f;
     public bool LobbyCameraFollow { get; set; } = true;
+    /// <summary>Steam / musk hidden behind what's in front of it (the game's depth).</summary>
+    public bool SteamHideBehind { get; set; } = true;
     public bool HideMountsOnlyTicked { get; set; }
     public System.Collections.Generic.HashSet<string> HideMountsCharacters { get; set; } = new();
     public System.Collections.Generic.HashSet<string> PhysicsCharacters { get; set; } = new();

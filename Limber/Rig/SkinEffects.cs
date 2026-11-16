@@ -30,6 +30,17 @@ public sealed class SkinEffectSettings
     /// <summary>Seconds to fade in and out.</summary>
     public float RampSeconds { get; set; } = 2f;
 
+    /// <summary>Steam / musk rising off the skin (0 none .. 1 a lot).</summary>
+    public float Steam { get; set; }
+    /// <summary>Where it rises from (<see cref="SteamService.Areas"/>).</summary>
+    public int SteamAreas { get; set; } = 1;
+    public Vector3 SteamColor { get; set; } = new(0.92f, 0.92f, 0.95f);
+    public float SteamOpacity { get; set; } = 0.35f;
+    /// <summary>How high it rises (times), how big the wisps are (times), how many (times).</summary>
+    public float SteamRise { get; set; } = 1f;
+    public float SteamSize { get; set; } = 1f;
+    public float SteamDensity { get; set; } = 1f;
+
     public SkinEffectSettings Copy() => (SkinEffectSettings)MemberwiseClone();
 }
 

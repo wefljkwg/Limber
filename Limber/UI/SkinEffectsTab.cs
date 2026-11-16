@@ -165,6 +165,95 @@ public sealed class SkinEffectsTab
             changed = true;
         }
 
+        // Steam / musk.
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Steam / musk");
+        float steam = s.Steam;
+        if(Slider("Steam", "steam", ref steam, 0f, 1f, "%.2f",
+            "Faint wisps rising off the skin (or their breath), drifting as they move and fading as they rise.\n"
+            + "Drawn by Limber into the picture, hidden behind what's in front of it. 0: none."))
+        {
+            s.Steam = steam;
+            changed = true;
+        }
+        if(s.Steam > 0f)
+        {
+            using var indent = ImRaii.PushIndent();
+            var areas = (SteamService.Areas)s.SteamAreas;
+            (SteamService.Areas Flag, string Label, string Tip)[] options =
+            [
+                (SteamService.Areas.Body, "Whole body", "From all over: back, chest, hips, thighs, arms, neck."),
+                (SteamService.Areas.Crotch, "Crotch", "From between the legs."),
+                (SteamService.Areas.Chest, "Chest", "From the breasts / chest."),
+                (SteamService.Areas.Armpits, "Armpits", "From under the arms."),
+                (SteamService.Areas.Head, "Head", "Off the top of the head."),
+                (SteamService.Areas.Breath, "Breath", "Out of the mouth, in slow breaths."),
+            ];
+            for(int k = 0; k < options.Length; k++)
+            {
+                if(k > 0 && k % 3 != 0)
+                    ImGui.SameLine();
+                bool on = areas.HasFlag(options[k].Flag);
+                if(ImGui.Checkbox($"{options[k].Label}###skin_steam_area_{k}", ref on))
+                {
+                    areas = on ? areas | options[k].Flag : areas & ~options[k].Flag;
+                    s.SteamAreas = (int)areas;
+                    changed = true;
+                }
+                Tooltip(options[k].Tip);
+            }
+            float opacity = s.SteamOpacity;
+            if(Slider("Opacity", "steam_op", ref opacity, 0.02f, 1f, "%.2f", "How thick the wisps look."))
+            {
+                s.SteamOpacity = opacity;
+                changed = true;
+            }
+            float density = s.SteamDensity;
+            if(Slider("How many", "steam_n", ref density, 0.1f, 4f, "%.2f", "How many wisps (times)."))
+            {
+                s.SteamDensity = density;
+                changed = true;
+            }
+            float rise = s.SteamRise;
+            if(Slider("Rises", "steam_rise", ref rise, 0.2f, 4f, "%.2f", "How high and how long they rise (times)."))
+            {
+                s.SteamRise = rise;
+                changed = true;
+            }
+            float size = s.SteamSize;
+            if(Slider("Size", "steam_size", ref size, 0.2f, 4f, "%.2f", "How big the wisps are (times)."))
+            {
+                s.SteamSize = size;
+                changed = true;
+            }
+            var steamColor = s.SteamColor;
+            ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+            if(ImGui.ColorEdit3("Colour###skin_steam_color", ref steamColor, ImGuiColorEditFlags.NoInputs))
+            {
+                s.SteamColor = steamColor;
+                changed = true;
+            }
+            Tooltip("The steam's colour (a soft white by default; tint it for a coloured musk).");
+            ImGui.SameLine();
+            bool behind = _config.SteamHideBehind;
+            if(ImGui.Checkbox("Hidden behind things###skin_steam_behind", ref behind))
+            {
+                _config.SteamHideBehind = behind;
+                changed = true;
+            }
+            Tooltip("Hidden behind what's in front of it (the game's depth). Off: always drawn on top.");
+            if(SteamService.Instance is { } svc)
+                ImGui.TextDisabled($"{svc.Count} wisps up" + (Limber.Gpu.SteamRenderer.Error.Length > 0 ? "" : "") + (s.Enabled ? "" : " (press Start)"));
+            if(Limber.Gpu.SteamRenderer.Error.Length > 0)
+            {
+                ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Can't draw the steam: " + Limber.Gpu.SteamRenderer.Error);
+                ImGui.SameLine();
+                if(ImGui.SmallButton("Try again###skin_steam_retry"))
+                    Limber.Gpu.SteamRenderer.Retry();
+            }
+            ImGui.TextDisabled("Drawn over the picture: the game's own UI (if it's showing) can end up under it.");
+        }
+
         ImGui.Spacing();
         ImGui.Separator();
         bool hook = _config.SkinEffectsHook;

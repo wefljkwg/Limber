@@ -70,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Limber.Rig.HideMounts _hideMounts = new();
     private readonly Limber.Rig.ClimaxService _climax;
     private readonly Limber.Rig.SkinEffectsService _skinEffects;
+    private readonly Limber.Rig.SteamService _steam;
     private readonly Limber.Rig.EngineLayerService _engineLayer;
     private readonly Limber.Rig.LimberPoses _limberPoses = new();
     private readonly BustShapeService _bust;
@@ -143,6 +144,7 @@ public sealed class Plugin : IDalamudPlugin
             foreach(var s in (_config.Ik.SkinEffects ??= new()).Values) s.Enabled = false;
             (_config.Ik.EngineLayer ??= new()).Enabled = false;
             _skinEffects = new Limber.Rig.SkinEffectsService(ObjectTable, () => _config.Ik.SkinEffects ??= new(), () => _config.PluginEnabled && _config.Ik.SkinEffectsHook);
+            _steam = new Limber.Rig.SteamService(ObjectTable, () => _config.Ik.SkinEffects ??= new());
             _engineLayer = new Limber.Rig.EngineLayerService(() => _config.Ik.EngineLayer ??= new());
             Limber.Rig.WorldCollision.Settings = () => _config.Ik.WorldCollision ??= new();
             _motions = new MotionService(_rigs, ObjectTable, ClientState, GameGui, () => _config.Ik.Motions ??= new());
@@ -674,6 +676,7 @@ public sealed class Plugin : IDalamudPlugin
             try
             {
                 _skinEffects.Update(here, framework.UpdateDelta.TotalSeconds);
+                _steam.Update(here && _config.PluginEnabled, framework.UpdateDelta.TotalSeconds);
                 _engineLayer.Update(here, framework.UpdateDelta.TotalSeconds, _selection.Actor.IsSet ? _selection.Actor.Address : 0);
             }
             catch(Exception e)
@@ -970,6 +973,7 @@ public sealed class Plugin : IDalamudPlugin
                 var liquidLook = _config.Ik.ClimaxLook ??= new();
                 Limber.Gpu.GameLiquid.SetLook(liquidLook);
                 Limber.Gpu.GameLiquid.Render(_climax);
+                Limber.Gpu.SteamRenderer.Draw(_steam, _config.Ik.SteamHideBehind);
                 Limber.Koi.Props.KoiPropRuntime.Update();
                 perf.Mark("climax liquid");
                 _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
@@ -1260,6 +1264,7 @@ public sealed class Plugin : IDalamudPlugin
         _housing.Dispose();
         _effects.Dispose();
         Limber.Gpu.FluidRenderer.Dispose();
+        try { Limber.Gpu.SteamRenderer.Dispose(); } catch { }
         Limber.Gpu.GameLiquid.Stop();
         Limber.Rig.PlayerLook.Dispose();
         _video.Dispose();
