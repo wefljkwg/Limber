@@ -188,6 +188,7 @@ public sealed class SkinEffectsTab
                 (SteamService.Areas.Armpits, "Armpits", "From under the arms."),
                 (SteamService.Areas.Head, "Head", "Off the top of the head."),
                 (SteamService.Areas.Breath, "Breath", "Out of the mouth, in slow breaths."),
+                (SteamService.Areas.Penis, "Penis", "Off the penis, from each of its bones along the shaft to the tip."),
             ];
             for(int k = 0; k < options.Length; k++)
             {

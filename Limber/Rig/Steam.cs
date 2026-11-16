@@ -24,6 +24,7 @@ public sealed unsafe class SteamService
         Armpits = 8,
         Breath = 16,
         Head = 32,
+        Penis = 64,
     }
 
     /// <summary>One puff as the renderer reads it (32 bytes): where, how big; how strong, a seed.</summary>
@@ -220,6 +221,10 @@ public sealed unsafe class SteamService
             foreach(var side in new[] { "l", "r" })
                 if(Bone($"j_ude_a_{side}", out var arm) && Bone("j_sebo_c", out var c))
                     sources.Add((Vector3.Lerp(c, arm, 0.75f) - up * 0.05f * scale, 0.035f * scale, Vector3.Zero, 1f));
+        if(areas.HasFlag(Areas.Penis))
+            foreach(var b in DynamicBoneService.PenisBones)
+                if(Bone(b, out var at))
+                    sources.Add((at, 0.018f * scale, Vector3.Zero, 0.8f));
         if(areas.HasFlag(Areas.Head) && Bone("j_kao", out var head))
             sources.Add((head + up * 0.08f * scale, 0.07f * scale, Vector3.Zero, 1f));
         if(areas.HasFlag(Areas.Breath) && Bone("j_kao", out var face))
