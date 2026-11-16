@@ -678,14 +678,15 @@ public sealed unsafe class SoftBody
             nippleTilt = BodyShapes.TiltOf(_part, shapes);
             ApplyShapes(state.Left, true, shapes, middle);
             ApplyShapes(state.Right, false, shapes, middle);
-            if (_part == RigParts.Breasts)
+            if (_part == RigParts.Breasts || _part == RigParts.Butt || _part == RigParts.Testicles)
             {
                 ApplyParts(skeleton, state.Left, s, middle);
                 ApplyParts(skeleton, state.Right, s, middle);
                 ApplyTilt(skeleton, state.Left, s, middle);
                 ApplyTilt(skeleton, state.Right, s, middle);
                 // (the areolas and the tip are on the nipple bone: they size it too)
-                nippleScale *= MathF.Pow(Math.Clamp(s.Part4, 0.1f, 5f), 0.7f) * MathF.Pow(Math.Clamp(s.Part5, 0.1f, 5f), 0.5f);
+                if (_part == RigParts.Breasts)
+                    nippleScale *= MathF.Pow(Math.Clamp(s.Part4, 0.1f, 5f), 0.7f) * MathF.Pow(Math.Clamp(s.Part5, 0.1f, 5f), 0.5f);
             }
             // Testicles grow as one sac: both sides about the same point (the middle, at the top and the back, where
             // they hang from), so together they're scaled exactly like one rigid shape and keep their modelled form.
@@ -1454,6 +1455,7 @@ public sealed unsafe class SoftBody
         if (!BoneAxes(skeleton, b, middle, out var outward, out var upAxis, out var forward)
             && !Axes(b, middle, out outward, out upAxis, out forward))
             return;
+        forward = Outward(b, forward);
         // (moves are in breast-bone separations, like Lift and Spacing)
         float separation = 0.17f;
         {
@@ -1504,6 +1506,7 @@ public sealed unsafe class SoftBody
         if (!BoneAxes(skeleton, b, middle, out var outward, out var up, out var forward)
             && !Axes(b, middle, out outward, out up, out forward))
             return;
+        forward = Outward(b, forward);
         var pivot = Vector3.Zero;
         for (int k = 0; k < _part.PerLayer; k++)
             pivot += b.Target[k];
@@ -1514,6 +1517,23 @@ public sealed unsafe class SoftBody
         var turn = Quaternion.Normalize(turnUp * turnOut);
         for (int i = 0; i < Side; i++)
             b.Target[i] = pivot + Vector3.Transform(b.Target[i] - pivot, turn);
+    }
+
+    // "Forward" for the parts' 1..5 and tilt: the way the part grows out of the body (base layer to the outermost),
+    // so the butt's goes back and the testicles' out and down. (Breasts kept as they were: their bone's forward.)
+    private Vector3 Outward(Breast b, Vector3 forward)
+    {
+        if (_part == RigParts.Breasts || _part.Layers < 2)
+            return forward;
+        int per = _part.PerLayer, last = (_part.Layers - 1) * per;
+        var baseC = Vector3.Zero;
+        var outerC = Vector3.Zero;
+        for (int k = 0; k < per; k++)
+        {
+            baseC += b.Target[k];
+            outerC += b.Target[last + k];
+        }
+        return Vector3.Dot(forward, outerC - baseC) < 0f ? -forward : forward;
     }
 
     // The part's own bone's axes (world): which of its axes is "forward" is the one nearest the character's forward,

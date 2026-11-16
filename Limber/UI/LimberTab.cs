@@ -2142,16 +2142,20 @@ public sealed partial class LimberTab
         Slider("Projection##lmb_shape", soft.Projection, v => soft.Projection = v, "How far it sticks out forward (1 = unchanged).", 0.1f, 3f);
         Slider("Lift##lmb_shape", soft.Lift, v => soft.Lift = v, "Moves it up (+) or down (-) (0 = unchanged).", -3f, 3f);
         Slider("Spacing##lmb_shape", soft.Spacing, v => soft.Spacing = v, "Moves the two apart (+) or together (-) (0 = unchanged).", -1f, 1f);
-        if(part == Limber.BodyRig.RigParts.Breasts)
+        bool breasts = part == Limber.BodyRig.RigParts.Breasts, butt = part == Limber.BodyRig.RigParts.Butt;
+        if(breasts || butt || part == Limber.BodyRig.RigParts.Testicles)
         {
-            Slider("Tilt out / in##lmb_shape", soft.TiltOut, v => soft.TiltOut = v, "Turns each breast out to the side (+) or in toward the middle (-), about its base (degrees).", -45f, 45f);
-            Slider("Tilt up / down##lmb_shape", soft.TiltUp, v => soft.TiltUp = v, "Turns each breast up (+) or down (-), about its base (degrees).", -45f, 45f);
+            string one = breasts ? "breast" : butt ? "cheek" : "testicle";
+            string partName = breasts ? "Breast" : butt ? "Butt" : "Testicle";
+            Slider("Tilt out / in##lmb_shape", soft.TiltOut, v => soft.TiltOut = v, $"Turns each {one} out to the side (+) or in toward the middle (-), about its base (degrees).", -45f, 45f);
+            Slider("Tilt up / down##lmb_shape", soft.TiltUp, v => soft.TiltUp = v, $"Turns each {one} up (+) or down (-), about its base (degrees).", -45f, 45f);
             // Each part: its size, then where it is (X out / in, Y up / down, Z forward / back).
             void Move(int part)
             {
                 var move = soft.PartMove is { Length: 15 } m ? m : new float[15];
                 string[] axes = ["X", "Y", "Z"];
-                string[] tips = ["Out to the side (+) or in toward the middle (-).", "Up (+) or down (-).", "Forward (+) or back (-)."];
+                string[] tips = ["Out to the side (+) or in toward the middle (-).", "Up (+) or down (-).",
+                    breasts ? "Forward (+) or back (-)." : "Further out from the body (+) or in toward it (-)."];
                 for(int a = 0; a < 3; a++)
                 {
                     ImGui.SameLine();
@@ -2173,19 +2177,45 @@ public sealed partial class LimberTab
                         move = next;
                         changed = true;
                     }
-                    Tooltip($"Moves this part {tips[a]} In breast separations. Right-click: 0.");
+                    Tooltip($"Moves this part {tips[a]} In {one} separations. Right-click: 0.");
                 }
             }
-            Slider("Breast 1 (base)##lmb_shape", soft.Part1, v => soft.Part1 = v, "How wide the base is, where it meets the chest (1 = unchanged).", 0.2f, 3f);
-            Move(0);
-            Slider("Breast 2 (lower)##lmb_shape", soft.Part2, v => soft.Part2 = v, "A bit out from the base (1 = unchanged).", 0.2f, 3f);
-            Move(1);
-            Slider("Breast 3 (middle)##lmb_shape", soft.Part3, v => soft.Part3 = v, "The middle, where most of it is (1 = unchanged).", 0.2f, 3f);
-            Move(2);
-            Slider("Breast 4 (areolas)##lmb_shape", soft.Part4, v => soft.Part4 = v, "The front round the areolas, and the areolas (1 = unchanged).", 0.2f, 3f);
-            Move(3);
-            Slider("Breast 5 (tip)##lmb_shape", soft.Part5, v => soft.Part5 = v, "The very front: the tip and the nipples (1 = unchanged).", 0.2f, 3f);
-            Move(4);
+            if(breasts)
+            {
+                Slider("Breast 1 (base)##lmb_shape", soft.Part1, v => soft.Part1 = v, "How wide the base is, where it meets the chest (1 = unchanged).", 0.2f, 3f);
+                Move(0);
+                Slider("Breast 2 (lower)##lmb_shape", soft.Part2, v => soft.Part2 = v, "A bit out from the base (1 = unchanged).", 0.2f, 3f);
+                Move(1);
+                Slider("Breast 3 (middle)##lmb_shape", soft.Part3, v => soft.Part3 = v, "The middle, where most of it is (1 = unchanged).", 0.2f, 3f);
+                Move(2);
+                Slider("Breast 4 (areolas)##lmb_shape", soft.Part4, v => soft.Part4 = v, "The front round the areolas, and the areolas (1 = unchanged).", 0.2f, 3f);
+                Move(3);
+                Slider("Breast 5 (tip)##lmb_shape", soft.Part5, v => soft.Part5 = v, "The very front: the tip and the nipples (1 = unchanged).", 0.2f, 3f);
+                Move(4);
+            }
+            else
+            {
+                string where = butt ? "the hips" : "the body";
+                string[] names = ["base", "lower", "middle", "outer", butt ? "back" : "end"];
+                string[] tips =
+                [
+                    $"How wide it is where it meets {where} (1 = unchanged).",
+                    "A bit out from the base (1 = unchanged).",
+                    "The middle, where most of it is (1 = unchanged).",
+                    "Toward the outside (1 = unchanged).",
+                    butt ? "The very back: the roundest part (1 = unchanged)." : "The far end, furthest from the body (1 = unchanged).",
+                ];
+                Slider($"{partName} 1 ({names[0]})##lmb_shape", soft.Part1, v => soft.Part1 = v, tips[0], 0.2f, 3f);
+                Move(0);
+                Slider($"{partName} 2 ({names[1]})##lmb_shape", soft.Part2, v => soft.Part2 = v, tips[1], 0.2f, 3f);
+                Move(1);
+                Slider($"{partName} 3 ({names[2]})##lmb_shape", soft.Part3, v => soft.Part3 = v, tips[2], 0.2f, 3f);
+                Move(2);
+                Slider($"{partName} 4 ({names[3]})##lmb_shape", soft.Part4, v => soft.Part4 = v, tips[3], 0.2f, 3f);
+                Move(3);
+                Slider($"{partName} 5 ({names[4]})##lmb_shape", soft.Part5, v => soft.Part5 = v, tips[4], 0.2f, 3f);
+                Move(4);
+            }
         }
         ImGui.TreePop();
         }
