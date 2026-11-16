@@ -1472,6 +1472,12 @@ public sealed unsafe class SoftBody
             return MathUtil.IsFinite(m) ? (outward * m.X + upAxis * m.Y + forward * m.Z) * separation : Vector3.Zero;
         }
         int perLayer = _part.PerLayer, layers = _part.Layers;
+        // Testicles grow every way (each part bigger all round, and longer from the base), not only across.
+        bool allWays = _part == RigParts.Testicles;
+        var baseCentre = Vector3.Zero;
+        for (int k = 0; k < perLayer; k++)
+            baseCentre += b.Target[k];
+        baseCentre /= perLayer;
         for (int l = 0; l < layers; l++)
         {
             float t = layers > 1 ? l / (float)(layers - 1) : 1f; // 0 the base, 1 the front
@@ -1486,6 +1492,19 @@ public sealed unsafe class SoftBody
             for (int k = 0; k < perLayer; k++)
                 centre += b.Target[l * perLayer + k];
             centre /= perLayer;
+            if (allWays)
+            {
+                // (the layer's place pushed out from the base along the part by its size too: it gets longer)
+                var fromBase = centre - baseCentre;
+                var alongBase = forward * Vector3.Dot(fromBase, forward);
+                var newCentre = baseCentre + (fromBase - alongBase) + alongBase * f;
+                for (int k = 0; k < perLayer; k++)
+                {
+                    int i = l * perLayer + k;
+                    b.Target[i] = newCentre + (b.Target[i] - centre) * f + shift;
+                }
+                continue;
+            }
             for (int k = 0; k < perLayer; k++)
             {
                 int i = l * perLayer + k;
