@@ -23,7 +23,11 @@ public sealed unsafe class PairedAnimationsTab
     private string _status = "";
     private ushort _firstRace, _secondRace; // the race whose version each plays (body id), 0 = its own
     private string _saveName = "";
-    private bool _saveIk = true, _saveFk = true, _loadPoses = true;
+    private bool _saveIk = true, _saveFk = true, _saveMove = true, _loadPoses = true;
+    // Loaded and played: the first's Move character goes on first, the line-up and the animations a few frames later
+    // (once the first is drawn where it's moved to).
+    private int _pendingPlay;
+    private PairedSide? _pendingSecondMove;
 
     private nint _first, _second;
     private ushort _firstAnim, _secondAnim;
@@ -155,6 +159,18 @@ public sealed unsafe class PairedAnimationsTab
         if(_status.Length > 0)
             ImGui.TextDisabled(_status);
 
+        if(_pendingPlay > 0 && --_pendingPlay == 0)
+        {
+            if(ready)
+            {
+                _status += " " + LineUp(first, second);
+                if(_pendingSecondMove != null)
+                    PutSecondMove(second, _pendingSecondMove);
+                _status += " " + PlayBoth(first, second);
+            }
+            _pendingSecondMove = null;
+        }
+
         DrawSaved(first, second, ready);
     }
 
@@ -194,6 +210,11 @@ public sealed unsafe class PairedAnimationsTab
         ImGui.SameLine();
         ImGui.Checkbox("With FK poses###pair_save_fk", ref _saveFk);
         Tip("Each one's FK Posing pose.");
+        ImGui.SameLine();
+        ImGui.Checkbox("With Move character###pair_save_move", ref _saveMove);
+        Tip("Each one's Move character (move, turn, size), always from where they started, never as places in the world:\n"
+            + "the first's own; the second's turn and size on top of the line-up, and where it actually stands next to\n"
+            + "the first (if it was moved off the line-up, that's what's saved as the line-up).");
         ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
         ImGui.InputTextWithHint("###pair_save_name", "Name", ref _saveName, 64);
         ImGui.SameLine();
@@ -213,8 +234,8 @@ public sealed unsafe class PairedAnimationsTab
         if(saved.Count == 0)
             return;
         ImGui.Checkbox("Put their posing on when loading###pair_load_poses", ref _loadPoses);
-        Tip("Loading also puts the saved FK poses, IK goals and attached bones on the two chosen characters\n"
-            + "(replacing theirs). Off: only the line-up, animations and races are loaded.");
+        Tip("Loading also puts the saved FK poses, IK goals, attached bones and Move character on the two chosen\n"
+            + "characters (replacing theirs). Off: only the line-up, animations and races are loaded.");
         PairedAnimation? remove = null;
         foreach(var pair in saved)
         {
@@ -267,6 +288,33 @@ public sealed unsafe class PairedAnimationsTab
         }
         Posing(first, pair.First);
         Posing(second, pair.Second);
+        if(_saveMove)
+        {
+            // The first's Move character as it is (from its starting place).
+            if(first.IsSet && _actors.Get(first.Address) is { } a)
+                lock(_actors.Sync)
+                    pair.First.Move = new PairedMove { Move = a.Move, Turn = a.Turn, Scale = a.Scale, Facing = a.Facing, KeepWhileMoving = a.KeepWhileMoving, Priority = a.Priority };
+            // The second: where it actually stands from the first (kept as the line-up), and its own tilt and size.
+            if(first.IsSet && second.IsSet && first.Address != second.Address && _actors.Get(second.Address) is { } b)
+            {
+                if(_actors.TryGetPlaced(first.Address, first.ObjectIndex, out var p1, out var r1)
+                   && _actors.TryGetPlaced(second.Address, second.ObjectIndex, out var p2, out var r2))
+                {
+                    float yaw1 = ActorTransforms.DegreesOf(r1).X * MathF.PI / 180f;
+                    float yaw2 = ActorTransforms.DegreesOf(r2).X;
+                    var forward = new Vector3(MathF.Sin(yaw1), 0f, MathF.Cos(yaw1));
+                    var right = new Vector3(-forward.Z, 0f, forward.X);
+                    var d = p2 - p1;
+                    pair.Forward = Vector3.Dot(d, forward);
+                    pair.Side = Vector3.Dot(d, right);
+                    pair.Up = d.Y;
+                    float facing = yaw2 - yaw1 * 180f / MathF.PI;
+                    pair.Facing = ((facing + 180f) % 360f + 360f) % 360f - 180f;
+                }
+                lock(_actors.Sync)
+                    pair.Second.Move = new PairedMove { Turn = new Vector3(0f, b.Turn.Y, b.Turn.Z), Scale = b.Scale, KeepWhileMoving = b.KeepWhileMoving, Priority = b.Priority };
+            }
+        }
         return pair;
     }
 
@@ -283,9 +331,43 @@ public sealed unsafe class PairedAnimationsTab
             if(put > 0)
                 said += " Posing put on.";
         }
+        if(_loadPoses && first.IsSet && pair.First.Move is { } m1)
+        {
+            var o = _actors.GetOrAdd(first.Address, first.ObjectIndex);
+            lock(_actors.Sync)
+            {
+                o.Facing = m1.Facing;
+                o.Move = m1.Move;
+                o.Turn = m1.Turn;
+                o.Scale = m1.Scale;
+                o.KeepWhileMoving = m1.KeepWhileMoving;
+                o.Priority = m1.Priority;
+            }
+        }
         if(play && first.IsSet && second.IsSet && first.Address != second.Address)
-            said += " " + LineUp(first, second) + " " + PlayBoth(first, second);
+        {
+            // (a few frames on: once the first stands where it's moved to)
+            _pendingPlay = 3;
+            _pendingSecondMove = _loadPoses ? pair.Second : null;
+        }
+        else if(_loadPoses && second.IsSet && pair.Second.Move != null)
+            PutSecondMove(second, pair.Second);
         return said;
+    }
+
+    // The second's own tilt and size (on top of the line-up's place and facing).
+    private void PutSecondMove(ActorRef second, PairedSide side)
+    {
+        if(side.Move is not { } m || !second.IsSet)
+            return;
+        var o = _actors.GetOrAdd(second.Address, second.ObjectIndex);
+        lock(_actors.Sync)
+        {
+            o.Turn = new Vector3(o.Turn.X, m.Turn.Y, m.Turn.Z);
+            o.Scale = m.Scale;
+            o.KeepWhileMoving = m.KeepWhileMoving;
+            o.Priority = m.Priority;
+        }
     }
 
     private int PutPosing(ActorRef who, PairedSide side, ActorRef first, ActorRef second)
@@ -395,28 +477,29 @@ public sealed unsafe class PairedAnimationsTab
 
     private string LineUp(ActorRef first, ActorRef second)
     {
-        if(!Drawn(first.Address, out var at, out var yaw))
+        // The first where it's drawn: its starting place with its own Move character on.
+        Vector3 at;
+        float yaw;
+        if(_actors.TryGetPlaced(first.Address, first.ObjectIndex, out var placed, out var placedRotation))
+        {
+            at = placed;
+            yaw = ActorTransforms.DegreesOf(placedRotation).X * MathF.PI / 180f;
+        }
+        else if(!Drawn(first.Address, out at, out yaw))
             return "Can't find the first character.";
-        var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)second.Address;
-        if(obj == null)
+        if(second.Address == 0)
             return "Can't find the second character.";
         // The first's own directions: forward is the way it faces; right is to its right.
         var forward = new Vector3(MathF.Sin(yaw), 0f, MathF.Cos(yaw));
         var right = new Vector3(-forward.Z, 0f, forward.X);
         var want = at + forward * _forward + right * _side + Vector3.UnitY * _up;
         float wantYaw = yaw + _facing * MathF.PI / 180f;
-        // (the offset goes on top of where the game has the second)
-        Vector3 basePos = obj->Position;
-        float baseYaw = obj->Rotation;
+        // (an offset from where the game has the second, in the world's axes)
         var o = _actors.GetOrAdd(second.Address, second.ObjectIndex);
         lock(_actors.Sync)
-        {
             o.Facing = false;
-            o.Move = want - basePos;
-            float turn = (wantYaw - baseYaw) * 180f / MathF.PI;
-            turn = ((turn + 180f) % 360f + 360f) % 360f - 180f;
-            o.Turn = new Vector3(turn, 0f, 0f);
-        }
+        if(!_actors.SetPlaced(second.Address, second.ObjectIndex, want, Quaternion.CreateFromYawPitchRoll(wantYaw, 0f, 0f)))
+            return "Can't find the second character.";
         return "Lined up.";
     }
 

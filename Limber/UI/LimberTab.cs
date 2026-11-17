@@ -430,6 +430,50 @@ public sealed partial class LimberTab
         bool keep = current?.KeepWhileMoving ?? true;
         bool changed = false;
         bool facing = current?.Facing ?? false;
+        bool inWorld = _config.MoveInWorld;
+        ImGui.TextUnformatted("Position:");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("From where they started###limber_actor_from_start", !inWorld))
+            inWorld = false;
+        Tooltip("Move and Turn are how far they're moved and turned from where the game has them (their starting place).");
+        ImGui.SameLine();
+        if(ImGui.RadioButton("In the world###limber_actor_in_world", inWorld))
+            inWorld = true;
+        Tooltip("Place and Rotation are where they are in the world (world X, height, world Z) and which way they face,\n"
+            + "as numbers you can set directly. Saved paired animations still keep it from their starting place.");
+        if(inWorld != _config.MoveInWorld)
+        {
+            _config.MoveInWorld = inWorld;
+            _config.Save();
+        }
+        if(inWorld)
+        {
+            if(Actors.TryGetPlaced(actor.Address, actor.ObjectIndex, out var place, out var placedRotation))
+            {
+                var at = place;
+                var degrees = Limber.Rig.ActorTransforms.DegreesOf(placedRotation);
+                bool moved = false;
+                ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+                moved |= ImGui.DragFloat3("Place (m)###limber_actor_place", ref at, 0.005f, -10000f, 10000f, "%.3f");
+                Tooltip("Where they stand in the world: X, height, Z.");
+                ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+                moved |= ImGui.DragFloat3("Rotation (°)###limber_actor_rotation", ref degrees, 0.5f, -180f, 180f, "%.1f");
+                Tooltip("Which way they face in the world: yaw (around), pitch, roll.");
+                if(moved)
+                    Actors.SetPlaced(actor.Address, actor.ObjectIndex, at, Limber.Rig.ActorTransforms.TurnOf(degrees));
+            }
+            else
+                ImGui.TextDisabled("Can't find where they are right now.");
+            ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+            if(ImGui.DragFloat("Scale###limber_actor_scale_w", ref scale, 0.005f, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale, "%.4f", ImGuiSliderFlags.AlwaysClamp | ImGuiSliderFlags.Logarithmic))
+            {
+                var o = Actors.GetOrAdd(actor.Address, actor.ObjectIndex);
+                lock(Actors.Sync)
+                    o.Scale = scale;
+            }
+        }
+        else
+        {
         ImGui.TextUnformatted("Axes:");
         ImGui.SameLine();
         if(ImGui.RadioButton("World###limber_actor_world", !facing))
@@ -462,6 +506,7 @@ public sealed partial class LimberTab
                 o.Turn = turn;
                 o.Scale = scale;
             }
+        }
         }
         if(ImGui.Checkbox("Keep while moving###limber_actor_keep", ref keep))
         {

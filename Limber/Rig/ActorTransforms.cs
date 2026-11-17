@@ -71,6 +71,83 @@ public sealed unsafe class ActorTransforms : IDisposable
         }
     }
 
+    // ---- Where a character stands in the world (their starting place, as the game has it, plus Limber's offset)
+
+    /// <summary>Degrees (yaw, pitch, roll) to a turn, as the offsets use them.</summary>
+    public static Quaternion TurnOf(Vector3 degrees)
+    {
+        var t = degrees * (MathF.PI / 180f);
+        return Quaternion.CreateFromYawPitchRoll(t.X, t.Y, t.Z);
+    }
+
+    /// <summary>A turn back to degrees (yaw, pitch, roll): the inverse of <see cref="TurnOf"/>.</summary>
+    public static Vector3 DegreesOf(Quaternion q)
+    {
+        q = Quaternion.Normalize(q);
+        float pitch = MathF.Asin(Math.Clamp(2f * (q.W * q.X - q.Y * q.Z), -1f, 1f));
+        float yaw = MathF.Atan2(2f * (q.W * q.Y + q.X * q.Z), 1f - 2f * (q.X * q.X + q.Y * q.Y));
+        float roll = MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y), 1f - 2f * (q.X * q.X + q.Z * q.Z));
+        return new Vector3(yaw, pitch, roll) * (180f / MathF.PI);
+    }
+
+    /// <summary>Where the game has the character (their starting place, before Limber's offset).</summary>
+    public bool TryGetStart(nint address, ushort index, out Vector3 position, out Quaternion rotation)
+    {
+        lock(Sync)
+            if(_offsets.TryGetValue(address, out var o) && o.HaveBase)
+            {
+                position = o.BasePosition;
+                rotation = o.BaseRotation;
+                return true;
+            }
+        position = default;
+        rotation = Quaternion.Identity;
+        var obj = ActorSkeleton.GetObject(index);
+        if(obj == null || (nint)obj != address || obj->DrawObject == null)
+            return false;
+        var draw = (SceneObject*)obj->DrawObject;
+        position = *(Vector3*)&draw->Position;
+        rotation = Quaternion.Normalize(*(Quaternion*)&draw->Rotation);
+        return MathUtil.IsFinite(position) && MathUtil.IsFinite(rotation);
+    }
+
+    /// <summary>Where the character is in the world with Limber's offset on (their starting place moved and turned).</summary>
+    public bool TryGetPlaced(nint address, ushort index, out Vector3 position, out Quaternion rotation)
+    {
+        if(!TryGetStart(address, index, out var start, out var startRotation))
+        {
+            position = default;
+            rotation = Quaternion.Identity;
+            return false;
+        }
+        position = start;
+        rotation = startRotation;
+        lock(Sync)
+            if(_offsets.TryGetValue(address, out var o))
+            {
+                var turn = TurnOf(o.Turn);
+                position = start + (o.Facing ? Vector3.Transform(o.Move, startRotation) : o.Move);
+                rotation = Quaternion.Normalize(o.Facing ? startRotation * turn : turn * startRotation);
+            }
+        return true;
+    }
+
+    /// <summary>Puts the character at this place and turn in the world (as an offset from their starting place).</summary>
+    public bool SetPlaced(nint address, ushort index, Vector3 position, Quaternion rotation)
+    {
+        if(!TryGetStart(address, index, out var start, out var startRotation) || !MathUtil.IsFinite(position) || !MathUtil.IsFinite(rotation))
+            return false;
+        var o = GetOrAdd(address, index);
+        lock(Sync)
+        {
+            var world = position - start;
+            o.Move = o.Facing ? Vector3.Transform(world, Quaternion.Inverse(startRotation)) : world;
+            var turn = o.Facing ? Quaternion.Inverse(startRotation) * rotation : rotation * Quaternion.Inverse(startRotation);
+            o.Turn = DegreesOf(turn);
+        }
+        return true;
+    }
+
     /// <summary>Height growth's size for a character (1 = none).</summary>
     public void SetAnimatedScale(nint address, ushort index, float scale)
     {

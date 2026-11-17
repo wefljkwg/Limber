@@ -30,6 +30,20 @@ public sealed class PairedSide
     public ushort RaceBody { get; set; }
     public FkPoseSettings? Fk { get; set; }
     public List<SavedGoal>? Goals { get; set; }
+    /// <summary>Move character, from their starting place (for the second: on top of the line-up).</summary>
+    public PairedMove? Move { get; set; }
+}
+
+/// <summary>A character's Move character settings, as saved (always from where they started, never world places).</summary>
+[Serializable]
+public sealed class PairedMove
+{
+    public Vector3 Move { get; set; }
+    public Vector3 Turn { get; set; }
+    public float Scale { get; set; } = 1f;
+    public bool Facing { get; set; }
+    public bool KeepWhileMoving { get; set; } = true;
+    public bool Priority { get; set; } = true;
 }
 
 /// <summary>One IK goal (held, pinned or attached bone), as saved.</summary>
