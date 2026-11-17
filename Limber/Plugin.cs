@@ -347,7 +347,7 @@ public sealed class Plugin : IDalamudPlugin
             };
             // (the belly's box only while the soft belly or a grown belly wants it: else its vertices aren't moved at all)
             Limber.Gpu.LiveRig.PartWanted = key => key != Limber.BodyRig.RigParts.Belly.Key
-                || (_config.Ik.SoftBodyBelly?.Enabled ?? false) || _expansion.AnyBelly;
+                || (_config.Ik.SoftBodyBelly?.Enabled ?? false) || _expansion.AnyBelly || Limber.Rig.Bulge.AnyOn;
             _softBody.BoneStrength = () => _config.Ik.PropBoneStrength;
             _softBodyTesticles.BoneStrength = () => _config.Ik.PropBoneStrength;
             _softBodyButt.BoneStrength = () => _config.Ik.PropBoneStrength;
@@ -514,6 +514,89 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    // The stomach bulge: who has one on (their settings, for the live rig), and for those following, the partner's
+    // penis tip (another character's, the nearest one near their pelvis).
+    private void UpdateBulges(bool here)
+    {
+        var all = _config.Ik.Bulges;
+        if(!here || !_config.PluginEnabled || all == null || all.Count == 0 || !_config.Ik.LiveRig)
+        {
+            Limber.Rig.Bulge.Wanted.Clear();
+            Limber.Rig.Bulge.Tips.Clear();
+            return;
+        }
+        var seen = new HashSet<nint>();
+        List<nint>? want = null;
+        foreach(var obj in ObjectTable)
+        {
+            if(obj is not Dalamud.Game.ClientState.Objects.Types.ICharacter || obj.Address == 0)
+                continue;
+            var name = obj.Name.TextValue;
+            if(name.Length == 0 || !all.TryGetValue(name, out var s) || !s.Enabled)
+                continue;
+            Limber.Rig.Bulge.Wanted[obj.Address] = s.Copy();
+            seen.Add(obj.Address);
+            if(s.Follow)
+                (want ??= new()).Add(obj.Address);
+        }
+        foreach(var key in Limber.Rig.Bulge.Wanted.Keys)
+            if(!seen.Contains(key))
+                Limber.Rig.Bulge.Wanted.TryRemove(key, out _);
+        // The tips: every character with penis bones, then the nearest to each follower's pelvis.
+        var tipsSeen = new HashSet<nint>();
+        if(want != null)
+        {
+            var tips = new List<(nint Address, System.Numerics.Vector3 Tip, System.Numerics.Vector3 Back)>();
+            foreach(var obj in ObjectTable)
+            {
+                if(obj is not Dalamud.Game.ClientState.Objects.Types.ICharacter || obj.Address == 0)
+                    continue;
+                if(!Limber.Core.ActorSkeleton.TryGet(obj.Address, obj.ObjectIndex, _bulgeCache, out var sk))
+                    continue;
+                System.Numerics.Vector3? tip = null, back = null;
+                foreach(var bone in Limber.Rig.DynamicBoneService.PenisBones)
+                    if(sk.TryGetDrawnWorldFrame(bone, _bulgeCache, out var f) && Limber.Core.MathUtil.IsFinite(f.Position))
+                    {
+                        back = tip ?? f.Position;
+                        tip = f.Position;
+                    }
+                if(tip is { } t)
+                    tips.Add((obj.Address, t, back ?? t));
+            }
+            for(int k = 0; k < want.Count; k++)
+            {
+                var address = want[k];
+                var objNow = ObjectTable.FirstOrDefault(o => o.Address == address);
+                if(objNow == null || !Limber.Core.ActorSkeleton.TryGet(address, objNow.ObjectIndex, _bulgeCache, out var me)
+                   || !me.TryGetDrawnWorldFrame("j_kosi", _bulgeCache, out var pelvis))
+                    continue;
+                float best = 0.7f * MathF.Max(me.RootScale.Y, 0.3f);
+                (System.Numerics.Vector3, System.Numerics.Vector3)? found = null;
+                foreach(var (other, tip, back) in tips)
+                {
+                    if(other == address)
+                        continue;
+                    float d = System.Numerics.Vector3.Distance(tip, pelvis.Position);
+                    if(d < best)
+                    {
+                        best = d;
+                        found = (tip, back);
+                    }
+                }
+                if(found is { } f2)
+                {
+                    Limber.Rig.Bulge.Tips[address] = f2;
+                    tipsSeen.Add(address);
+                }
+            }
+        }
+        foreach(var key in Limber.Rig.Bulge.Tips.Keys)
+            if(!tipsSeen.Contains(key))
+                Limber.Rig.Bulge.Tips.TryRemove(key, out _);
+    }
+
+    private readonly Limber.Core.SkeletonInfoCache _bulgeCache = new();
+
     // The live rig: the chosen character (soft bodies and detail sliders), and up to three more with detail sliders set.
     private void UpdateLiveRigTargets(bool here)
     {
@@ -523,8 +606,8 @@ public sealed class Plugin : IDalamudPlugin
                 Limber.Gpu.LiveRig.Wanted = [];
             return;
         }
-        // (a grown belly needs the belly's box too, physics on or not)
-        bool physics = _config.Ik.BodyPhysicsOn || _expansion.AnyBelly;
+        // (a grown belly needs the belly's box too, physics on or not; so does a stomach bulge)
+        bool physics = _config.Ik.BodyPhysicsOn || _expansion.AnyBelly || Limber.Rig.Bulge.AnyOn;
         bool preview = _config.Ik.BodyShapePreview && _config.Ik.BodyShapeOn;
         var shapes = _config.Ik.BodyShapes;
         var builtAll = _config.Ik.BodyShapeBuilt;
@@ -557,6 +640,12 @@ public sealed class Plugin : IDalamudPlugin
             if(!preview)
                 values = built;
             bool otherPhysics = alsoPhysics.Contains(obj.Address);
+            bool bulge = Limber.Rig.Bulge.Wanted.ContainsKey(obj.Address);
+            if(bulge)
+            {
+                physicsHere = true;
+                otherPhysics = true;
+            }
             if(!isMain && !otherPhysics && (!sculpt || list.Count(w => !w.Main) >= 3))
                 continue;
             // (the chosen character keeps it while a detail slider is there at all, even at 0: dragging it back up needs
@@ -720,6 +809,7 @@ public sealed class Plugin : IDalamudPlugin
             perf.Mark("soft body candidates");
             UpdateBodyShapeTargets(here);
             perf.Mark("body shape targets");
+            UpdateBulges(here);
             UpdateLiveRigTargets(here);
             perf.Mark("live rig targets");
         }

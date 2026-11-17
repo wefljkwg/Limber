@@ -107,6 +107,8 @@ public sealed class RigSettings
     public bool SteamHideBehind { get; set; } = true;
     /// <summary>Move character: the place and turn shown as where they are in the world (else: from their starting place).</summary>
     public bool MoveInWorld { get; set; }
+    /// <summary>Stomach bulge (Body shape), per character name.</summary>
+    public System.Collections.Generic.Dictionary<string, Limber.Rig.BulgeSettings> Bulges { get; set; } = new();
     public bool HideMountsOnlyTicked { get; set; }
     public System.Collections.Generic.HashSet<string> HideMountsCharacters { get; set; } = new();
     public System.Collections.Generic.HashSet<string> PhysicsCharacters { get; set; } = new();

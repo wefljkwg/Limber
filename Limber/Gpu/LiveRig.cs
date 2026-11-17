@@ -65,6 +65,9 @@ public static unsafe class LiveRig
         public volatile Snapshot? Snapshot;
         public long NextLook;
         public string Report = "";
+        // The stomach bulge as it is now (eased toward what's wanted, following the partner's tip).
+        public float BulgeLength, BulgeSide, BulgeStrength;
+        public long BulgeTicks;
     }
 
     private sealed class Plan
@@ -82,6 +85,7 @@ public static unsafe class LiveRig
         public float[] SculptValues = [];
         public Plan? From;                         // (resculpted: the plan it was made from)
         public SkinSurface? Surface;               // the skin the clothing is wrapped onto (null: none)
+        public Limber.Rig.Bulge.Marks? Marks;      // the belly's landmarks at rest (for the stomach bulge)
     }
 
     // The detail sliders' sculpts on one model: every vertex they move, and its terms (see BodyShapeBuild.SculptTerm).
@@ -200,7 +204,7 @@ public static unsafe class LiveRig
         {
             Info = plan.Info, Rig = plan.Rig, RealBone = plan.RealBone, VirtualBone = plan.VirtualBone, RestInverse = plan.RestInverse,
             Models = models, Report = plan.Report, SculptKeys = plan.SculptKeys, SculptMin = plan.SculptMin, SculptMax = plan.SculptMax,
-            SculptValues = values, From = plan.From ?? plan, Surface = plan.Surface,
+            SculptValues = values, From = plan.From ?? plan, Surface = plan.Surface, Marks = plan.Marks,
         };
     }
 
@@ -233,6 +237,7 @@ public static unsafe class LiveRig
         public required Matrix4x4[] Skin;
         public Vector3[]? Surface;   // the skin surface's points where this frame's bones put them (made when first needed)
         public Shape[] Colliders = [];  // colliders with Mesh collision on, in model space, each its strength thick
+        public Limber.Rig.Bulge.Now? Bulge; // the stomach bulge this frame (null: none)
     }
 
     /// <summary>Colliders (Devices) in the world, this frame (set by the plugin).</summary>
@@ -370,7 +375,67 @@ public static unsafe class LiveRig
         catch
         {
         }
-        person.Snapshot = new Snapshot { Plan = plan, Skin = skin, Colliders = colliders.ToArray() };
+        person.Snapshot = new Snapshot { Plan = plan, Skin = skin, Colliders = colliders.ToArray(), Bulge = BulgeNow(person, plan, sk, now) };
+    }
+
+    // The stomach bulge this frame: the settings, and (following) how deep the partner's tip is, eased.
+    private static Limber.Rig.Bulge.Now? BulgeNow(Person person, Plan plan, in ActorSkeleton sk, long now)
+    {
+        if (plan.Marks is not { } marks || !Limber.Rig.Bulge.Wanted.TryGetValue(person.Address, out var bs) || !bs.Enabled)
+        {
+            person.BulgeStrength = 0f;
+            person.BulgeTicks = 0;
+            return null;
+        }
+        float dt = person.BulgeTicks == 0 ? 0f : Math.Clamp((now - person.BulgeTicks) / 1000f, 0f, 0.2f);
+        person.BulgeTicks = now;
+        float span = marks.NavelY - marks.PubisY;
+        float maxLength = MathF.Max(Math.Clamp(bs.Length, 0.05f, 2f) * span, 0.01f);
+        float sideSet = Math.Clamp(bs.Side, -1f, 1f) * marks.HipWidth * 0.17f * Math.Clamp(bs.Width, 0.2f, 3f);
+        float length = maxLength, side = sideSet, strength = 1f;
+        if (bs.Follow)
+        {
+            // Where the tip is, in the body at rest (through the pelvis: from how it's posed now back to its rest).
+            strength = 0f;
+            length = person.BulgeLength;
+            if (Limber.Rig.Bulge.Tips.TryGetValue(person.Address, out var tip) && marks.PelvisBone >= 0 && marks.PelvisBone < sk.Info.Count)
+            {
+                var tipModel = Vector3.Transform(tip.Tip, sk.WorldToModel);
+                var f = sk.GetModelFrame(marks.PelvisBone);
+                var sc = sk.GetModelScale(marks.PelvisBone);
+                var posed = Matrix4x4.CreateScale(sc) * Matrix4x4.CreateFromQuaternion(f.Rotation) * Matrix4x4.CreateTranslation(f.Position);
+                if (Matrix4x4.Invert(posed, out var inv))
+                {
+                    var r = Vector3.Transform(tipModel, inv * marks.PelvisRest);
+                    float start = marks.PubisY + Math.Clamp(bs.Start, -0.5f, 1f) * span;
+                    float depth = r.Y - start;
+                    float hw = marks.HipWidth;
+                    bool inside = MathUtil.IsFinite(r) && MathF.Abs(r.X - marks.MidX) < hw * 0.8f && r.Z < marks.PelvisZ + hw * 0.9f
+                                  && r.Z > marks.PelvisZ - hw * 0.7f && depth > -0.03f && depth < span * 2.5f;
+                    if (inside)
+                    {
+                        length = Math.Clamp(depth, 0f, maxLength);
+                        strength = Math.Clamp(depth / MathF.Max(hw * 0.25f, 0.01f), 0f, 1f);
+                        side = sideSet + Math.Clamp(r.X - marks.MidX, -hw * 0.35f, hw * 0.35f);
+                    }
+                }
+            }
+            // (rises quickly, sinks a little slower, as if the skin lingers)
+            float speed = Math.Clamp(bs.FollowSpeed, 0.1f, 5f);
+            float Ease(float from, float to, float up, float down) => from + (to - from) * (1f - MathF.Exp(-dt * (to > from ? up : down) * speed));
+            person.BulgeLength = Ease(person.BulgeLength, length, 14f, 7f);
+            person.BulgeSide = Ease(person.BulgeSide, side, 10f, 10f);
+            person.BulgeStrength = Ease(person.BulgeStrength, strength, 14f, 6f);
+        }
+        else
+        {
+            person.BulgeLength = length;
+            person.BulgeSide = side;
+            person.BulgeStrength = strength;
+        }
+        if (person.BulgeStrength <= 0.002f || person.BulgeLength <= 0.002f)
+            return null;
+        return Limber.Rig.Bulge.Make(marks, bs, person.BulgeLength, person.BulgeSide, person.BulgeStrength);
     }
 
     // ---- What a plan is made from (read in the bone update, used in the background)
@@ -707,6 +772,7 @@ public static unsafe class LiveRig
         {
             Info = info, Rig = rig, RealBone = realBone, VirtualBone = virtualBone, RestInverse = restInverse, Models = plans, Surface = surface,
             Report = "Live rig: " + (report.Count > 0 ? string.Join("; ", report) : "nothing to do on what's worn") + ".",
+            Marks = Limber.Rig.Bulge.MarksFrom(n => rest.TryGetValue(n, out var r) ? ((Vector3, Quaternion, Vector3)?)(r.Position, r.Rotation, r.Scale) : null, info.IndexOf),
         };
         if (sculpt == null)
             return Resculpt(made, []);
@@ -2129,13 +2195,13 @@ public static unsafe class LiveRig
             int count = mesh.Vertex.Length;
             const int Chunk = 2048;
             if (count <= Chunk)
-                moved += DeformRange(mesh, work, m, inverse, hasInverse, 0, count, snap.Colliders);
+                moved += DeformRange(mesh, work, m, inverse, hasInverse, 0, count, snap.Colliders, snap.Bulge);
             else
             {
                 int chunks = (count + Chunk - 1) / Chunk;
                 Parallel.For(0, chunks, c =>
                 {
-                    int n = DeformRange(mesh, work, m, inverse, hasInverse, c * Chunk, Math.Min(count, (c + 1) * Chunk), snap.Colliders);
+                    int n = DeformRange(mesh, work, m, inverse, hasInverse, c * Chunk, Math.Min(count, (c + 1) * Chunk), snap.Colliders, snap.Bulge);
                     if (n > 0)
                         System.Threading.Interlocked.Add(ref moved, n);
                 });
@@ -2146,7 +2212,8 @@ public static unsafe class LiveRig
         return moved > 0;
     }
 
-    private static int DeformRange(MeshPlan mesh, byte[] work, Matrix4x4[] m, Matrix4x4[] inverse, bool[] hasInverse, int from, int to, Shape[] colliders)
+    private static int DeformRange(MeshPlan mesh, byte[] work, Matrix4x4[] m, Matrix4x4[] inverse, bool[] hasInverse, int from, int to, Shape[] colliders,
+        Limber.Rig.Bulge.Now? bulge = null)
     {
         var L = mesh.Layout;
         bool normals = L.NormalAt >= 0 && L.NormalType is (2 or 3 or 14);
@@ -2225,6 +2292,34 @@ public static unsafe class LiveRig
                     continue;
             }
             var q = p + Vector3.TransformNormal(delta, back);
+            // The stomach bulge: the front of the belly pushed out along its normal (at rest, so it moves with the body).
+            var bulgeTilt = Vector3.Zero;
+            if (bulge != null)
+            {
+                float nl = n.Length();
+                float nz = nl > 1e-6f ? n.Z / nl : 0f;
+                float hw = bulge.HipWidth;
+                float front = SmoothStep(0.05f, 0.45f, nz) * SmoothStep(bulge.FrontZ - 0.01f, bulge.FrontZ + hw * 0.25f, p.Z)
+                              * (1f - SmoothStep(bulge.FrontZ + hw * 0.9f, bulge.FrontZ + hw * 1.2f, p.Z));
+                float share = i < mesh.Share.Length ? Math.Clamp(mesh.Share[i] / 0.3f, 0f, 1f) : 1f;
+                float k = front * share;
+                if (k > 1e-3f)
+                {
+                    float h = Limber.Rig.Bulge.Height(bulge, p.X, p.Y);
+                    if (h != 0f && float.IsFinite(h))
+                    {
+                        q += n / nl * (h * k);
+                        if (normals)
+                        {
+                            const float e = 0.004f;
+                            float gx = (Limber.Rig.Bulge.Height(bulge, p.X + e, p.Y) - Limber.Rig.Bulge.Height(bulge, p.X - e, p.Y)) / (2f * e);
+                            float gy = (Limber.Rig.Bulge.Height(bulge, p.X, p.Y + e) - Limber.Rig.Bulge.Height(bulge, p.X, p.Y - e)) / (2f * e);
+                            if (float.IsFinite(gx) && float.IsFinite(gy))
+                                bulgeTilt = new Vector3(gx, gy, 0f) * k;
+                        }
+                    }
+                }
+            }
             if (!MathUtil.IsFinite(q) || Vector3.DistanceSquared(q, mesh.Last[i]) < 1e-12f)
                 continue;
             mesh.Last[i] = q;
@@ -2233,7 +2328,7 @@ public static unsafe class LiveRig
             MdlRigger.WriteVector(work, L.PositionAt + v * L.PositionStride, L.PositionType, q);
             if (normals && n.LengthSquared() > 1e-12f)
             {
-                var nn = n + Vector3.TransformNormal(turn, back);
+                var nn = n + Vector3.TransformNormal(turn, back) - bulgeTilt * n.Length();
                 // Where it fades into the body, the move tilts the surface (it moves this much times its share, and
                 // the share changes along the surface): the normal tilts with it.
                 if (i < mesh.Grad.Length)
@@ -2252,6 +2347,12 @@ public static unsafe class LiveRig
             }
         }
         return moved;
+    }
+
+    private static float SmoothStep(float e0, float e1, float x)
+    {
+        float t = Math.Clamp((x - e0) / (e1 - e0), 0f, 1f);
+        return t * t * (3f - 2f * t);
     }
 
     /// <summary>

@@ -146,6 +146,8 @@ public sealed class BodyShapeTab
             }
         }
 
+        changed |= DrawBulge(actor.Name ?? "");
+
         ImGui.Spacing();
         if (ImGui.Button("Reset all###lmb_bs_reset_all"))
         {
@@ -159,6 +161,101 @@ public sealed class BodyShapeTab
 
         if (changed)
             _config.Save();
+    }
+
+    // ---- Stomach bulge
+
+    private static readonly (string Name, string Tip, Action<Limber.Rig.BulgeSettings> Apply)[] BulgePresets =
+    [
+        ("Ridge", "A narrow ridge up the middle, from the pubis to just under the navel.",
+            b => { b.Shape = 0f; b.Length = 0.8f; b.Width = 1f; b.Peak = 0.3f; b.Taper = 0.2f; b.Softness = 0.6f; b.Creases = 0.5f; b.Tightening = 0.4f; b.Navel = 0.3f; b.PenisShape = 0.3f; b.Roundness = 1f; }),
+        ("Peaked ridge", "A ridge that's low near the pubis and rises to a rounded peak at its end.",
+            b => { b.Shape = 0f; b.Length = 0.85f; b.Width = 1f; b.Peak = 1.1f; b.Taper = 0.7f; b.Softness = 0.5f; b.Creases = 0.3f; b.Tightening = 0.4f; b.Navel = 0.4f; b.PenisShape = 0.4f; b.Roundness = 1f; }),
+        ("Broad swell", "A wide, low, soft hill over the lower belly, no peak.",
+            b => { b.Shape = 0.6f; b.Length = 0.7f; b.Width = 2.2f; b.Peak = 0f; b.Taper = 0f; b.Softness = 1f; b.Creases = 0f; b.Tightening = 0.1f; b.Navel = 0.2f; b.PenisShape = 0f; b.Roundness = 1.5f; }),
+        ("Long ridge to the navel", "Wide and flat-topped, all the way up to the navel, creased along the sides, the navel stretched.",
+            b => { b.Shape = 0f; b.Length = 1.05f; b.Width = 1.5f; b.Peak = 0.2f; b.Taper = 0.1f; b.Softness = 0.3f; b.Creases = 0.8f; b.Tightening = 0.5f; b.Navel = 1f; b.PenisShape = 0.2f; b.Roundness = 0.8f; }),
+        ("Round dome", "One big round dome round the navel, crisp-edged and taut, the navel flattened on it.",
+            b => { b.Shape = 1f; b.Length = 1f; b.Width = 1.6f; b.Peak = 0.4f; b.Taper = 0f; b.Softness = 0.2f; b.Creases = 0.2f; b.Tightening = 0.3f; b.Navel = 1f; b.PenisShape = 0f; b.Roundness = 1f; }),
+        ("Shaft showing", "The penis's own shape showing through: a rounder shaft and the head's rim.",
+            b => { b.Shape = 0f; b.Length = 0.8f; b.Width = 1f; b.Peak = 0.7f; b.Taper = 0.3f; b.Softness = 0.15f; b.Creases = 0.6f; b.Tightening = 0.4f; b.Navel = 0.3f; b.PenisShape = 1f; b.Roundness = 0.9f; }),
+    ];
+
+    private bool DrawBulge(string name)
+    {
+        if (name.Length == 0)
+            return false;
+        var all = _config.Bulges ??= new();
+        bool has = all.TryGetValue(name, out var b) && b.Enabled;
+        if (!ImGui.CollapsingHeader($"Stomach bulge{(has ? " (on)" : "")}###lmb_bs_bulge"))
+            return false;
+        if (b == null)
+            all[name] = b = new Limber.Rig.BulgeSettings();
+        bool changed = false;
+        bool on = b.Enabled;
+        if (ImGui.Checkbox("Bulge on###lmb_bulge_on", ref on))
+        {
+            b.Enabled = on;
+            changed = true;
+        }
+        Tooltip("Pushes the front of the belly out (drawn by the live rig on the belly's skin: no build, no redraw).\n"
+            + "Needs the live rig on (Body physics); the belly is set up for it by itself.");
+        ImGui.SameLine();
+        bool follow = b.Follow;
+        if (ImGui.Checkbox("Follow the penis###lmb_bulge_follow", ref follow))
+        {
+            b.Follow = follow;
+            changed = true;
+        }
+        Tooltip("Grows up the belly as the partner's tip goes deeper and sinks as it pulls out (the nearest other character's\n"
+            + "penis near this one's pelvis), and moves to the side with it. Length is then the most it grows to.");
+        if (!_config.LiveRig)
+            ImGui.TextColored(new Vector4(0.95f, 0.75f, 0.3f, 1f), "The live rig is off (Body physics): the bulge needs it.");
+
+        ImGui.TextUnformatted("Presets:");
+        foreach (var (presetName, tip, apply) in BulgePresets)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"{presetName}###lmb_bulge_p_{presetName}"))
+            {
+                apply(b);
+                changed = true;
+            }
+            Tooltip(tip);
+        }
+
+        bool S(string label, string id, float value, Action<float> set, float min, float max, string tip)
+        {
+            ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+            bool edited = ImGui.SliderFloat($"{label}###lmb_bulge_{id}", ref value, min, max, "%.2f");
+            Tooltip(tip);
+            if (edited)
+                set(value);
+            return edited;
+        }
+        changed |= S("Size", "size", b.Size, v => b.Size = v, 0f, 3f, "How far it pushes out.");
+        changed |= S("Length", "length", b.Length, v => b.Length = v, 0.05f, 1.6f, "How far up the belly it reaches (1 = to the navel). Following: the most it grows to.");
+        changed |= S("Width", "width", b.Width, v => b.Width = v, 0.2f, 3f, "How wide it is (1: about a shaft's width).");
+        changed |= S("Penis shape", "penis", b.PenisShape, v => b.PenisShape = v, 0f, 1f, "How well the penis's own shape shows through: a rounder shaft, a slight neck and the head's wider rim near the end.");
+        changed |= S("Ridge / dome", "shape", b.Shape, v => b.Shape = v, 0f, 1f, "0: a ridge up the belly (a capsule under the skin). 1: a round dome.");
+        changed |= S("Peak", "peak", b.Peak, v => b.Peak = v, 0f, 2f, "How much more the far end (where the tip is) pushes out.");
+        changed |= S("Taper", "taper", b.Taper, v => b.Taper = v, 0f, 1f, "Lower near the pubis, rising toward the end (0: even all along).");
+        changed |= S("Round end", "round", b.Roundness, v => b.Roundness = v, 0.2f, 3f, "How the far end ends: low blunt, high drawn out and round.");
+        changed |= S("Softness", "soft", b.Softness, v => b.Softness = v, 0f, 1f, "0: crisp edges. 1: very soft, blended into the belly.");
+        changed |= S("Side creases", "creases", b.Creases, v => b.Creases = v, 0f, 1f, "Creases along both sides where the skin is pulled up over it.");
+        changed |= S("Tightening", "tight", b.Tightening, v => b.Tightening = v, 0f, 1f, "The belly round it pulled in a little (taut).");
+        changed |= S("Navel stretch", "navel", b.Navel, v => b.Navel = v, 0f, 1f, "The navel stretched flat where the bulge reaches it.");
+        changed |= S("Start", "start", b.Start, v => b.Start = v, -0.5f, 1f, "Where it starts: up (+) or down (-) from the pubis.");
+        changed |= S("Side", "side", b.Side, v => b.Side = v, -1f, 1f, "Off to one side (-: her left... depending on the model; +: the other).");
+        if (b.Follow)
+            changed |= S("Follow speed", "speed", b.FollowSpeed, v => b.FollowSpeed = v, 0.1f, 5f, "How quickly it follows (it rises quickly and sinks a little slower).");
+        if (ImGui.SmallButton("Reset bulge###lmb_bulge_reset"))
+        {
+            bool enabled = b.Enabled;
+            all[name] = new Limber.Rig.BulgeSettings { Enabled = enabled };
+            changed = true;
+        }
+        return changed;
     }
 
     private bool Matches(BodySlider s)
