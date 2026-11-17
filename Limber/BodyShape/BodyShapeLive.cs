@@ -114,9 +114,13 @@ public sealed class BodyShapeLive
                 break;
             }
         }
-        if (kept && state.Written.Count == 0)
+        // (and the bones only moved or turned: where they are and which way they turn, every time, not only when
+        // nothing was scaled: a moved or turned bone keeps its size when the pose is rebuilt, so its size can't tell,
+        // and the move or turn was then thought still there and never put on again: the slider seemed to let go)
+        if (kept)
             foreach (var (name, frame) in state.WrittenFrames)
-                if (Now(name) is not { } f || Vector3.Distance(f.Position, frame.Position) > 1e-5f)
+                if (Now(name) is not { } f || Vector3.Distance(f.Position, frame.Position) > 1e-5f
+                    || MathF.Abs(Quaternion.Dot(Quaternion.Normalize(f.Rotation), Quaternion.Normalize(frame.Rotation))) < 0.999999f)
                 {
                     kept = false;
                     break;
@@ -257,22 +261,31 @@ public sealed class BodyShapeLive
             if (!ActorSkeleton.TryGet(address, state.Index, _cache, out var skeleton) || skeleton.Info.Count == 0)
                 continue;
             var info = skeleton.Info;
-            var marks = new List<string>();
-            if (state.Legs != 1f || state.Hip != 0f || state.Spread != 0f)
-                marks.Add("j_asi_a_l");
+            // Scaled bones: their size tells a rebuilt pose. Moved or turned ones (and the hips / legs moved by Hip
+            // position and Leg spacing): where they are and how they're turned.
+            var scaledMarks = new List<string>();
+            var placeMarks = new List<string>();
+            if (state.Legs != 1f)
+                scaledMarks.Add("j_asi_a_l");
             if (state.Size != 1f)
-                marks.Add("j_kosi");
-            foreach (var name in state.Applied.Keys.Concat(marks).Distinct())
+                scaledMarks.Add("j_kosi");
+            if (state.Hip != 0f)
+                placeMarks.Add("j_kosi");
+            if (state.Spread != 0f)
+                placeMarks.Add("j_asi_a_l");
+            foreach (var name in state.Applied.Keys.Concat(scaledMarks).Concat(placeMarks).Distinct())
             {
                 int i = info.IndexOf(name);
                 if (i < 0)
                     continue;
                 var scale = skeleton.GetModelScale(i);
-                bool scaled = marks.Contains(name)
+                bool scaled = scaledMarks.Contains(name)
                     || (state.Applied.TryGetValue(name, out var o) && (Vector3.DistanceSquared(o.Scale, Vector3.One) > 1e-12f || MathF.Abs(o.Stretch - 1f) > 1e-6f));
                 if (scaled)
                     state.Written[name] = scale;
-                else
+                bool placed = placeMarks.Contains(name) || !scaled
+                    || (state.Applied.TryGetValue(name, out var o2) && (o2.Move.LengthSquared() > 1e-14f || MathF.Abs(o2.Turn.W) < 0.999999f));
+                if (placed)
                 {
                     var f = skeleton.GetModelFrame(i);
                     state.WrittenFrames[name] = new BoneFrame(f.Position, f.Rotation, scale);
