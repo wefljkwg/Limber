@@ -115,6 +115,7 @@ public static class Bulge
         public float X0, Y0, Length, Width, Amp, Shape, Peak, Taper, Round, Soft, Penis, Creases, Tight, Navel;
         public Vector3 NavelAt;
         public float NavelRadius, FrontZ, HipWidth;
+        public float MidX, Top, Span;   // the body's middle, and the top of the skin the bulge may move (the live rig's zone)
     }
 
     /// <summary>The body's landmarks at rest (model space).</summary>
@@ -178,6 +179,9 @@ public static class Bulge
             NavelRadius = m.HipWidth * 0.12f,
             FrontZ = m.PelvisZ,
             HipWidth = m.HipWidth,
+            MidX = m.MidX,
+            Top = m.PubisY + span * 2.1f,
+            Span = span,
         };
     }
 
@@ -243,6 +247,10 @@ public static class Bulge
         float nd = MathF.Sqrt(MathF.Pow(x - b.NavelAt.X, 2f) + MathF.Pow(y - b.NavelAt.Y, 2f)) / MathF.Max(b.NavelRadius, 0.005f);
         if(nd < 1.5f && b.Navel > 0f)
             total += b.Navel * MathF.Min(h, 1f) * 0.25f * MathF.Exp(-nd * nd * 2f);
-        return total * b.Amp;
+        // (faded out well inside the edges of the skin the live rig moves: at the sides of the waist and at the top,
+        // so nothing moved meets anything not moved in a step; that tore the sides into spikes)
+        float side = MathF.Abs(x - b.MidX);
+        float edge = (1f - Smooth(b.HipWidth * 0.42f, b.HipWidth * 0.8f, side)) * (1f - Smooth(b.Top - b.Span * 0.45f, b.Top - b.Span * 0.05f, y));
+        return total * b.Amp * edge;
     }
 }
