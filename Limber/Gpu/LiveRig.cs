@@ -472,6 +472,7 @@ public static unsafe class LiveRig
         public required RigPart[] Parts;           // the parts wanted now
         public required Dictionary<string, float> Sculpt, Built;
         public required string Key;
+        public bool Bulge;                         // a stomach bulge on: the belly's skin goes on the plan too
         // The body model the worn top replaces (resolved through the mod manager), read but never drawn: the skin the
         // clothing is wrapped onto, also where the top itself has no skin (under a bra's cups). Null: none.
         public string? BodyFile;
@@ -568,9 +569,11 @@ public static unsafe class LiveRig
                 string.Join(";", files.OrderBy(f => f, StringComparer.Ordinal)),
                 want.Physics ? "p" : "-", fit ? "f" : "-", string.Join(",", real.OrderBy(x => x)), string.Join(",", parts.Select(p => p.Key)),
                 string.Join(";", placements.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + ":" + ShapeKey(kv.Value))),
-                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built), bodyFile ?? "");
+                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built), bodyFile ?? "",
+                Limber.Rig.Bulge.Wanted.ContainsKey(want.Address) ? "bulge" : "");
             return new Inputs
             {
+                Bulge = Limber.Rig.Bulge.Wanted.ContainsKey(want.Address),
                 Info = info, Rest = rest, Files = files, Placements = placements, Fit = fit, Physics = want.Physics, RealParts = real, Parts = parts,
                 Sculpt = sculpt, Built = built, Key = key, BodyFile = bodyFile,
             };
@@ -729,6 +732,15 @@ public static unsafe class LiveRig
             return slotNames.Count - 1;
         }
 
+        // The stomach bulge: the front of the belly, at rest (its skin goes on the plan whether a lattice takes it or not).
+        var marks = Limber.Rig.Bulge.MarksFrom(n => rest.TryGetValue(n, out var r) ? ((Vector3, Quaternion, Vector3)?)(r.Position, r.Rotation, r.Scale) : null, info.IndexOf);
+        Func<Vector3, bool>? bulgeZone = null;
+        if (inp.Bulge && marks != null)
+        {
+            float span = marks.NavelY - marks.PubisY, hw = marks.HipWidth;
+            float y0 = marks.PubisY - span * 0.45f, y1 = marks.PubisY + span * 2.1f, z0 = marks.PelvisZ - hw * 0.05f;
+            bulgeZone = pt => pt.Y > y0 && pt.Y < y1 && pt.Z > z0 && MathF.Abs(pt.X - marks.MidX) < hw * 0.95f;
+        }
         var plans = new List<ModelPlan>();
         int movingTotal = 0, shapedTotal = 0;
         var idx = new byte[8];
@@ -758,7 +770,7 @@ public static unsafe class LiveRig
         {
             try
             {
-                var plan = MakeModel(file, data, sides, sidesKey, sculpt, builtSculpt, SlotOf, idx, w, ref movingTotal, ref shapedTotal, null, surface);
+                var plan = MakeModel(file, data, sides, sidesKey, sculpt, builtSculpt, SlotOf, idx, w, ref movingTotal, ref shapedTotal, null, surface, bulgeZone);
                 if (plan != null)
                     wrappedTotal += plan.Wraps.Sum(x => x.Vertex.Length);
                 if (plan != null)
@@ -793,7 +805,7 @@ public static unsafe class LiveRig
         {
             Info = info, Rig = rig, RealBone = realBone, VirtualBone = virtualBone, RestInverse = restInverse, Models = plans, Surface = surface,
             Report = "Live rig: " + (report.Count > 0 ? string.Join("; ", report) : "nothing to do on what's worn") + ".",
-            Marks = Limber.Rig.Bulge.MarksFrom(n => rest.TryGetValue(n, out var r) ? ((Vector3, Quaternion, Vector3)?)(r.Position, r.Rotation, r.Scale) : null, info.IndexOf),
+            Marks = marks,
         };
         if (sculpt == null)
             return Resculpt(made, []);
@@ -890,7 +902,7 @@ public static unsafe class LiveRig
     private static ModelPlan? MakeModel(string file, byte[] data, List<MdlRigger.Side> sides, string sidesKey,
         Action<Vector3, string[], byte[], float[], int, List<Limber.BodyShape.BodyShapeBuild.SculptTerm>>? sculpt,
         Func<Vector3, string[], byte[], float[], int, Vector3>? builtSculpt, Func<string, int> slotOf, byte[] idx, float[] w, ref int movingTotal, ref int shapedTotal,
-        SkinRef? skinRef = null, SkinSurface? surface = null)
+        SkinRef? skinRef = null, SkinSurface? surface = null, Func<Vector3, bool>? bulgeZone = null)
     {
         string[] materials;
         try
@@ -938,7 +950,7 @@ public static unsafe class LiveRig
             if (weighted != null)
                 onLattice = MdlRigger.Skin(weighted, 0);
         }
-        if (onLattice == null && sculpt == null && builtSculpt == null && surface == null
+        if (onLattice == null && sculpt == null && builtSculpt == null && surface == null && bulgeZone == null
             && (skinRef == null || (skinRef.Count == 0 && !materials.Any(MdlRigger.IsSkinMaterial))))
             return null;
         var wraps = new List<WrapPlan>();
@@ -1053,13 +1065,63 @@ public static unsafe class LiveRig
                             }
                     capture.Add(p, latW.ToArray(), rskin == null ? ownLat : lat);
                 }
+                // The stomach bulge's skin: moved by nothing but the bulge (its own bones as they are), if it isn't on
+                // the lattice already.
+                void BulgeOnly()
+                {
+                    if (bulgeZone == null || !bulgeZone(p))
+                        return;
+                    int b0 = slot.Count;
+                    for (int k = 0; k < skin.Slots; k++)
+                    {
+                        float wk = skin.Weights[v * 8 + k];
+                        int bone = skin.Indices[v * 8 + k];
+                        if (wk <= 0f || bone >= skin.Bones.Length)
+                            continue;
+                        int sl = slotOf(skin.Bones[bone]);
+                        if (sl < 0)
+                        {
+                            slot.RemoveRange(b0, slot.Count - b0);
+                            weight.RemoveRange(b0, weight.Count - b0);
+                            return;
+                        }
+                        slot.Add(sl);
+                        weight.Add(wk);
+                    }
+                    if (slot.Count == b0)
+                        return;
+                    vertex.Add(v);
+                    restList.Add(p);
+                    origs.Add(p);
+                    offsets.Add(Vector3.Zero);
+                    follows.Add(0f);
+                    sculptIndex.Add(sculptEntry);
+                    shares.Add(0f);
+                    normals.Add(layout.NormalAt >= 0 ? MdlRigger.ReadVector(original, layout.NormalAt + v * layout.NormalStride, layout.NormalType) : Vector3.Zero);
+                    start.Add(b0);
+                    mid.Add(slot.Count);
+                    posFrom = Math.Min(posFrom, pa);
+                    posTo = Math.Max(posTo, pa + 16);
+                    if (layout.NormalAt >= 0)
+                    {
+                        int na = layout.NormalAt + v * layout.NormalStride;
+                        nrmFrom = Math.Min(nrmFrom, na);
+                        nrmTo = Math.Max(nrmTo, na + 16);
+                    }
+                }
                 if (near >= 0)
                     lat = lat * (1f - fol) + follow!.Share(near) * fol;
                 else if (rskin == null || latticeBone == null)
+                {
+                    BulgeOnly();
                     continue;
+                }
                 allShare[v] = lat;
                 if (lat <= 0f)
+                {
+                    BulgeOnly();
                     continue;
+                }
                 int s0 = slot.Count;
                 bool ok = true;
                 for (int k = 0; k < skin.Slots && ok; k++)
@@ -1149,6 +1211,7 @@ public static unsafe class LiveRig
                     // (a bone that isn't in the body skeleton, e.g. one of an outfit's own, or nothing changed: left as it is)
                     slot.RemoveRange(s0, slot.Count - s0);
                     weight.RemoveRange(s0, weight.Count - s0);
+                    BulgeOnly();
                     continue;
                 }
                 vertex.Add(v);
@@ -2323,8 +2386,7 @@ public static unsafe class LiveRig
                 float hw = bulge.HipWidth;
                 float front = SmoothStep(0.05f, 0.45f, nz) * SmoothStep(bulge.FrontZ - 0.01f, bulge.FrontZ + hw * 0.25f, p.Z)
                               * (1f - SmoothStep(bulge.FrontZ + hw * 0.9f, bulge.FrontZ + hw * 1.2f, p.Z));
-                float share = i < mesh.Share.Length ? Math.Clamp(mesh.Share[i] / 0.3f, 0f, 1f) : 1f;
-                float k = front * share;
+                float k = front;
                 if (k > 1e-3f)
                 {
                     float h = Limber.Rig.Bulge.Height(bulge, p.X, p.Y);
