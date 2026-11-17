@@ -1505,12 +1505,21 @@ public sealed unsafe class SoftBody
                 }
                 continue;
             }
+            // (the butt across from the layer's inner edge, at the cleft, like Width: never through the other cheek)
+            float innerAt = 0f;
+            if (_part == RigParts.Butt)
+            {
+                innerAt = float.MaxValue;
+                for (int k = 0; k < perLayer; k++)
+                    innerAt = MathF.Min(innerAt, Vector3.Dot(b.Target[l * perLayer + k] - centre, outward));
+            }
             for (int k = 0; k < perLayer; k++)
             {
                 int i = l * perLayer + k;
                 var d = b.Target[i] - centre;
                 var along = forward * Vector3.Dot(d, forward);
-                b.Target[i] = centre + along + (d - along) * f + shift;
+                var acrossOut = outward * innerAt;
+                b.Target[i] = centre + along + acrossOut + (d - along - acrossOut) * f + shift;
             }
         }
     }
@@ -1713,7 +1722,7 @@ public sealed unsafe class SoftBody
         // Every point in this part's own axes (outward, up, forward), from its bone.
         Span<Vector3> local = stackalloc Vector3[Side];
         var centre = Vector3.Zero;
-        float back = float.MaxValue, top = float.MinValue;
+        float back = float.MaxValue, top = float.MinValue, inner = float.MaxValue;
         for (int i = 0; i < Side; i++)
         {
             var rel = b.Target[i] - b.Origin;
@@ -1721,6 +1730,7 @@ public sealed unsafe class SoftBody
             centre += local[i];
             back = MathF.Min(back, local[i].Z);
             top = MathF.Max(top, local[i].Y);
+            inner = MathF.Min(inner, local[i].X);
         }
         centre /= Side;
 
@@ -1735,7 +1745,9 @@ public sealed unsafe class SoftBody
         }
         else
             // (a belly half from the middle of the body, so the two halves stay together)
-            pivot = new Vector3(_part.Region ? 0f : centre.X, centre.Y, back);
+            // (the butt across from its inner edge, at the cleft: the cheeks touch there, so grown from their middles
+            // each would push its inner side through the other's and crumple the skin in the cleft)
+            pivot = new Vector3(_part.Region ? 0f : _part == RigParts.Butt ? inner : centre.X, centre.Y, back);
 
         for (int i = 0; i < Side; i++)
         {

@@ -431,7 +431,10 @@ public static class MdlRigger
 
                         if (partnerLattice != null && band > 1e-5f)
                         {
-                            float shared = 0.5f * shareFill * (1f - SmoothStep(MathF.Abs(position.X - midX) / band));
+                            // (the butt's cleft: right at the middle half on each cheek, so the skin there moves as the
+                            // average of both and the two sides of the cleft stay together however they're shaped)
+                            float most = side.Fill <= 0f && side.PartKey == RigParts.Butt.Key ? 0.5f : 0.5f * shareFill;
+                            float shared = most * (1f - SmoothStep(MathF.Abs(position.X - midX) / band));
                             if (shared > 1e-3f)
                             {
                                 foreach (var key in wanted.Keys.ToList())
