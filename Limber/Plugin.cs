@@ -369,7 +369,7 @@ public sealed class Plugin : IDalamudPlugin
             _hook.AddBefore("Limber game physics (before the game's physics)", _gamePhysics.BeforePhysics);
             _hook.AddFirst("Limber game physics (pose back after the game's physics)", _gamePhysics.AfterPhysics);
             _hook.AddLast("Limber game physics (end of frame)", _gamePhysics.EndOfFrame);
-            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber animation from another skeleton", _retarget.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", _twerk.UpdateFrame), ("Limber expansion", _expansion.UpdateFrame), ("Limber stomach bulge (breasts)", Limber.Rig.Bulge.UpdateBreasts), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", _faceMorphs.UpdateBones), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
+            _hook.Start(("Limber freeze motion", _freeze.RestoreFrame), ("Limber height growth", _sizeChange.UpdateFrame), ("Limber actors", _actors.UpdateFrame), ("Limber animation from another skeleton", _retarget.UpdateFrame), ("Limber breast size", _bust.UpdateFrame), ("Limber body shape", _bodyShape.UpdateFrame), ("the Koikatsu link", _koi.Applier.RunFrame), ("Limber oral (partner)", _oral.UpdatePartner), ("Limber poses", _limberPoses.UpdateFrame), ("Limber FK posing", _fk.UpdateFrame), ("Limber posing", _rigs.UpdateFrame), ("Limber symmetry", _symmetry.UpdateFrame), ("Limber ragdoll", _ragdoll.UpdateFrame), ("Limber twerk", () => { if(_config.ShowTwerk) _twerk.UpdateFrame(); }), ("Limber expansion", _expansion.UpdateFrame), ("Limber stomach bulge (breasts)", Limber.Rig.Bulge.UpdateBreasts), ("Limber dynamic bones", _dynamicBones.UpdateFrame), ("Limber throbbing", _throb.UpdateFrame), ("Limber testicle throbbing", _ballThrob.UpdateFrame), ("Limber look at", _lookAt.UpdateFrame), ("Limber face posing", _facePosing.UpdateFrame), ("Limber ahegao", _ahegao.UpdateFrame), ("Limber oral", _oral.UpdateMouth), ("Limber face morphs (throat)", () => { if(_config.ShowFaceMorphsTab) _faceMorphs.UpdateBones(); }), ("Limber face posing (after Limber Animations)", _facePosing.UpdateFrameAfter),
                 ("Limber props", _props.UpdateFrame),
                 ("Limber soft body", _softBody.UpdateFrame), ("Limber soft body (testicles)", _softBodyTesticles.UpdateFrame),
                 ("Limber soft body (butt)", _softBodyButt.UpdateFrame), ("Limber soft body (belly)", _softBodyBelly.UpdateFrame), ("Limber handle positions", _rigs.SnapshotWatched),
@@ -409,7 +409,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.FkPosingTab = _fkTab;
             _overlay.FkEditor = _fkTab;
             _fkTab.Overlay = _overlay;
-            _mainWindow.LimberAnimationsTab = new LimberAnimationsTab(_selection, _config.Ik, _throb, _twerk, _ahegao, _expansion) { SizeChange = _sizeChange };
+            _mainWindow.LimberAnimationsTab = new LimberAnimationsTab(_selection, _config.Ik, _throb, _twerk, _ahegao, _expansion) { SizeChange = _sizeChange, TwerkShown = () => _config.ShowTwerk };
             _mainWindow.BustShapeTab = new BustShapeTab(_selection, _config.Ik, _bust);
             _mainWindow.WorldPropsTab = new HousingPropsTab(_housing, _selection, world: true);
             _mainWindow.KoiImportTab = new KoiImportTab(_config.Ik);
@@ -748,7 +748,8 @@ public sealed class Plugin : IDalamudPlugin
                 _motions.Update(framework.UpdateDelta.TotalSeconds);
             perf.Mark("motions");
             _oral.Update(framework.UpdateDelta.TotalSeconds);
-            _faceMorphs.Update(framework.UpdateDelta.TotalSeconds);
+            if(_config.ShowFaceMorphsTab)
+                _faceMorphs.Update(framework.UpdateDelta.TotalSeconds);
             perf.Mark("oral");
             // Placed housing props: only while Limber runs here (removed when you leave GPose or turn it off).
             _housing.Update(here);
@@ -767,7 +768,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 _skinEffects.Update(here, framework.UpdateDelta.TotalSeconds);
                 _steam.Update(here && _config.PluginEnabled, framework.UpdateDelta.TotalSeconds);
-                _engineLayer.Update(here, framework.UpdateDelta.TotalSeconds, _selection.Actor.IsSet ? _selection.Actor.Address : 0);
+                _engineLayer.Update(here && _config.ShowEngineLayerTab, framework.UpdateDelta.TotalSeconds, _selection.Actor.IsSet ? _selection.Actor.Address : 0);
             }
             catch(Exception e)
             {

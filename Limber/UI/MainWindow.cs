@@ -107,7 +107,7 @@ public sealed class MainWindow : Window
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
         new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
         new("face", "Posing", "Face Posing", "Move, turn and scale each face bone (brows, eyelids, eyes, cheeks, lips, jaw, tongue) on a face map or right on the face.", () => FacePosingTab?.Draw(), () => FacePosingTab != null),
-        new("facemorphs", "Posing", "Face morphs", "Experimental: pose the face with blend shapes (lips stretched or in a tube, vacuum cheeks, nose, jaw, eyes), from Limber or imported from Virt-a-Mate and Koikatsu. Works on its own; Oral can drive them too (adult characters).", () => FaceMorphsTab?.Draw(), () => FaceMorphsTab != null),
+        new("facemorphs", "Posing", "Face morphs", "Experimental: pose the face with blend shapes (lips stretched or in a tube, vacuum cheeks, nose, jaw, eyes), from Limber or imported from Virt-a-Mate and Koikatsu. Works on its own; Oral can drive them too (adult characters).", () => FaceMorphsTab?.Draw(), () => FaceMorphsTab != null && Cfg.ShowFaceMorphsTab),
         new("sculpt", "Posing", "Mesh morphing", "Experimental: reshape the face's own mesh with brushes (grab, push / pull, pinch, smooth) or picked points, right on the face or on a shaded face map in its own window. Soft falloff along the skin, mirror, undo. The edits follow the face and go on top of Oral's lips.", () => MeshSculptTab?.Draw(), () => MeshSculptTab != null),
         new("lookat", "Posing", "Look at", "The head and eyes follow another character (their face or any bone), one of their own bones, or the camera.", () => LookAtTab?.Draw(), () => LookAtTab != null),
         new("hands", "Posing", "Hands", "Preset finger poses (fist, open, point...) for one hand or both.", () => _limberTab.DrawHandsPage()),
@@ -149,8 +149,8 @@ public sealed class MainWindow : Window
         new("hotkeys", "Settings", "Hotkeys", "Undo / redo keys.", () => _limberTab.DrawHotkeysTab()),
         new("advanced", "Settings", "Advanced", "Running outside GPose, unfinished pages.", DrawMainAdvanced),
 
-        new("video", "Experimental", "Video (not working)", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
-        new("enginelayer", "Experimental", "Engine animation layer", "Untested: a small Limber motion (the hips) played through the game's own animation system, mixed with the emote playing, with a readout of the character's animation layers.", () => EngineLayerTab?.Draw(), () => EngineLayerTab != null),
+        new("video", "Experimental", "Video", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
+        new("enginelayer", "Experimental", "Engine animation layer", "Untested: a small Limber motion (the hips) played through the game's own animation system, mixed with the emote playing, with a readout of the character's animation layers.", () => EngineLayerTab?.Draw(), () => EngineLayerTab != null && Cfg.ShowEngineLayerTab),
         new("vlc", "Experimental", "VLC Live", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
     ];
 
@@ -1420,8 +1420,11 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Text("Unfinished pages");
+        ImGui.SetWindowFontScale(1.5f);
+        ImGui.TextColored(new Vector4(1f, 0.25f, 0.25f, 1f), "(NOT WORKING / EXPERIMENTAL / UNFINISHED)");
+        ImGui.SetWindowFontScale(1f);
         var bust = Cfg.ShowBustTab;
-        if (ImGui.Checkbox("Show the Breast size page (Experimental, not working)###limber_show_bust", ref bust))
+        if (ImGui.Checkbox("Show the Breast size page###limber_show_bust", ref bust))
         {
             Cfg.ShowBustTab = bust;
             SaveLocked();
@@ -1429,13 +1432,13 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("The Body > Breast size page, for tops made with breast size shapes. Off: the page is hidden and the size shapes don't run.");
         var video = Cfg.ShowVideoTab;
-        if (ImGui.Checkbox("Show the Video page (not working yet)###limber_show_video", ref video))
+        if (ImGui.Checkbox("Show the Video page###limber_show_video", ref video))
         {
             Cfg.ShowVideoTab = video;
             SaveLocked();
         }
         var oral = Cfg.ShowOralTab;
-        if (ImGui.Checkbox("Show the Oral page (still being made)###limber_show_oral", ref oral))
+        if (ImGui.Checkbox("Show the Oral page###limber_show_oral", ref oral))
         {
             Cfg.ShowOralTab = oral;
             SaveLocked();
@@ -1443,7 +1446,7 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Scene > Oral. Off: the page is hidden and nothing on it runs.");
         var climax = Cfg.ShowClimaxTab;
-        if (ImGui.Checkbox("Show the Climax page (still being made)###limber_show_climax", ref climax))
+        if (ImGui.Checkbox("Show the Climax page###limber_show_climax", ref climax))
         {
             Cfg.ShowClimaxTab = climax;
             SaveLocked();
@@ -1451,11 +1454,35 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Scene > Climax. Off: the page is hidden and nothing on it runs.");
         var vlc = Cfg.ShowVlcTab;
-        if (ImGui.Checkbox("Show the VLC Live page (experimental)###limber_show_vlc", ref vlc))
+        if (ImGui.Checkbox("Show the VLC Live page###limber_show_vlc", ref vlc))
         {
             Cfg.ShowVlcTab = vlc;
             SaveLocked();
         }
+        var faceMorphs = Cfg.ShowFaceMorphsTab;
+        if (ImGui.Checkbox("Show the Face morphs page###limber_show_facemorphs", ref faceMorphs))
+        {
+            Cfg.ShowFaceMorphsTab = faceMorphs;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Posing > Face morphs. Off: the page is hidden and the face morphs don't run.");
+        var twerk = Cfg.ShowTwerk;
+        if (ImGui.Checkbox("Show Twerking (Limber Animations)###limber_show_twerk", ref twerk))
+        {
+            Cfg.ShowTwerk = twerk;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The Twerking section of Scene > Limber Animations. Off: hidden, and twerking doesn't run.");
+        var engine = Cfg.ShowEngineLayerTab;
+        if (ImGui.Checkbox("Show the Engine animation layer page###limber_show_enginelayer", ref engine))
+        {
+            Cfg.ShowEngineLayerTab = engine;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Experimental > Engine animation layer. Off: the page is hidden and it doesn't run.");
     }
 
     private void SaveLocked()

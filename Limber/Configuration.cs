@@ -105,6 +105,10 @@ public class Configuration : IPluginConfiguration
     /// <summary>Show the unfinished Video and VLC Live tabs (main Advanced tab).</summary>
     public bool ShowVideoTab { get; set; } = false;
     public bool ShowVlcTab { get; set; } = false;
+    /// <summary>Unfinished: the Face morphs page, Twerking (Limber Animations) and the Engine animation layer page (off: hidden, not run).</summary>
+    public bool ShowFaceMorphsTab { get; set; } = false;
+    public bool ShowTwerk { get; set; } = false;
+    public bool ShowEngineLayerTab { get; set; } = false;
     /// <summary>The Oral and Climax pages (still being made): hidden, and not running, unless switched on.</summary>
     public bool ShowOralTab { get; set; } = false;
     public bool ShowClimaxTab { get; set; } = false;

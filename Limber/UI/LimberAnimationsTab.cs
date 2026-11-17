@@ -18,6 +18,8 @@ public sealed class LimberAnimationsTab
     private readonly RigSettings _config;
     private readonly ThrobService _throb;
     private readonly TwerkService _twerk;
+    /// <summary>Twerking shown (Advanced: unfinished, off by default).</summary>
+    public Func<bool> TwerkShown = () => true;
     private readonly AhegaoService _ahegao;
     private readonly ExpansionService _expansion;
     /// <summary>Testicle throbbing (set by the plugin).</summary>
@@ -135,7 +137,7 @@ public sealed class LimberAnimationsTab
             DrawThrob(name, actor);
         if(BallThrob != null && ImGui.CollapsingHeader("Testicle throbbing###lanim_balls"))
             DrawBallThrob(name, actor);
-        if(ImGui.CollapsingHeader("Twerking###lanim_twerk"))
+        if(TwerkShown() && ImGui.CollapsingHeader("Twerking###lanim_twerk"))
             DrawTwerk(name, actor);
         if(ImGui.CollapsingHeader("Ahegao###lanim_ahegao"))
             DrawAhegao(name, actor);
