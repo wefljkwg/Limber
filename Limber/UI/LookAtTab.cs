@@ -81,7 +81,7 @@ public sealed class LookAtTab
         // Who.
         ImGui.Spacing();
         string who = s.Self ? "Themselves (one of their own bones)" : s.Target.Length == 0 ? "The camera" : s.Target;
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Look at###look_who", who))
         {
             if(combo)
@@ -136,7 +136,7 @@ public sealed class LookAtTab
             }
             if(_customBone.Length == 0)
                 _customBone = s.TargetBone;
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputText("Bone name###look_bone", ref _customBone, 64, ImGuiInputTextFlags.EnterReturnsTrue) && _customBone.Trim().Length > 0)
             {
                 s.TargetBone = _customBone.Trim();
@@ -256,7 +256,7 @@ public sealed class LookAtTab
 
     private static bool Slider(string label, float value, float min, float max, string format, Action<float> set, string tip)
     {
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###look_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)

@@ -38,7 +38,7 @@ public static class PresetBar
         var now = parts();
         using(ImRaii.Disabled(now == null))
         {
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             ImGui.InputTextWithHint($"###preset_name_{key}", "Preset name", ref name, 48);
             Names[key] = name;
             ImGui.SameLine();
@@ -55,7 +55,7 @@ public static class PresetBar
             if(ImGui.IsItemHovered())
                 ImGui.SetTooltip(mine.ContainsKey(name.Trim()) ? "Saves over the preset with this name." : "Saves this page's settings as a preset with this name.");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo($"###preset_load_{key}", mine.Count == 0 ? "No presets yet" : "Load a preset..."))
             {
                 if(combo.Success)
@@ -114,7 +114,7 @@ public static class PresetBar
                 Pending[key] = null;
             return;
         }
-        ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(150f * ImGuiHelpers.GlobalScale));
         using var combo = ImRaii.Combo($"###preset_reset_{key}", "Reset to default...");
         if(!combo.Success)
             return;

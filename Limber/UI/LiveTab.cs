@@ -68,7 +68,7 @@ public sealed class LiveTab : IDisposable
         // Connection.
         bool changed = false;
         var port = Cfg.LiveVlcPort;
-        ImGui.SetNextItemWidth(100);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(100f));
         if (ImGui.InputInt("VLC port", ref port))
         {
             Cfg.LiveVlcPort = Math.Clamp(port, 1, 65535);
@@ -77,7 +77,7 @@ public sealed class LiveTab : IDisposable
         ImGui.SameLine();
         ImGui.TextColored(Dim, "(VLC's default is 8080)");
 
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
         if (ImGui.InputText("VLC password##limber_vlc_pw", ref _passwordEdit, 128, ImGuiInputTextFlags.Password))
         {
             Cfg.LiveVlcPassword = _passwordEdit;
@@ -110,7 +110,7 @@ public sealed class LiveTab : IDisposable
             changed = true;
         }
         int engine = Cfg.LiveNlf ? 1 : 0;
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f));
         if (ImGui.Combo("Tracker###limber_vlc_engine", ref engine, EngineNames, EngineNames.Length))
         {
             Cfg.LiveNlf = engine == 1;
@@ -132,7 +132,7 @@ public sealed class LiveTab : IDisposable
         Tip("On: limbs that are hidden or cut off are worked out from the rest of the body, kept at the person's own\n" +
             "limb lengths and smoothed. Off: those limbs keep the character's own pose instead.");
         var smooth = Cfg.LiveSmoothing;
-        ImGui.SetNextItemWidth(160);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
         if (ImGui.SliderFloat("Smoothing", ref smooth, 0f, 0.8f, "%.2f")) { Cfg.LiveSmoothing = smooth; changed = true; }
         Tip("Less jitter, but a little more delay behind the video.");
         ImGui.SameLine();
@@ -184,7 +184,7 @@ public sealed class LiveTab : IDisposable
     private void DrawNlfSetup(ref bool changed)
     {
         var distro = Cfg.NlfDistro;
-        ImGui.SetNextItemWidth(160);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
         if (ImGui.InputTextWithHint("WSL distro##limber_nlf_distro", "default", ref distro, 64))
         {
             Cfg.NlfDistro = distro;

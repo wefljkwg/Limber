@@ -80,7 +80,7 @@ public sealed class DynamicBonesTab
         changed |= Slider("Inertia", () => s.Inertia, v => s.Inertia = v, "How much the body's speeding up and turning swings it (0%: moves with the body).");
         changed |= Slider("Stiffness", () => s.Stiffness, v => s.Stiffness = v, "How much it resists bending at each joint: higher keeps its shape and swings as one piece from the base (no warping when it's heavy or soft); lower lets it curl and fold.");
         int substeps = s.Substeps;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderInt("Steps a frame###dyn_substeps", ref substeps, 1, 8))
         {
             s.Substeps = substeps;
@@ -157,7 +157,7 @@ public sealed class DynamicBonesTab
     private static bool Slider(string label, Func<float> get, Action<float> set, string tip, float max = 1f)
     {
         float v = get() * 100f;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         // (a label like "Weight##bone" shows "Weight" and keeps each bone's slider apart)
         string shown = label.Split("##")[0];
         bool changed = ImGui.SliderFloat($"{shown}###dyn_{label}", ref v, 0f, max * 100f, "%.0f%%");

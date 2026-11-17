@@ -64,6 +64,7 @@ public sealed partial class LimberTab
         if(Freeze == null)
             return;
         var actor = _selection.Actor;
+        Fit.Next(Fit.Check("Freeze motion"));
         using(ImRaii.Disabled(!actor.IsSet))
         {
             bool frozen = actor.IsSet && Freeze.IsFrozen(actor.Address);
@@ -77,7 +78,7 @@ public sealed partial class LimberTab
         }
         Tooltip("Holds the chosen character exactly as they are now: animation, face, hair and clothes stop moving.\n" +
                 "Posing, body shape and the soft bodies still work on top. Untick to let the animation play again.");
-        ImGui.SameLine();
+        Fit.Next(Fit.Button("Freeze all actors"));
         if(ImGui.Button("Freeze all actors###limber_freeze_every"))
         {
             // In GPose: every GPose actor (you and the ones added); outside it: everyone Limber can pose that's drawn.
@@ -91,9 +92,9 @@ public sealed partial class LimberTab
         int others = Freeze.Count - (actor.IsSet && Freeze.IsFrozen(actor.Address) ? 1 : 0);
         if(others > 0)
         {
-            ImGui.SameLine();
+            Fit.Next(Fit.Text($"(+{others} more)"));
             ImGui.TextDisabled($"(+{others} more)");
-            ImGui.SameLine();
+            Fit.Next(Fit.Button("Resume all"));
             if(ImGui.SmallButton("Resume all###limber_freeze_all"))
                 Freeze.ResumeAll();
             Tooltip("Lets every frozen character move again.");
@@ -199,7 +200,7 @@ public sealed partial class LimberTab
             var others = _selection.ListCharacters().Where(c => c.Address != actor.Address).ToList();
             int current = others.FindIndex(c => c.ObjectIndex == _posePartner.ObjectIndex && c.Name == _posePartner.Name);
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             if(ImGui.BeginCombo("Partner###limber_pose_partner", current >= 0 ? others[current].Label : "(choose)"))
             {
                 for(int i = 0; i < others.Count; i++)
@@ -253,7 +254,7 @@ public sealed partial class LimberTab
         SeparatorText("Pose presets");
         using(ImRaii.Disabled(!actor.IsSet || Freeze == null))
         {
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             ImGui.InputTextWithHint("###limber_pose_preset_name", "Preset name", ref _posePresetName, 48);
             ImGui.SameLine();
             if(ImGui.Button("Save pose###limber_pose_preset_save") && Freeze != null && _posePresetName.Trim().Length > 0)
@@ -271,7 +272,7 @@ public sealed partial class LimberTab
             }
             Tooltip(poses.ContainsKey(_posePresetName.Trim()) ? "Saves over the pose with this name." : "Keeps the chosen character's pose (body, face and hair) in Limber under this name.");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             using var combo = ImRaii.Combo("###limber_pose_preset_load", poses.Count == 0 ? "No poses yet" : "Load a pose...");
             if(combo.Success)
             {
@@ -763,7 +764,7 @@ public sealed partial class LimberTab
             if(presets.Count > 0)
             {
                 ImGui.SameLine();
-                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
                 using var combo = ImRaii.Combo("###lmb_spawn_saved", "From a saved look...");
                 if(combo.Success)
                     for(int i = 0; i < presets.Count; i++)
@@ -930,7 +931,7 @@ public sealed partial class LimberTab
             if(_scaleSameAxes)
             {
                 float u = (s.X + s.Y + s.Z) / 3f;
-                ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
                 if(ImGui.DragFloat("Size###lmb_bs_size", ref u, 0.005f, BoneScales.Min, BoneScales.Max, "%.3f", ImGuiSliderFlags.AlwaysClamp))
                 {
                     e.Scale = new Vector3(u);
@@ -939,7 +940,7 @@ public sealed partial class LimberTab
             }
             else
             {
-                ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
                 if(ImGui.DragFloat3("X / Y / Z###lmb_bs_xyz", ref s, 0.005f, BoneScales.Min, BoneScales.Max, "%.3f", ImGuiSliderFlags.AlwaysClamp))
                 {
                     e.Scale = s;
@@ -1043,7 +1044,7 @@ public sealed partial class LimberTab
             ImGui.TextDisabled("This character's bones aren't available right now (Limber needs to be running here).");
             return;
         }
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint("###lmb_bs_search", "Search (hand, thigh, tail...)", ref _scaleSearch, 64);
         ImGui.SameLine();
         ImGui.Checkbox("Scaled only###lmb_bs_only", ref _scaleOnlyChanged);

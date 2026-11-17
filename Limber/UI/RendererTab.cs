@@ -347,7 +347,7 @@ public sealed class RendererTab
     {
         var mark = Limber.BodyRig.SoftBoneMarks.MarkOf(bone);
         int current = Math.Max(0, Array.IndexOf(SoftMarkKeys, mark));
-        ImGui.SetNextItemWidth(170 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(170f * ImGuiHelpers.GlobalScale));
         if(ImGui.Combo("Body physics part###renderer_soft_mark", ref current, SoftMarkNames, SoftMarkNames.Length))
         {
             Limber.BodyRig.SoftBoneMarks.Set(bone, SoftMarkKeys[current]);

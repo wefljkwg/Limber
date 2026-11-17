@@ -409,7 +409,7 @@ public sealed unsafe class HousingPropsTab
                         _attachBone[prop.Id] = bone = b;
         }
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
         string typed = bone;
         if(ImGui.InputText("###attach_bone_name", ref typed, 64))
             _attachBone[prop.Id] = bone = typed.Trim();

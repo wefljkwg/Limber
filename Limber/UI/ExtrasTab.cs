@@ -49,18 +49,18 @@ public sealed class ExtrasTab
 
         // How lively it is.
         float bounce = RagdollService.Bounce, slide = RagdollService.Slide;
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Bounce###extras_ragdoll_bounce", ref bounce, 0f, 0.95f, "%.2f"))
             RagdollService.Bounce = bounce;
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("How much a part bounces back off the floor.");
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Slide###extras_ragdoll_slide", ref slide, 0f, 0.995f, "%.3f"))
             RagdollService.Slide = slide;
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("How far they slide along the floor (high: like ice).");
         int ragdollSteps = RagdollService.Substeps;
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderInt("Steps a frame###extras_ragdoll_steps", ref ragdollSteps, 1, 8))
             RagdollService.Substeps = ragdollSteps;
         if(ImGui.IsItemHovered())
@@ -103,14 +103,14 @@ public sealed class ExtrasTab
         if(!_config.LobbyWalk)
             return;
         float run = _config.LobbyRunSpeed, slow = _config.LobbyWalkSpeed;
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Run speed###extras_lobby_run", ref run, 1f, 20f, "%.1f yalms/s"))
         {
             _config.LobbyRunSpeed = run;
             _config.Save();
         }
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Walk speed###extras_lobby_walkspeed", ref slow, 0.5f, 10f, "%.1f yalms/s"))
         {
             _config.LobbyWalkSpeed = slow;
@@ -146,7 +146,7 @@ public sealed class ExtrasTab
                 ImGui.SetTooltip("Adds an actor that looks like the character shown, beside them.");
             ImGui.SameLine();
             var looks = _config.AppearancePresets ?? new();
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo("###extras_lobby_look", "Add one wearing a saved look..."))
             {
                 if(combo.Success)
@@ -159,7 +159,7 @@ public sealed class ExtrasTab
             ImGui.TextDisabled("(on the character select screen)");
         // Who walks: the character shown or one of the actors.
         string whoLabel = LobbyWalk.WalkerNumber < 0 ? "The character shown" : $"Lobby Actor {LobbyWalk.WalkerNumber}";
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Who walks###extras_lobby_who", whoLabel))
         {
             if(combo.Success)
@@ -223,11 +223,11 @@ public sealed class ExtrasTab
             {
                 ImGui.SameLine();
                 string trigger = s.Trigger;
-                ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
                 if(ImGui.InputText("Trigger word###ds_trigger", ref trigger, 64)) { s.Trigger = trigger; changed = true; }
             }
             string folder = s.Folder;
-            ImGui.SetNextItemWidth(360 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(360f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputText("Folder###ds_folder", ref folder, 260)) { s.Folder = folder; changed = true; }
             if(ImGui.IsItemHovered())
                 ImGui.SetTooltip("Where the pictures go (a new folder inside it each time). Empty: Pictures\\Limber dataset.");
@@ -334,7 +334,7 @@ public sealed class ExtrasTab
 
         // (applied when let go: the backdrop is made again for it)
         float glow = _dragBrightness ?? s.Glow;
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Glow###extras_backdrop_bright", ref glow, 0f, 3f, "%.2f"))
             _dragBrightness = glow;
         if(ImGui.IsItemDeactivated() && _dragBrightness is { } done)
@@ -348,7 +348,7 @@ public sealed class ExtrasTab
                 + "keep it around 0.5, and turn Glare off in the game's graphics settings. Turn it up if the colour looks dull.");
 
         float radius = s.Radius;
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Size###extras_backdrop_radius", ref radius, 3f, 60f, "%.0f m"))
         {
             s.Radius = radius;
@@ -358,7 +358,7 @@ public sealed class ExtrasTab
             ImGui.SetTooltip("How far it is from them. The camera has to stay inside it (zoomed out past it, you see the world again).");
 
         float lift = s.Lift;
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Lift into the sky###extras_backdrop_lift", ref lift, 0f, 150f, "%.0f m"))
         {
             s.Lift = lift;
@@ -380,7 +380,7 @@ public sealed class ExtrasTab
         {
             ImGui.SameLine();
             float height = s.FloorHeight * 100f;
-            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Floor height###extras_backdrop_floor_h", ref height, -20f, 30f, "%.0f cm"))
             {
                 s.FloorHeight = height / 100f;
@@ -448,7 +448,7 @@ public sealed class ExtrasTab
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("Parts also stop at walls and the sides of furniture as they move (one more check per moving part).");
         int casts = w.MaxCastsPerFrame;
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderInt("Checks per frame###extras_ragdoll_casts", ref casts, 8, 200))
         {
             w.MaxCastsPerFrame = casts;
@@ -472,7 +472,7 @@ public sealed class ExtrasTab
                 _filterMaskText = w.FilterMask.ToString("X");
             if(_filterValueText.Length == 0)
                 _filterValueText = w.FilterValue.ToString("X");
-            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputText("Mask (hex)###extras_ragdoll_mask", ref _filterMaskText, 18)
                 && ulong.TryParse(_filterMaskText, System.Globalization.NumberStyles.HexNumber, null, out var mask))
             {
@@ -480,7 +480,7 @@ public sealed class ExtrasTab
                 WorldCollision.ClearCache();
                 _config.Save();
             }
-            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputText("Value (hex)###extras_ragdoll_value", ref _filterValueText, 18)
                 && ulong.TryParse(_filterValueText, System.Globalization.NumberStyles.HexNumber, null, out var value))
             {

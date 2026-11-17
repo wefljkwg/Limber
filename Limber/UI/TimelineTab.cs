@@ -135,7 +135,7 @@ public sealed class TimelineTab
             return;
         }
         int current = Math.Clamp(_config.TimelineIndex, 0, all.Count - 1);
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("###tl_clip", all[current].Name))
         {
             if(combo.Success)
@@ -212,7 +212,7 @@ public sealed class TimelineTab
 
         if(ImGui.BeginPopup("###tl_rename_popup"))
         {
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputText("Name###tl_rename_text", ref _rename, 64, ImGuiInputTextFlags.EnterReturnsTrue) && _rename.Trim().Length > 0)
             {
                 all[current].Name = _rename.Trim();
@@ -261,7 +261,7 @@ public sealed class TimelineTab
 
         ImGui.SameLine();
         float t = _timeline.Time;
-        ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(90f * ImGuiHelpers.GlobalScale));
         if(ImGui.DragFloat("###tl_time", ref t, 0.01f, 0f, clip.Length, "%.2f s"))
             _timeline.Seek(t);
         Tooltip("The playhead (drag, or double-click to type).");
@@ -269,7 +269,7 @@ public sealed class TimelineTab
         ImGui.TextUnformatted("/");
         ImGui.SameLine();
         float length = clip.Length;
-        ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(90f * ImGuiHelpers.GlobalScale));
         if(ImGui.DragFloat("###tl_length", ref length, 0.05f, 0.1f, 600f, "%.2f s"))
         {
             clip.Length = Math.Clamp(length, 0.1f, 600f);
@@ -285,7 +285,7 @@ public sealed class TimelineTab
         }
         ImGui.SameLine();
         float speed = clip.Speed;
-        ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Speed###tl_speed", ref speed, -3f, 3f, "%.2fx"))
         {
             clip.Speed = speed;
@@ -343,7 +343,7 @@ public sealed class TimelineTab
         Tooltip("While paused: whatever you change on the other pages (on a track that's here) is keyed at the playhead by itself.");
         ImGui.SameLine();
         int snap = Math.Max(0, Array.FindIndex(Snaps, s => MathF.Abs(s.Step - _config.TimelineSnap) < 1e-5f));
-        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(80f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Snap###tl_snap", Snaps[snap].Name))
         {
             if(combo.Success)
@@ -570,7 +570,7 @@ public sealed class TimelineTab
     private void BoneByName(TimelineClip clip, string name, string kind)
     {
         ImGui.Separator();
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputText($"Bone name###tl_bone_{kind}", ref _boneName, 64, ImGuiInputTextFlags.EnterReturnsTrue) && _boneName.Trim().Length > 0)
         {
             Add(clip, name, kind, _boneName.Trim());
@@ -607,7 +607,7 @@ public sealed class TimelineTab
         ImGui.TextColored(Accent, _picked.Count == 1 ? $"Key: {TimelineService.Label(track)}" : $"{_picked.Count} keys");
         ImGui.SameLine();
         float time = key.Time;
-        ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(90f * ImGuiHelpers.GlobalScale));
         if(_picked.Count == 1 && ImGui.DragFloat("###tl_key_time", ref time, 0.01f, 0f, clip.Length, "%.2f s"))
         {
             key.Time = Math.Clamp(time, 0f, clip.Length);
@@ -619,7 +619,7 @@ public sealed class TimelineTab
             Checkpoint();
         ImGui.SameLine();
         string ease = Array.Find(Eases, x => x.Ease == key.Ease).Name ?? key.Ease.ToString();
-        ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Curve###tl_key_ease", ease))
         {
             if(combo.Success)
@@ -691,7 +691,7 @@ public sealed class TimelineTab
         ushort id = (ushort)Math.Clamp((int)MathF.Round(key.Value[0]), 0, ushort.MaxValue);
         ImGui.TextUnformatted("Plays: " + AnimationName(id));
         float speed = key.Value[1];
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Speed###tl_anim_speed", ref speed, 0f, 3f, "%.2fx"))
         {
             key.Value[1] = speed;

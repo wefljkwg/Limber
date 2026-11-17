@@ -33,7 +33,7 @@ public sealed class KoiImportTab
             + "with their main textures and colours. They go into a mod for your mod manager, \"" + KoiProps.ModName + "\", and you place them from Koikatsu > Props "
             + "(move, turn, size, attach to a bone, like housing items).");
         string folder = _config.KoikatsuFolder ?? "";
-        ImGui.SetNextItemWidth(-120 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(120f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputTextWithHint("###koi_folder", "Koikatsu's folder (the one with Koikatu.exe)", ref folder, 400))
         {
             _config.KoikatsuFolder = folder;
@@ -61,7 +61,7 @@ public sealed class KoiImportTab
 
         // Filter.
         var packs = items.Select(i => i.Pack).Distinct().OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Mod###koi_pack", _pack.Length == 0 ? $"(all {packs.Count})" : _pack))
         {
             if(combo.Success)
@@ -111,7 +111,7 @@ public sealed class KoiImportTab
         }
 
         int size = _config.KoiPropsMaxTexture;
-        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Biggest texture###koi_tex", $"{size}"))
         {
             if(combo.Success)

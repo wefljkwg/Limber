@@ -104,7 +104,7 @@ public sealed class BustShapeTab
 
     private static bool Slider(string label, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###bust_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)

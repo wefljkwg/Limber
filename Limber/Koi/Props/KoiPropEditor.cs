@@ -68,7 +68,7 @@ internal static class KoiPropEditor
             bool apply = false;
             void Slider(string label, ref float value, float min, float max, string tip)
             {
-                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
                 ImGui.SliderFloat(label, ref value, min, max, "%.2f");
                 if(ImGui.IsItemDeactivatedAfterEdit())
                     apply = true;
@@ -156,7 +156,7 @@ internal static class KoiPropEditor
                     using var cidPush = ImRaii.PushId((int)cid);
                     var values = inst.Constants.TryGetValue(cid, out var set) ? (float[])set.Clone() : (float[])defaults.Clone();
                     bool changed = false;
-                    ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                    ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
                     string label = $"{MtrlBuilder.NameOf(cid)}###v";
                     switch(values.Length)
                     {
@@ -222,7 +222,7 @@ internal static class KoiPropEditor
             foreach(var name in shapes)
             {
                 float v = inst.Shapes.GetValueOrDefault(name);
-                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
                 if(ImGui.SliderFloat($"{name}###koi_shape_{name}", ref v, 0f, 100f, "%.0f"))
                 {
                     inst.Shapes[name] = v;
@@ -247,7 +247,7 @@ internal static class KoiPropEditor
                 inst.Settled = false;
                 inst.Dirty = true;
             }
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             float k = inst.DynamicsStrength;
             if(ImGui.SliderFloat("Weight###koi_dyn_weight", ref k, 0f, 2f, "%.2f"))
             {
@@ -298,7 +298,7 @@ internal static class KoiPropEditor
                 if(ImGui.SmallButton("Let go###koi_node_none"))
                     KoiPropNodes.Selected = -1;
                 var move = inst.Move[sel];
-                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
                 if(ImGui.DragFloat3("Move###koi_node_move", ref move, 0.001f, -10f, 10f, "%.3f"))
                 {
                     inst.Move[sel] = move;
@@ -306,7 +306,7 @@ internal static class KoiPropEditor
                     inst.Settled = false;
                 }
                 var turnSel = inst.Turn[sel];
-                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
                 if(ImGui.DragFloat3("Turn###koi_node_turn", ref turnSel, 0.5f, -180f, 180f, "%.0f°"))
                 {
                     inst.Turn[sel] = turnSel;
@@ -314,7 +314,7 @@ internal static class KoiPropEditor
                     inst.Settled = false;
                 }
                 var size = inst.Size[sel];
-                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
                 if(ImGui.DragFloat3("Size###koi_node_size", ref size, 0.005f, 0.01f, 20f, "%.2f"))
                 {
                     inst.Size[sel] = size;
@@ -323,7 +323,7 @@ internal static class KoiPropEditor
                 }
                 ImGui.SameLine();
                 float even = (size.X + size.Y + size.Z) / 3f;
-                ImGui.SetNextItemWidth(70 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(70f * ImGuiHelpers.GlobalScale));
                 if(ImGui.DragFloat("###koi_node_size_all", ref even, 0.005f, 0.01f, 20f, "%.2f"))
                 {
                     inst.Size[sel] = new Vector3(even);
@@ -336,7 +336,7 @@ internal static class KoiPropEditor
             else
                 ImGui.TextDisabled("Click a dot on the prop (or a bone below) to choose it.");
 
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             ImGui.InputTextWithHint("###koi_bone_search", "Search bones", ref _boneSearch, 64);
             ImGui.SameLine();
             if(ImGui.SmallButton("Reset all###koi_bones_reset"))

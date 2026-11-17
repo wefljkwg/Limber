@@ -51,7 +51,7 @@ public sealed class OralTab
         if(current < 0)
             current = partners.FindIndex(p => p.Name == s.Receiver);
         string preview = current >= 0 ? partners[current].Label : partners.Count == 0 ? "(nobody else here)" : "(choose)";
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         if(ImGui.BeginCombo("Partner###oral_partner", preview))
         {
             for(int i = 0; i < partners.Count; i++)
@@ -190,7 +190,7 @@ public sealed class OralTab
             {
                 string[] teethNames = ["Tucked behind the lips", "Hidden", "Left as they are"];
                 int teethMode = Math.Clamp((int)s.Teeth, 0, teethNames.Length - 1);
-                ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
                 if(ImGui.Combo("Teeth###oral_teeth_mode", ref teethMode, teethNames, teethNames.Length))
                 {
                     s.Teeth = (OralTeeth)teethMode;
@@ -232,7 +232,7 @@ public sealed class OralTab
                     ImGui.TextDisabled(_oral.ShaftInfo);
                 string[] fits = ["Not refitted", "Refit A", "Refit B", "Refit C", "Refit D"];
                 int fit = Math.Clamp(s.FitVariant + 1, 0, fits.Length - 1);
-                ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
                 if(ImGui.Combo("Refit (testing)###oral_fit", ref fit, fits, fits.Length))
                 {
                     s.FitVariant = fit - 1;
@@ -332,7 +332,7 @@ public sealed class OralTab
 
         string[] styles = ["Classic: the head does all the work", "Path: the shaft bends into the mouth"];
         int style = Math.Clamp((int)s.Style, 0, styles.Length - 1);
-        ImGui.SetNextItemWidth(300 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(300f * ImGuiHelpers.GlobalScale));
         if(ImGui.Combo("Style###oral_style", ref style, styles, styles.Length))
         {
             s.Style = (OralStyle)style;
@@ -465,7 +465,7 @@ public sealed class OralTab
     private static bool Slider(string label, string unit, Func<float> get, Action<float> set, float min, float max, string format, string tip)
     {
         float v = get();
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         bool changed = ImGui.SliderFloat($"{label}{(unit.Length > 0 ? $" ({unit})" : "")}###oral_{label}", ref v, min, max, format);
         if(changed)
             set(Math.Clamp(v, min, max));

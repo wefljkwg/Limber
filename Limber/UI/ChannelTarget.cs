@@ -25,7 +25,7 @@ internal static class ChannelTarget
 
         ImGui.TextUnformatted(label);
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(110);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f));
         if (ImGui.BeginCombo($"##{id}_channel", $"Channel {channel + 1}"))
         {
             for (int i = 0; i < Protocol.Wire.MaxChannels; i++)
@@ -58,7 +58,7 @@ internal static class ChannelTarget
         if (link != null && koi.LinkViews.TryGetValue(link.Id, out var view) && !string.IsNullOrEmpty(view.ActorName))
             current += $"  ({view.ActorName})";
 
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f));
         if (ImGui.BeginCombo($"##{id}_actor", current))
         {
             if (ImGui.Selectable("Current GPose target", link?.TargetObjectIndex == 0))

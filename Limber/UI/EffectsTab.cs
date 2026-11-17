@@ -80,7 +80,7 @@ public sealed unsafe class EffectsTab
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("Effects you place from now on play over and over (most effects play once and end).");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
         if(ImGui.DragFloat("###fx_loop_every", ref _loopEvery, 0.05f, 0.2f, 600f, "every %.1f s"))
             _loopEvery = Math.Clamp(_loopEvery, 0.2f, 600f);
         if(ImGui.IsItemHovered())
@@ -569,7 +569,7 @@ public sealed unsafe class EffectsTab
                         _attachBone[e.Id] = bone = b;
         }
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
         string typed = bone;
         if(ImGui.InputText("###attach_bone_name", ref typed, 64))
             _attachBone[e.Id] = bone = typed.Trim();

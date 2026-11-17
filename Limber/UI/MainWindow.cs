@@ -103,6 +103,10 @@ public sealed class MainWindow : Window
         new("globalpresets", "", "Global presets", "Everything a character has, saved as one preset: put it on anyone, edit it, and have it go on by itself when a player or actor comes into the scene.", () => GlobalPresetsTab?.Draw(), () => GlobalPresetsTab != null),
         new("extras", "", "Extras", "One-press fun: Ragdoll mode (the chosen character goes limp and falls where they stand), extra minions that follow you, hidden mounts, ready-made Limber Poses.", () => { ExtrasTab?.Draw(); DrawLimberPosesInExtras(); }, () => ExtrasTab != null),
 
+        new("settings", "Settings", "Posing settings", "How the dots look and behave; resetting things.", () => _limberTab.DrawPosingSettingsPage()),
+        new("hotkeys", "Settings", "Hotkeys", "Undo / redo keys.", () => _limberTab.DrawHotkeysTab()),
+        new("advanced", "Settings", "Advanced", "Running outside GPose, unfinished pages.", DrawMainAdvanced),
+
         new("actors", "Posing", "Actors", "Add GPose actors (copies of a character) and remove them again.", () => _limberTab.DrawActorsPage()),
         new("pose", "Posing", "IK Posing", "Grab the dots on the character and drag them to pose: the limbs bend to reach. Pin bones so they stay put.", () => _limberTab.DrawPosePage()),
         new("fk", "Posing", "FK Posing", "Turn each bone directly with rings or numbers. Works together with IK posing.", () => FkPosingTab?.Draw(), () => FkPosingTab != null),
@@ -145,10 +149,6 @@ public sealed class MainWindow : Window
         new("koiimport", "Koikatsu", "Import props", "Koikatsu's studio items converted into game models in a mod, to place in the scene.", () => KoiImportTab?.Draw(), () => KoiImportTab != null),
         new("koiprops", "Koikatsu", "Props", "Place the Koikatsu props you converted: move, turn, size, or attach them to a bone.", () => KoiPropsTab?.Draw(), () => KoiPropsTab != null),
 
-        new("settings", "Settings", "Posing settings", "How the dots look and behave; resetting things.", () => _limberTab.DrawPosingSettingsPage()),
-        new("hotkeys", "Settings", "Hotkeys", "Undo / redo keys.", () => _limberTab.DrawHotkeysTab()),
-        new("advanced", "Settings", "Advanced", "Running outside GPose, unfinished pages.", DrawMainAdvanced),
-
         new("video", "Experimental", "Video", "Motion capture from a video file.", () => _videoTab.Draw(), () => Cfg.ShowVideoTab),
         new("enginelayer", "Experimental", "Engine animation layer", "Untested: a small Limber motion (the hips) played through the game's own animation system, mixed with the emote playing, with a readout of the character's animation layers.", () => EngineLayerTab?.Draw(), () => EngineLayerTab != null && Cfg.ShowEngineLayerTab),
         new("vlc", "Experimental", "VLC Live", "Your character follows the video VLC is playing, live (built-in tracker, or NLF for accurate 3D).", () => _liveTab.Draw(), () => Cfg.ShowVlcTab),
@@ -173,7 +173,16 @@ public sealed class MainWindow : Window
         if (PresetParts(page.Id, Cfg) is { } parts)
             PresetBar.Draw(Cfg.Ik, page.Id, parts, () => PresetParts(page.Id, new Configuration())?.Invoke());
         ImGui.Spacing();
-        page.Draw();
+        // (all text wraps at the window's edge, however narrow it is)
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            page.Draw();
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
     }
 
     // Limber Poses (on the Extras page since 2026-11-12).
@@ -533,21 +542,22 @@ public sealed class MainWindow : Window
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Turns all of Limber on or off (/limber1 on|off). Your setup is kept.");
-        ImGui.SameLine();
+        // (each control goes on this line if it fits, else onto the next: the bar wraps in a narrow window)
         _limberTab.DrawShowHandles();
-        ImGui.SameLine();
         _limberTab.DrawFreezeToggle();
-        ImGui.SameLine();
         _limberTab.DrawUndoRedo();
+        ImGui.PushTextWrapPos(0f);
         if (!Cfg.PluginEnabled)
             ImGui.TextColored(Warn, "Limber is off: nothing is posed, simulated or linked.");
         else if (!Plugin.ClientState.IsGPosing && !(Cfg.AllowOutsideGPose && _limberTab.WorkOutsideGPose))
             ImGui.TextColored(Warn, "Enter GPose to use Limber (or turn on \"Also run outside GPose\" in Advanced).");
+        ImGui.PopTextWrapPos();
         _limberTab.DrawActorPicker();
         // (the Actor list switch next to Reset to defaults, under the character drop-down)
         _limberTab.DrawResetCharacter(() =>
         {
             bool actorList = Cfg.Ik.ShowActorList;
+            Fit.Next(Fit.Check("Actor list"));
             if (ImGui.Checkbox("Actor list###limber_actor_list_toggle", ref actorList))
             {
                 Cfg.Ik.ShowActorList = actorList;
@@ -765,7 +775,7 @@ public sealed class MainWindow : Window
             ImGui.Text($"Link {i + 1}");
             ImGui.SameLine();
 
-            ImGui.SetNextItemWidth(170);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(170f));
             if (ImGui.BeginCombo("##ch", ChannelLabel(link.Channel, _plugin.Receiver, Cfg.TimeoutSeconds)))
             {
                 for (int ch = 0; ch < Protocol.Wire.MaxChannels; ch++)
@@ -782,7 +792,7 @@ public sealed class MainWindow : Window
             ImGui.Text("->");
             ImGui.SameLine();
 
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             var current = link.TargetObjectIndex switch
             {
                 0 => "Current GPose target",
@@ -852,7 +862,7 @@ public sealed class MainWindow : Window
     // Koikatsu Link > Advanced: the port, the release time and in-between frames.
     private void DrawLinkAdvanced()
     {
-        ImGui.SetNextItemWidth(120);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f));
         ImGui.InputInt("UDP port", ref _portEdit);
         ImGui.SameLine();
         if (ImGui.Button("Apply port"))
@@ -864,7 +874,7 @@ public sealed class MainWindow : Window
         }
 
         var timeout = Cfg.TimeoutSeconds;
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
         if (ImGui.SliderFloat("Release after (s)", ref timeout, 0.2f, 5f, "%.1f"))
         {
             Cfg.TimeoutSeconds = timeout;
@@ -943,7 +953,7 @@ public sealed class MainWindow : Window
         {
             ImGui.SameLine();
             var bs = Cfg.BreastStrength;
-            ImGui.SetNextItemWidth(140);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f));
             if (ImGui.SliderFloat("Bounce strength", ref bs, 0f, 2f, "%.2f")) { Cfg.BreastStrength = bs; changed = true; }
         }
 
@@ -953,7 +963,7 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         var smoothing = Cfg.Smoothing;
-        ImGui.SetNextItemWidth(220);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f));
         if (ImGui.SliderFloat("Smoothing", ref smoothing, 0f, 0.9f, "%.2f"))
         {
             Cfg.Smoothing = smoothing;
@@ -961,7 +971,7 @@ public sealed class MainWindow : Window
         }
 
         var pitch = Cfg.HeadPitchOffset;
-        ImGui.SetNextItemWidth(220);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f));
         if (ImGui.SliderFloat("Head pitch offset", ref pitch, -30f, 30f, "%.1f°"))
         {
             Cfg.HeadPitchOffset = pitch;
@@ -997,7 +1007,7 @@ public sealed class MainWindow : Window
 
         // Expression mode
         var mode = (int)Cfg.ExpressionMode;
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f));
         if (ImGui.Combo("Facial expressions", ref mode, ModeNames, ModeNames.Length))
         {
             Cfg.ExpressionMode = (ExpressionMode)mode;
@@ -1007,7 +1017,7 @@ public sealed class MainWindow : Window
         if (Cfg.ExpressionMode == ExpressionMode.Automatic)
         {
             var strength = Cfg.ExpressionStrength;
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.SliderFloat("Expression strength", ref strength, 0f, 2f, "%.2f")) { Cfg.ExpressionStrength = strength; changed = true; }
             changed |= Toggle("Eyelids / blinking", () => Cfg.ExpressionEyelids, v => Cfg.ExpressionEyelids = v);
             ImGui.SameLine();
@@ -1020,10 +1030,10 @@ public sealed class MainWindow : Window
             if (Cfg.ExpressionEyelids)
             {
                 var lid = Cfg.EyelidStrength;
-                ImGui.SetNextItemWidth(200);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
                 if (ImGui.SliderFloat("Eyelid strength", ref lid, 0f, 2f, "%.2f")) { Cfg.EyelidStrength = lid; changed = true; }
                 var gap = Cfg.EyelidClearance;
-                ImGui.SetNextItemWidth(200);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
                 if (ImGui.SliderFloat("Eyelid clearance", ref gap, 0f, 0.3f, "%.2f")) { Cfg.EyelidClearance = gap; changed = true; }
                 ImGui.SameLine();
                 ImGui.TextColored(Dim, "(raise if lids still touch the eyes)");
@@ -1033,14 +1043,14 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         changed |= Toggle("Eyes follow Koikatsu gaze", () => Cfg.DriveGaze, v => Cfg.DriveGaze = v);
         var gaze = Cfg.GazeMaxAngle;
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
         if (ImGui.SliderFloat("Max eye angle", ref gaze, 5f, 45f, "%.0f°")) { Cfg.GazeMaxAngle = gaze; changed = true; }
 
         if (Cfg.ExpressionMode != ExpressionMode.Off)
         {
             changed |= Toggle("Open the jaw with the mouth", () => Cfg.DriveJaw, v => Cfg.DriveJaw = v);
             var jaw = Cfg.JawMaxAngle;
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.SliderFloat("Max jaw angle", ref jaw, 0f, 35f, "%.0f°")) { Cfg.JawMaxAngle = jaw; changed = true; }
         }
 
@@ -1048,7 +1058,7 @@ public sealed class MainWindow : Window
         {
             changed |= Toggle("Invert Koikatsu eye openness", () => Cfg.InvertEyeOpen, v => Cfg.InvertEyeOpen = v);
             var speed = Cfg.ExpressionBlendSpeed;
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.SliderFloat("Expression blend speed", ref speed, 1f, 30f, "%.0f")) { Cfg.ExpressionBlendSpeed = speed; changed = true; }
         }
 
@@ -1061,7 +1071,7 @@ public sealed class MainWindow : Window
         if (link == null)
             return;
         _faceLink = link.Id;
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f));
         if (ImGui.BeginCombo("Face of", DescribeLink(link)))
         {
             foreach (var l in Cfg.Links)
@@ -1162,7 +1172,7 @@ public sealed class MainWindow : Window
         if (ImGui.Button($"Capture as '{FaceDriver.MouthOpenPreset}'"))
             runtime.PendingCapture = FaceDriver.MouthOpenPreset;
 
-        ImGui.SetNextItemWidth(180);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f));
         ImGui.InputText("##newpreset", ref _newPresetName, 32);
         ImGui.SameLine();
         if (ImGui.Button("Capture as new preset") && !string.IsNullOrWhiteSpace(_newPresetName))
@@ -1236,7 +1246,7 @@ public sealed class MainWindow : Window
                 map.TryGetValue(p, out assigned);
             ImGui.Text($"Current Koikatsu pattern #{p} ->");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(160);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
             if (ImGui.BeginCombo($"##assign_{title}", string.IsNullOrEmpty(assigned) ? "(none)" : assigned))
             {
                 if (ImGui.Selectable("(none)", string.IsNullOrEmpty(assigned)))

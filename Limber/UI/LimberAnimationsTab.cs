@@ -192,7 +192,7 @@ public sealed class LimberAnimationsTab
 
     private static bool SizeSlider(string label, float value, Action<float> set, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###lanim_h_{label}", ref value, SizeChangeService.MinSize, SizeChangeService.MaxSize,
             value < 0.1f ? "%.4fx" : "%.2fx", ImGuiSliderFlags.Logarithmic);
         Tooltip(tip + "\nCtrl+click to type a value.");
@@ -254,7 +254,7 @@ public sealed class LimberAnimationsTab
             "Seconds from the start size to the end size.");
 
         string pattern = Array.Find(SizePatterns, x => x.Pattern == h.Pattern).Name ?? h.Pattern.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Pattern###lanim_h_pattern", pattern))
         {
             if(combo.Success)
@@ -292,7 +292,7 @@ public sealed class LimberAnimationsTab
                 "Pulses: how far each one swells past. Spurts: how uneven they are.");
 
         string repeat = Array.Find(ExpansionRepeats, x => x.Repeat == h.Repeat).Name ?? h.Repeat.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("At the end###lanim_h_repeat", repeat))
         {
             if(combo.Success)
@@ -632,7 +632,7 @@ public sealed class LimberAnimationsTab
         }
 
         string current = Array.Find(ExpansionPatterns, x => x.Pattern == p.Pattern).Name ?? p.Pattern.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Pattern###pattern", current))
         {
             if(combo.Success)
@@ -649,7 +649,7 @@ public sealed class LimberAnimationsTab
         ImGui.TextDisabled(Array.Find(ExpansionPatterns, x => x.Pattern == p.Pattern).Tip ?? "");
 
         string repeat = Array.Find(ExpansionRepeats, x => x.Repeat == p.Repeat).Name ?? p.Repeat.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("At the end###repeat", repeat))
         {
             if(combo.Success)
@@ -692,7 +692,7 @@ public sealed class LimberAnimationsTab
     // (inside the part's PushId, so the same labels can be used for each part)
     private static bool SliderEx(string label, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###lanim_ex_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)
@@ -726,7 +726,7 @@ public sealed class LimberAnimationsTab
 
         // Types: each sets the sliders.
         string current = Array.Find(AhegaoTypes, x => x.Type == s.Type).Name ?? s.Type.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Type###lanim_ah_type", current))
         {
             if(combo.Success)
@@ -828,7 +828,7 @@ public sealed class LimberAnimationsTab
 
     private static bool SliderAh(string label, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###lanim_ah_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)
@@ -885,7 +885,7 @@ public sealed class LimberAnimationsTab
         {
             ImGui.SameLine();
             float secs = s.AutoSeconds;
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("every###lanim_tw_auto_secs", ref secs, 3f, 120f, "%.0f s"))
             {
                 s.AutoSeconds = secs;
@@ -895,7 +895,7 @@ public sealed class LimberAnimationsTab
         using(ImRaii.Disabled(s.Auto))
         {
             string current = Array.Find(TwerkStyles, x => x.Style == s.Style).Name ?? s.Style.ToString();
-            ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo("Style###lanim_tw_style", current))
             {
                 if(combo.Success)
@@ -914,7 +914,7 @@ public sealed class LimberAnimationsTab
             ImGui.TextDisabled(Array.Find(TwerkStyles, x => x.Style == s.Style).Tip ?? "");
 
         string poseName = Array.Find(TwerkPoses, x => x.Pose == s.Pose).Name ?? s.Pose.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var poseCombo = ImRaii.Combo("Position###lanim_tw_pose", poseName))
         {
             if(poseCombo.Success)
@@ -932,7 +932,7 @@ public sealed class LimberAnimationsTab
             ImGui.TextDisabled("On all fours the hands go flat on the floor.");
 
         string hands = Array.Find(TwerkHandPlaces, x => x.Hands == s.Hands).Name ?? s.Hands.ToString();
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         using(var handsCombo = ImRaii.Combo("Hands###lanim_tw_hands", hands))
         {
             if(handsCombo.Success)
@@ -1010,7 +1010,7 @@ public sealed class LimberAnimationsTab
         {
             ImGui.SameLine();
             float secs = s.AutoSeconds;
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("every###lanim_auto_secs", ref secs, 3f, 120f, "%.0f s"))
             {
                 s.AutoSeconds = secs;
@@ -1020,7 +1020,7 @@ public sealed class LimberAnimationsTab
         using(ImRaii.Disabled(s.Auto))
         {
             string current = Array.Find(Patterns, p => p.Pattern == s.Pattern).Name ?? s.Pattern.ToString();
-            ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo("Pattern###lanim_pattern", current))
             {
                 if(combo.Success)
@@ -1108,7 +1108,7 @@ public sealed class LimberAnimationsTab
         {
             ImGui.SameLine();
             float secs = s.AutoSeconds;
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("every###lanim_balls_auto_secs", ref secs, 3f, 120f, "%.0f s"))
             {
                 s.AutoSeconds = secs;
@@ -1118,7 +1118,7 @@ public sealed class LimberAnimationsTab
         using(ImRaii.Disabled(s.Auto))
         {
             string current = Array.Find(BallPatterns, p => p.Pattern == s.Pattern).Name ?? s.Pattern.ToString();
-            ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo("Pattern###lanim_balls_pattern", current))
             {
                 if(combo.Success)
@@ -1151,7 +1151,7 @@ public sealed class LimberAnimationsTab
 
     private static bool SliderBt(string label, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###lanim_balls_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)
@@ -1161,7 +1161,7 @@ public sealed class LimberAnimationsTab
 
     private static bool SliderTw(string label, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###lanim_tw_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)
@@ -1171,7 +1171,7 @@ public sealed class LimberAnimationsTab
 
     private static bool Slider(string label, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         bool edited = ImGui.SliderFloat($"{label}###lanim_{label}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(edited)

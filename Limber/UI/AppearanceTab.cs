@@ -253,7 +253,7 @@ public sealed class AppearanceTab
             ImGui.TextUnformatted("Save this look as:");
             if(ImGui.IsWindowAppearing())
                 ImGui.SetKeyboardFocusHere();
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             bool enter = ImGui.InputText("Name###app_hist_name", ref _saveName, 48, ImGuiInputTextFlags.EnterReturnsTrue);
             string name = _saveName.Trim();
             var presets = _config.AppearancePresets ??= new();
@@ -306,7 +306,7 @@ public sealed class AppearanceTab
             return;
         }
         var race = Array.Find(Appearance.Races, r => r.Race == cz[0]);
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Race###app_race", race.Name ?? $"#{cz[0]}"))
         {
             if(combo.Success)
@@ -322,7 +322,7 @@ public sealed class AppearanceTab
         race = Array.Find(Appearance.Races, r => r.Race == cz[0]);
         var clans = race.Clans ?? [];
         string clan = clans.FirstOrDefault(c => c.Tribe == cz[4]).Name ?? $"#{cz[4]}";
-        ImGui.SetNextItemWidth(170 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(170f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Clan###app_clan", clan))
         {
             if(combo.Success)
@@ -389,13 +389,13 @@ public sealed class AppearanceTab
             else if(max == 100)
             {
                 // (values on a scale: a slider)
-                ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(150f * ImGuiHelpers.GlobalScale));
                 edited = ImGui.SliderInt($"{label}###app_c{index}", ref v, 0, 100);
                 done = ImGui.IsItemDeactivatedAfterEdit();
             }
             else
             {
-                ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
                 edited = ImGui.InputInt($"{label}###app_c{index}", ref v, 1, 10);
                 done = ImGui.IsItemDeactivatedAfterEdit();
             }
@@ -428,7 +428,7 @@ public sealed class AppearanceTab
             ImGui.OpenPopup($"###app_pal{index}");
         Tooltip(palette.Length > 0 ? "Click for the colours." : "The game's colours couldn't be read: use the number.");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(80f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputInt($"{label}###app_c{index}", ref v, 1, 10))
             edited = true;
         done |= ImGui.IsItemDeactivatedAfterEdit();
@@ -483,7 +483,7 @@ public sealed class AppearanceTab
             ImGui.OpenPopup("###app_hair_pick");
         Tooltip(styles.Length > 0 ? "Click for the hairstyles." : "The hairstyles couldn't be read: use the number.");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(80f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputInt($"{label}###app_c6", ref v, 1, 10))
             edited = true;
         done |= ImGui.IsItemDeactivatedAfterEdit();
@@ -545,7 +545,7 @@ public sealed class AppearanceTab
         if(ImGui.Checkbox("Visor###app_visor", ref visor))
             Appearance.SetVisor(actor.Address, actor.ObjectIndex, visor);
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(90f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputInt("Facewear###app_glasses", ref _glasses, 1, 10, flags: ImGuiInputTextFlags.EnterReturnsTrue))
             Appearance.SetGlasses(actor.Address, actor.ObjectIndex, (ushort)Math.Clamp(_glasses, 0, ushort.MaxValue));
         Tooltip("Facewear (glasses) by its number from the game (0 = none); press Enter.");
@@ -728,7 +728,7 @@ public sealed class AppearanceTab
     private void DrawLooks(ActorRef actor, AppearanceData look)
     {
         var presets = _config.AppearancePresets ??= new();
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint("###app_preset_name", "Name for this look", ref _presetName, 48);
         ImGui.SameLine();
         if(ImGui.Button("Save this look###app_save") && _presetName.Trim().Length > 0)
@@ -791,7 +791,7 @@ public sealed class AppearanceTab
         var others = _selection.ListCharacters().Where(c => c.Address != actor.Address).ToList();
         if(others.Count > 0)
         {
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             using var combo = ImRaii.Combo("Copy from###app_from", "another character...");
             if(combo.Success)
                 foreach(var other in others)
@@ -852,7 +852,7 @@ public sealed class AppearanceTab
             // As an actor: the name it gets, and a global preset put on it.
             ImGui.Indent();
             string actorName = presets[i].ActorName ?? "";
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputTextWithHint("###app_actor_name", "Actor name", ref actorName, 48))
                 presets[i].ActorName = actorName;
             if(ImGui.IsItemDeactivatedAfterEdit())
@@ -861,7 +861,7 @@ public sealed class AppearanceTab
             ImGui.SameLine();
             var globals = _config.GlobalPresets ?? new();
             string attached = presets[i].GlobalPreset ?? "";
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             using(var gp = ImRaii.Combo("###app_actor_preset", attached.Length > 0 ? attached : "No global preset"))
             {
                 if(gp.Success)
@@ -909,7 +909,7 @@ public sealed class AppearanceTab
             var current = Plugin.PluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5")
                 .InvokeFunc(actor.ObjectIndex);
             var (valid, own, (currentId, currentName)) = current;
-            ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo("Mod collection###app_collection", valid ? currentName + (own ? "" : " (the default)") : "(none)"))
             {
                 if(combo.Success)

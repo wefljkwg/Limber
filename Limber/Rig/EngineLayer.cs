@@ -123,7 +123,8 @@ public sealed unsafe class EngineLayerService
             float fade = MathF.Max(s.FadeSeconds, 0.01f);
             _level = _level < target ? MathF.Min(target, _level + dt / fade) : MathF.Max(target, _level - dt / fade);
 
-            if(!want && (_level <= 1e-4f || _onAnimatedSkeleton == 0))
+            // (off: taken off straight away, not faded out: fading kept writing the motion while it went)
+            if(!want)
             {
                 Detach();
                 if(Problem.Length == 0)
@@ -169,6 +170,20 @@ public sealed unsafe class EngineLayerService
             if(o != null && o.Address == address)
                 return true;
         return false;
+    }
+
+    /// <summary>Stop button: off at once, and taken off the character (framework or UI thread, both the game's).</summary>
+    public void Stop()
+    {
+        _settings().Enabled = false;
+        try
+        {
+            Detach();
+        }
+        catch
+        {
+        }
+        Status = "Stopped.";
     }
 
     /// <summary>Takes the layer off (framework thread): only from a body it's still on.</summary>

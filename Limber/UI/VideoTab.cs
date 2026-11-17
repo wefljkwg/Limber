@@ -140,7 +140,7 @@ public sealed class VideoTab : IDisposable
             });
         }
 
-        ImGui.SetNextItemWidth(220);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f));
         ImGui.InputTextWithHint("Clip name##limber_video_name", "Name for the clip", ref _clipName, 60);
 
         bool changed = false;
@@ -167,19 +167,19 @@ public sealed class VideoTab : IDisposable
             "limb lengths and smoothed. Off: those limbs keep the character's own pose instead.");
 
         var fps = Cfg.VideoMaxFps;
-        ImGui.SetNextItemWidth(160);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
         if (ImGui.SliderInt("Max frames per second", ref fps, 10, 60)) { Cfg.VideoMaxFps = fps; changed = true; }
         Tip("Fewer frames track faster; playback is blended smoothly either way.");
 
         var smooth = Cfg.VideoSmoothing;
-        ImGui.SetNextItemWidth(160);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
         if (ImGui.SliderFloat("Smoothing", ref smooth, 0f, 0.9f, "%.2f")) { Cfg.VideoSmoothing = smooth; changed = true; }
         Tip("Removes jitter without adding delay. Too much makes fast moves look soft.");
 
-        ImGui.SetNextItemWidth(100);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(100f));
         ImGui.InputFloat("Start (s)##limber_video_start", ref _start, 0, 0, "%.1f");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(100f));
         ImGui.InputFloat("End (s, 0 = to the end)##limber_video_end", ref _end, 0, 0, "%.1f");
         _start = Math.Max(0, _start);
         _end = Math.Max(0, _end);
@@ -258,7 +258,7 @@ public sealed class VideoTab : IDisposable
         Tip("Faster and steadier when the camera stays put. Leave off for handheld or moving cameras.");
         ImGui.SameLine();
         var distro = Cfg.GvhmrDistro;
-        ImGui.SetNextItemWidth(140);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f));
         if (ImGui.InputTextWithHint("WSL distro##limber_gvhmr_distro", "default", ref distro, 64)) { Cfg.GvhmrDistro = distro; changed = true; }
         Tip("Only if GVHMR is set up in a WSL distro that isn't your default one (e.g. Ubuntu-22.04).");
         if (changed)
@@ -426,12 +426,12 @@ public sealed class VideoTab : IDisposable
             // Loop just a part of the clip (e.g. one clean push-up), with the seam blended.
             float duration = (float)Math.Max(clip.Duration, 0.1);
             float from = _player.LoopStart, to = _player.LoopEnd > 0 ? _player.LoopEnd : duration;
-            ImGui.SetNextItemWidth(150);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(150f));
             if (ImGui.SliderFloat("##limber_video_loop_from", ref from, 0f, duration, "loop from %.2f s"))
                 _player.LoopStart = Math.Clamp(from, 0f, Math.Max(0f, to - 0.1f));
             Tip("Only loop part of the clip (e.g. one clean repetition). Ctrl+click to type a time.");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(150);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(150f));
             if (ImGui.SliderFloat("##limber_video_loop_to", ref to, 0f, duration, "to %.2f s"))
             {
                 to = Math.Clamp(to, Math.Min(duration, _player.LoopStart + 0.1f), duration);
@@ -445,7 +445,7 @@ public sealed class VideoTab : IDisposable
                 _player.LoopEnd = 0;
             }
             var blend = Cfg.VideoLoopBlend;
-            ImGui.SetNextItemWidth(160);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
             if (ImGui.SliderFloat("Smooth the loop##limber_video_blend", ref blend, 0f, 1f, "%.2f s")) { Cfg.VideoLoopBlend = blend; Save(); }
             Tip("Over this long before the loop ends, the pose eases into the loop's first pose, so the jump back to\n" +
                 "the start doesn't show. 0 = jump straight back.");
@@ -460,7 +460,7 @@ public sealed class VideoTab : IDisposable
         }
 
         var speed = Cfg.VideoSpeed;
-        ImGui.SetNextItemWidth(160);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f));
         if (ImGui.SliderFloat("Speed", ref speed, 0.1f, 2f, "%.2fx")) { Cfg.VideoSpeed = speed; Save(); }
         ImGui.SameLine();
         var mirror = Cfg.VideoMirror;

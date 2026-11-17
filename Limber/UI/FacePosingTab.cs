@@ -125,7 +125,7 @@ public sealed class FacePosingTab
             + "Off: it goes first, and Limber Animations go on top of it.");
         ImGui.SameLine();
         var spaceNow = pose?.Space ?? FaceSpace.Face;
-        ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(150f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Directions###face_space", spaceNow switch { FaceSpace.Character => "Character", FaceSpace.Bone => "Bone", _ => "Face" }))
         {
             if(combo)
@@ -359,15 +359,15 @@ public sealed class FacePosingTab
         bool changed = false;
 
         var move = o.Move;
-        ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
         changed |= ImGui.DragFloat3("Move (mm)###face_move", ref move, 0.05f, -30f, 30f, "%.2f");
         Tooltip("Across (+ = the character's left), up, forward (out of the face).");
         var turn = o.Turn;
-        ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
         changed |= ImGui.DragFloat3("Turn (°)###face_turn", ref turn, 0.25f, -90f, 90f, "%.1f");
         Tooltip("About the face's axes: tip (nod), turn (shake), tilt.");
         float scale = o.Scale;
-        ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
         changed |= ImGui.DragFloat("Scale###face_scale", ref scale, 0.005f, 0.05f, 5f, "%.3f");
         if(changed)
         {

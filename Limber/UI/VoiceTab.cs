@@ -112,7 +112,7 @@ public sealed class VoiceTab
                     }
         }
         // By number.
-        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
         ImGui.InputInt("Voice number###voice_number", ref _number, 1, 10);
         ImGui.SameLine();
         if(ImGui.Button("Use###voice_number_use"))

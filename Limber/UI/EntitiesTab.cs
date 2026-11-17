@@ -121,7 +121,7 @@ public sealed class EntitiesTab
         }
         bool picked = false;
         var kinds = all.Select(e => e.Kind).Distinct().ToList();
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo($"Kind###{id}_kind", p.Kind.Length == 0 ? "(all)" : p.Kind))
         {
             if(combo.Success)
@@ -134,7 +134,7 @@ public sealed class EntitiesTab
             }
         }
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(110 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
         using(var sort = ImRaii.Combo($"###{id}_sort", p.ByArea ? "By area" : "By type"))
         {
             if(sort.Success)
@@ -150,7 +150,7 @@ public sealed class EntitiesTab
                 + "By area: NPCs grouped by region and area, where the game places them. (Minions and mounts stay by name; "
                 + "enemies' places aren't in the game's own data, so they stay by type.)");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint($"###{id}_search", "Search: name, model (m0123) or number", ref p.Search, 64);
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("A name (minion, mount, NPC), an area, a model's numbers (m0123, b01), or its number in the game's list.\nSeveral words: all must match.");
@@ -212,7 +212,7 @@ public sealed class EntitiesTab
     private static void DrawTyped(Picker p, string id, IReadOnlyList<Entities.Entry> all)
     {
         // (or straight by its number)
-        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputTextWithHint($"###{id}_typed", "Number", ref p.Typed, 8) && uint.TryParse(p.Typed, out var typed))
             p.Chosen = typed;
         if(ImGui.IsItemHovered())
@@ -332,7 +332,7 @@ public sealed class EntitiesTab
                 + "Outside GPose they need \"Also run outside GPose\" (Advanced).");
         var list = _config.Followers ??= new();
         float spacing = _config.FollowerSpacing;
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Spacing###ent_min_space", ref spacing, 0.4f, 4f, "%.1f m"))
             _config.FollowerSpacing = spacing;
         if(ImGui.IsItemDeactivatedAfterEdit())

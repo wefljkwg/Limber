@@ -66,7 +66,7 @@ public sealed class GlobalPresetsTab
                 }
             }
             var taking = parts.Where(p => !_skip.Contains(p)).ToList();
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             ImGui.InputTextWithHint("###gp_name", "Name for the preset", ref _name, 48);
             ImGui.SameLine();
             using(ImRaii.Disabled(_name.Trim().Length == 0 || taking.Count == 0))
@@ -92,7 +92,7 @@ public sealed class GlobalPresetsTab
             using var id = ImRaii.PushId(preset.Name);
             if(_renaming == preset.Name)
             {
-                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
                 bool done = ImGui.InputText("###gp_rename", ref _rename, 48, ImGuiInputTextFlags.EnterReturnsTrue);
                 ImGui.SameLine();
                 done |= ImGui.SmallButton("OK###gp_rename_ok");
@@ -214,7 +214,7 @@ public sealed class GlobalPresetsTab
         // Pick someone around you (players and NPCs alike).
         var around = _selection.ListCharacters().Where(c => !string.IsNullOrEmpty(c.Name)).ToList();
         var labels = ActorNames.Of(around);
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("###gp_rule_near", "Add someone around you..."))
         {
             if(combo.Success)
@@ -244,7 +244,7 @@ public sealed class GlobalPresetsTab
         Tooltip("Puts each rule's preset and look on everyone here again, as if they'd just turned up.");
         ImGui.TextDisabled("Or type a name:");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint("###gp_rule_name", chosen.Length > 0 ? chosen : "Character or actor name", ref _ruleName, 64);
         ImGui.SameLine();
         if(ImGui.Button("Add###gp_rule_add"))

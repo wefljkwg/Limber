@@ -43,7 +43,7 @@ public static class GamePhysicsSection
         void Slider(string label, Func<float> get, Action<float> set, float min, float max, string format, string tip)
         {
             float v = get();
-            ImGui.SetNextItemWidth(220);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f));
             if(ImGui.SliderFloat(label, ref v, min, max, format))
             {
                 set(v);
@@ -54,7 +54,7 @@ public static class GamePhysicsSection
         void SliderInt(string label, Func<int> get, Action<int> set, int min, int max, string tip)
         {
             int v = get();
-            ImGui.SetNextItemWidth(220);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f));
             if(ImGui.SliderInt(label, ref v, min, max))
             {
                 set(v);
@@ -66,7 +66,7 @@ public static class GamePhysicsSection
         // Who
         string[] who = ["GPose actors and Limber's actors", "Everyone"];
         int w = Math.Clamp(s.Who, 0, 1);
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f));
         if(ImGui.Combo("Who###who", ref w, who, who.Length))
         {
             s.Who = w;

@@ -102,7 +102,7 @@ public sealed class BodyShapeTab
             changed = true;
         }
         Tooltip("With Leg length: the body goes up by what the legs gained, so the feet stay where they were.");
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         ImGui.InputText("Filter###lmb_bs_filter", ref _filter, 64);
         Tooltip("Only the sliders (or groups) whose name has this in it.");
 
@@ -266,7 +266,7 @@ public sealed class BodyShapeTab
     private bool DrawSlider(BodySlider slider, Dictionary<string, float> values)
     {
         float value = (values.TryGetValue(slider.Key, out var v) ? v : 0f) * 100f;
-        ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(130f * ImGuiHelpers.GlobalScale));
         string label = slider.Name;
         bool edited = ImGui.SliderFloat($"{label}###lmb_bs_{slider.Key}", ref value, slider.Min * 100f, slider.Max * 100f, "%+.0f%%");
         bool released = ImGui.IsItemDeactivatedAfterEdit();
@@ -294,7 +294,7 @@ public sealed class BodyShapeTab
         var presets = _config.BodyPresets ??= new();
         ImGui.TextColored(Accent, "Preset");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         string current = _preset >= 0 && _preset < presets.Count ? presets[_preset].Name : "(none)";
         if (ImGui.BeginCombo("###lmb_bs_preset", current))
         {
@@ -329,7 +329,7 @@ public sealed class BodyShapeTab
             }
         }
 
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.InputText("Name###lmb_bs_preset_name", ref _presetName, 48);
         ImGui.SameLine();
         using (ImRaii.Disabled(_presetName.Trim().Length == 0))

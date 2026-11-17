@@ -57,7 +57,25 @@ public sealed class EngineLayerTab
                 changed = true;
             }
         }
-        Tooltip("Adds one more animation to the character's body in the game's own list and moves it every frame.\nUntick: it fades out and is taken off.");
+        Tooltip("Adds one more animation to the character's body in the game's own list and moves it every frame.\nUntick: it's taken off.");
+        ImGui.SameLine();
+        if(ImGui.Button("Stop###elayer_stop"))
+        {
+            _service.Stop();
+            changed = true;
+        }
+        Tooltip("Stops it at once and takes it off the character.");
+        ImGui.SameLine();
+        using(ImRaii.Disabled(!actor.IsSet))
+        {
+            if(ImGui.Button("Stop and redraw###elayer_stop_redraw") && actor.IsSet)
+            {
+                _service.Stop();
+                Limber.Rig.Appearance.Redraw(actor.ObjectIndex);
+                changed = true;
+            }
+        }
+        Tooltip("Stops it and draws the character again: a fresh body, with nothing of the layer left on it.");
         if(!actor.IsSet)
             ImGui.TextDisabled("Choose a character at the top of the window.");
         else if(!adult)
@@ -67,7 +85,7 @@ public sealed class EngineLayerTab
             ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Problem: " + _service.Problem);
 
         string motion = Array.Find(Motions, m => m.Motion == s.Motion).Name ?? s.Motion.ToString();
-        ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Motion###elayer_motion", motion))
         {
             if(combo.Success)
@@ -96,7 +114,7 @@ public sealed class EngineLayerTab
         changed |= Slider("Weight", "weight", s.Weight, v => s.Weight = v, 0f, 1f, "%.2f", "How strongly it's mixed in.");
         changed |= Slider("Fade", "fade", s.FadeSeconds, v => s.FadeSeconds = v, 0.05f, 5f, "%.2f s", "Seconds to fade in and out.");
         int hint = s.BlendHint == 1 ? 1 : 0;
-        ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.Combo("Mixing###elayer_hint", ref hint, "Additive\0Additive (older kind)\0"))
         {
             s.BlendHint = hint == 1 ? 1 : 2;
@@ -125,7 +143,7 @@ public sealed class EngineLayerTab
 
     private static bool Slider(string label, string id, float value, Action<float> set, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
         bool changed = ImGui.SliderFloat($"{label}###elayer_{id}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(changed && float.IsFinite(value))
@@ -136,7 +154,7 @@ public sealed class EngineLayerTab
     private static bool AxisCombo(string label, string id, int value, Action<int> set, string tip)
     {
         int v = Math.Clamp(value, 0, 2);
-        ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
         bool changed = ImGui.Combo($"{label}###elayer_{id}", ref v, "X\0Y\0Z\0");
         Tooltip(tip);
         if(changed)

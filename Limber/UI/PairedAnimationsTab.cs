@@ -86,19 +86,19 @@ public sealed unsafe class PairedAnimationsTab
         // ---- Lining up
         ImGui.Spacing();
         ImGui.TextUnformatted("Line up");
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo("Layout###pair_layout", "Choose a layout..."))
             if(combo.Success)
                 foreach(var l in Layouts)
                     if(ImGui.Selectable(l.Name))
                         (_forward, _side, _up, _facing) = (l.Forward, l.Side, l.Up, l.Facing);
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.DragFloat("In front (+) / behind###pair_fwd", ref _forward, 0.005f, -5f, 5f, "%.2f m");
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.DragFloat("Right (+) / left###pair_side", ref _side, 0.005f, -5f, 5f, "%.2f m");
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.DragFloat("Up (+) / down###pair_up", ref _up, 0.005f, -3f, 3f, "%.2f m");
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.DragFloat("Facing###pair_facing", ref _facing, 0.5f, -180f, 360f, "%.0f°");
         Tip("Degrees from the way the first faces: 180 faces the first, 0 faces the same way.");
         bool ready = first.IsSet && second.IsSet && first.Address != second.Address;
@@ -130,7 +130,7 @@ public sealed unsafe class PairedAnimationsTab
         RacePicker("pair_r2", ref _secondRace);
         ImGui.Checkbox("Start frozen###pair_frozen", ref _startFrozen);
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
         ImGui.SliderFloat("Speed###pair_speed", ref _speed, 0f, 2f, "%.2f");
 
         using(ImRaii.Disabled(!ready || (_firstAnim == 0 && _secondAnim == 0)))
@@ -178,7 +178,7 @@ public sealed unsafe class PairedAnimationsTab
     {
         ushort now = body;
         string label = now == 0 ? "Its own race" : Animations.Races.FirstOrDefault(r => r.Body == now).Name ?? "Its own race";
-        ImGui.SetNextItemWidth(150 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(150f * ImGuiHelpers.GlobalScale));
         using(var combo = ImRaii.Combo($"###{id}", label))
         {
             if(combo.Success)
@@ -215,7 +215,7 @@ public sealed unsafe class PairedAnimationsTab
         Tip("Each one's Move character (move, turn, size), always from where they started, never as places in the world:\n"
             + "the first's own; the second's turn and size on top of the line-up, and where it actually stands next to\n"
             + "the first (if it was moved off the line-up, that's what's saved as the line-up).");
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint("###pair_save_name", "Name", ref _saveName, 64);
         ImGui.SameLine();
         using(ImRaii.Disabled(_saveName.Trim().Length == 0))
@@ -409,7 +409,7 @@ public sealed unsafe class PairedAnimationsTab
     {
         nint pick = chosen; // (a ref parameter can't be used inside the lambda)
         var now = all.FirstOrDefault(a => a.Address == pick);
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         using var combo = ImRaii.Combo(label, now.IsSet ? labelOf(now) : "Choose a character");
         if(!combo.Success)
             return;
@@ -421,7 +421,7 @@ public sealed unsafe class PairedAnimationsTab
     private static void AnimationPicker(string label, string id, ref ushort chosen, ref string search)
     {
         string now = chosen == 0 ? "None (keep what it plays)" : Name(chosen);
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         using var combo = ImRaii.Combo($"{label}###{id}", now);
         if(!combo.Success)
             return;

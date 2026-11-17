@@ -808,7 +808,7 @@ public sealed unsafe class PropsTab
         }
         Tooltip("Dents the skin of the live mesh (Rigging > Live mesh).");
         float boneStrength = Math.Clamp(prop.BoneStrength, 0f, 1f) * 100f;
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         using (ImRaii.Disabled(!prop.BoneCollision))
         {
             if (ImGui.SliderFloat("Bone strength###prop_bone_strength", ref boneStrength, 0f, 100f, "%.0f%%"))
@@ -822,7 +822,7 @@ public sealed unsafe class PropsTab
         Tooltip("This collider's own bone collision strength (on top of the overall one).");
         ImGui.SameLine();
         float meshStrength = Math.Clamp(prop.MeshStrength, 0f, 1f) * 100f;
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         using (ImRaii.Disabled(!prop.MeshCollision))
         {
             if (ImGui.SliderFloat("Mesh strength###prop_mesh_strength", ref meshStrength, 0f, 100f, "%.0f%%"))
@@ -835,7 +835,7 @@ public sealed unsafe class PropsTab
             Changed(true);
         Tooltip("This collider's own mesh collision strength (on top of the overall one).");
         float cling = Math.Clamp(prop.Cling, 0f, 1f) * 100f;
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         using (ImRaii.Disabled(!prop.MeshCollision))
         {
             if (ImGui.SliderFloat("Skin cling###prop_cling", ref cling, 0f, 100f, "%.0f%%"))

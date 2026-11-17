@@ -38,7 +38,7 @@ public sealed class SkinEffectsTab
 
     private static bool Slider(string label, string id, ref float value, float min, float max, string format, string tip)
     {
-        ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
         bool changed = ImGui.SliderFloat($"{label}###skin_{id}", ref value, min, max, format);
         Tooltip(tip + "\nCtrl+click to type a value.");
         if(changed)
@@ -143,7 +143,7 @@ public sealed class SkinEffectsTab
             changed = true;
         }
         var color = s.FlushColor;
-        ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.ColorEdit3("Flush colour###skin_flush_color", ref color, ImGuiColorEditFlags.NoInputs))
         {
             s.FlushColor = color;
@@ -228,7 +228,7 @@ public sealed class SkinEffectsTab
                 changed = true;
             }
             var steamColor = s.SteamColor;
-            ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Label(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.ColorEdit3("Colour###skin_steam_color", ref steamColor, ImGuiColorEditFlags.NoInputs))
             {
                 s.SteamColor = steamColor;

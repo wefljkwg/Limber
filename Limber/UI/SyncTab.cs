@@ -104,9 +104,9 @@ public sealed class SyncTab
 
         ImGui.TextWrapped("One-time setup: Limber puts a tiny relay on your own free Cloudflare account. " +
                           "Click Instructions for the 6 short steps.");
-        ImGui.SetNextItemWidth(380);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(380f));
         ImGui.InputText("Cloudflare API token", ref _apiToken, 200, ImGuiInputTextFlags.Password);
-        ImGui.SetNextItemWidth(380);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(380f));
         ImGui.InputText("Account ID (only if asked)", ref _accountId, 64);
 
         var busy = _deployTask is { IsCompleted: false };
@@ -206,7 +206,7 @@ public sealed class SyncTab
             case SyncSession.Phase.IncomingRequest:
                 ImGui.Text("Your invite code (send it to your partner):");
                 var code = S.InviteCode ?? "";
-                ImGui.SetNextItemWidth(420);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(420f));
                 ImGui.InputText("##invite", ref code, 200, ImGuiInputTextFlags.ReadOnly);
                 ImGui.SameLine();
                 if (ImGui.Button("Copy"))
@@ -252,7 +252,7 @@ public sealed class SyncTab
 
         ImGui.Spacing();
         ImGui.Text("Or join someone with their code:");
-        ImGui.SetNextItemWidth(420);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(420f));
         ImGui.InputText("##joincode", ref _joinCode, 200);
         ImGui.SameLine();
         if (ImGui.Button("Paste"))
@@ -311,7 +311,7 @@ public sealed class SyncTab
             var let = Cfg.SyncLetPartnerDriveMe;
             if (ImGui.Checkbox("Let my partner move my character###sync_let", ref let)) { Cfg.SyncLetPartnerDriveMe = let; changed = true; }
             var poseRate = Cfg.SyncPoseRate;
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.SliderInt("Pose updates per second###sync_pose_rate", ref poseRate, 5, 60)) { Cfg.SyncPoseRate = poseRate; changed = true; }
             ImGui.TextColored(Dim, "Smoothed in between. 20 looks smooth and keeps the relay's traffic low.");
             ImGui.Spacing();
@@ -319,15 +319,15 @@ public sealed class SyncTab
         if (ImGui.CollapsingHeader("When I'm the host"))
         {
             var mine = Math.Clamp(Cfg.SyncHostChannel, 0, 7);
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.Combo("Moves my character", ref mine, Channels)) { Cfg.SyncHostChannel = mine; changed = true; }
 
             var theirs = Math.Clamp(Cfg.SyncPartnerChannel + 1, 0, 8);
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.Combo("Moves my partner", ref theirs, PartnerChannels)) { Cfg.SyncPartnerChannel = theirs - 1; changed = true; }
 
             var rate = Cfg.SyncRate;
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f));
             if (ImGui.SliderInt("Updates per second", ref rate, 10, 60)) { Cfg.SyncRate = rate; changed = true; }
             ImGui.TextColored(Dim, "Your Body / Face settings are used on both screens. 30 is smooth and stays well inside the free relay allowance.");
         }

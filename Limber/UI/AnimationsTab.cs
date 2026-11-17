@@ -81,7 +81,7 @@ public sealed class AnimationsTab
             _speed = 1f;
         }
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Speed###anim_speed", ref _speed, 0f, 2f, "%.2f"))
             Animations.SetSpeed(actor.Address, actor.ObjectIndex, _speed);
         if(ImGui.IsItemHovered())
@@ -144,7 +144,7 @@ public sealed class AnimationsTab
         }
 
         // Which race's version.
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         string raceLabel = _race < 0 ? "Its own race" : Animations.Races[_race].Name;
         if(ImGui.BeginCombo("Race's version###anim_race", raceLabel))
         {
@@ -177,7 +177,7 @@ public sealed class AnimationsTab
             _found = null;
         }
         var kinds = _kinds;
-        ImGui.SetNextItemWidth(170 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(170f * ImGuiHelpers.GlobalScale));
         if(ImGui.BeginCombo("Kind###anim_kind", _kind.Length == 0 ? "(all)" : _kind))
         {
             if(ImGui.Selectable("(all)###anim_kind_all", _kind.Length == 0))
@@ -189,7 +189,7 @@ public sealed class AnimationsTab
         }
         ImGui.SameLine();
         var groups = _groups;
-        ImGui.SetNextItemWidth(130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(130f * ImGuiHelpers.GlobalScale));
         if(ImGui.BeginCombo("Key group###anim_group", _group.Length == 0 ? "(all)" : _group))
         {
             if(ImGui.Selectable("(all)###anim_group_all", _group.Length == 0))
@@ -202,7 +202,7 @@ public sealed class AnimationsTab
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("The first part of the game's own key for it (emote, normal, battle...).");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint("###anim_search", "Search: name, words, key or number", ref _search, 100);
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("Matches the emote's name, the plain-words name (\"ground sitting\", \"walking\"), the game's key\n"
@@ -330,7 +330,7 @@ public sealed class AnimationsTab
         if(_viaSkeleton)
         {
             ImGui.Indent();
-            ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
             using(var combo = ImRaii.Combo("Source###anim_src", _source?.Name ?? "Choose a race or creature..."))
                 if(combo.Success)
                 {
@@ -374,7 +374,7 @@ public sealed class AnimationsTab
             if(ImGui.Checkbox("Show the source###anim_via_show", ref show))
                 _retarget.ShowSource = show;
             float weight = _retarget.Weight;
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Amount###anim_via_weight", ref weight, 0f, 1f, "%.2f"))
                 _retarget.Weight = weight;
             if(_retarget.Target == actor.Address)

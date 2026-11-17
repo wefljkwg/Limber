@@ -164,13 +164,10 @@ public sealed partial class LimberTab
               + "Click twice (it asks once). Undo brings the pose back."
             : "Choose a character first.");
         if(after != null)
-        {
-            ImGui.SameLine();
             after();
-        }
         if(now < _resetNoteUntil && _resetNote.Length > 0)
         {
-            ImGui.SameLine();
+            Fit.Next(Fit.Text(_resetNote));
             ImGui.TextDisabled(_resetNote);
         }
     }
@@ -264,7 +261,10 @@ public sealed partial class LimberTab
         ImGui.Text("Character:");
         ImGui.SameLine();
 
-        ImGui.SetNextItemWidth(MathF.Max(150f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X - 225f * ImGuiHelpers.GlobalScale));
+        // (wide: the drop-down, then Follow my target and Redraw beside it; narrow: those two go under it)
+        float extras = Fit.Check("Follow my target") + Fit.Button("Redraw") + ImGui.GetStyle().ItemSpacing.X * 2f;
+        float room = ImGui.GetContentRegionAvail().X;
+        ImGui.SetNextItemWidth(room - extras >= 220f * ImGuiHelpers.GlobalScale ? room - extras : room);
         using(var combo = ImRaii.Combo("###limber_actor", preview))
         {
             if(combo.Success)
@@ -282,8 +282,8 @@ public sealed partial class LimberTab
             }
         }
 
-        ImGui.SameLine();
         bool follow = _config.FollowTarget;
+        Fit.Next(Fit.Check("Follow my target"));
         if(ImGui.Checkbox("Follow my target", ref follow))
         {
             _config.FollowTarget = follow;
@@ -291,7 +291,7 @@ public sealed partial class LimberTab
         }
         Tooltip("Work on whichever character is targeted (the GPose target while in GPose).\nPicking someone from the list turns this off.");
 
-        ImGui.SameLine();
+        Fit.Next(Fit.Button("Redraw"));
         using(ImRaii.Disabled(!_selection.Actor.IsSet))
         {
             if(ImGui.Button("Redraw###limber_redraw") && _selection.Actor.IsSet)
@@ -304,15 +304,17 @@ public sealed partial class LimberTab
     public void DrawShowHandles()
     {
         bool showHandles = _config.ShowHandles;
-        if(ImGui.Checkbox("Show Limber handles on the character###limber_show_handles", ref showHandles))
+        Fit.Next(Fit.Check("Show handles"));
+        if(ImGui.Checkbox("Show handles###limber_show_handles", ref showHandles))
         {
             _config.ShowHandles = showHandles;
             _config.Save();
         }
-        ImGui.SameLine();
+        Tooltip("Shows Limber's handles (the dots and gizmo) on the character, to grab and pose.");
         int mode = Math.Clamp(_config.HandleMode, 0, 2);
         string[] modes = ["Auto", "IK", "FK"];
-        ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+        Fit.Next(80f * ImGuiHelpers.GlobalScale + Fit.Text("Handles") + ImGui.GetStyle().ItemInnerSpacing.X);
+        ImGui.SetNextItemWidth(80f * ImGuiHelpers.GlobalScale);
         if(ImGui.BeginCombo("Handles###limber_handle_mode", modes[mode]))
         {
             for(int i = 0; i < modes.Length; i++)
@@ -325,13 +327,11 @@ public sealed partial class LimberTab
         }
         Tooltip("What dragging a handle does.\nIK: moves the bone and bends the limb to follow (IK posing).\n"
             + "FK: turns that bone itself, with a turning gizmo (FK posing).\nAuto: FK while the FK Posing page is open, IK otherwise.");
-        ImGui.SameLine();
         int op = _config.GizmoScale ? 2 : _config.GizmoMove ? 1 : 0;
         string[] ops = ["Rotate", "Move", "Scale"];
         for(int i = 0; i < ops.Length; i++)
         {
-            if(i > 0)
-                ImGui.SameLine();
+            Fit.Next(Fit.Check(ops[i]));
             if(ImGui.RadioButton($"{ops[i]}###limber_handle_op_{i}", op == i))
             {
                 (_config.GizmoMove, _config.GizmoScale) = (i == 1, i == 2);
@@ -453,10 +453,10 @@ public sealed partial class LimberTab
                 var at = place;
                 var degrees = Limber.Rig.ActorTransforms.DegreesOf(placedRotation);
                 bool moved = false;
-                ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
                 moved |= ImGui.DragFloat3("Place (m)###limber_actor_place", ref at, 0.005f, -10000f, 10000f, "%.3f");
                 Tooltip("Where they stand in the world: X, height, Z.");
-                ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
                 moved |= ImGui.DragFloat3("Rotation (°)###limber_actor_rotation", ref degrees, 0.5f, -180f, 180f, "%.1f");
                 Tooltip("Which way they face in the world: yaw (around), pitch, roll.");
                 if(moved)
@@ -464,7 +464,7 @@ public sealed partial class LimberTab
             }
             else
                 ImGui.TextDisabled("Can't find where they are right now.");
-            ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
             if(ImGui.DragFloat("Scale###limber_actor_scale_w", ref scale, 0.005f, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale, "%.4f", ImGuiSliderFlags.AlwaysClamp | ImGuiSliderFlags.Logarithmic))
             {
                 var o = Actors.GetOrAdd(actor.Address, actor.ObjectIndex);
@@ -489,13 +489,13 @@ public sealed partial class LimberTab
             lock(Actors.Sync)
                 o.Facing = facing;
         }
-        ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
         changed |= ImGui.DragFloat3("Move (m)###limber_actor_move", ref move, 0.005f, -50f, 50f, "%.3f");
         Tooltip(facing ? "Sideways, up, forward (the way the character faces)." : "World X, up, world Z.");
-        ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
         changed |= ImGui.DragFloat3("Turn (°)###limber_actor_turn", ref turn, 0.5f, -180f, 180f, "%.1f");
         Tooltip("Yaw (around), pitch (forward / back), roll (sideways).");
-        ImGui.SetNextItemWidth(-90 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(90f * ImGuiHelpers.GlobalScale));
         changed |= ImGui.DragFloat("Scale###limber_actor_scale", ref scale, 0.005f, Limber.Rig.ActorTransforms.MinScale, Limber.Rig.ActorTransforms.MaxScale, "%.4f", ImGuiSliderFlags.AlwaysClamp | ImGuiSliderFlags.Logarithmic);
         if(changed)
         {
@@ -789,18 +789,18 @@ public sealed partial class LimberTab
             {
                 ImGui.SameLine();
                 float grip = grab.Grip;
-                ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
                 if(ImGui.SliderFloat("Grip (mm)###limber_hand_grip", ref grip, 0f, 20f, "%.0f"))
                     grab.Grip = grip;
                 Tooltip("How far the fingers sink into the skin.");
                 float rigidity = grab.Rigidity * 100f;
-                ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
                 if(ImGui.SliderFloat("Rigidity###limber_hand_rigidity", ref rigidity, 0f, 100f, "%.0f%%"))
                     grab.Rigidity = rigidity / 100f;
                 Tooltip("How firmly each finger keeps the spot of skin it holds and resists turning: less sliding and creeping, but slower to follow the hand.");
                 ImGui.SameLine();
                 float spread = grab.Spread * 100f;
-                ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
                 if(ImGui.SliderFloat("Spread###limber_hand_spread", ref spread, 0f, 100f, "%.0f%%"))
                     grab.Spread = spread / 100f;
                 Tooltip("Fans the four fingers out evenly across the hand (every gap the same), wider as it goes up. The thumb isn't moved.");
@@ -821,7 +821,7 @@ public sealed partial class LimberTab
                 {
                     ImGui.SameLine();
                     float lockStrength = grab.LockStrength * 100f;
-                    ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+                    ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
                     if(ImGui.SliderFloat("Lock strength###limber_hand_lock_strength", ref lockStrength, 0f, 100f, "%.0f%%"))
                         grab.LockStrength = lockStrength / 100f;
                     Tooltip("How fully the breast follows the hand (lower: it lags and pulls back toward the body).");
@@ -1025,7 +1025,7 @@ public sealed partial class LimberTab
             if(Limber.Rig.RigService.OtherSide(bone) != null)
             {
                 int mirror = (int)goal.Mirror;
-                ImGui.SetNextItemWidth(130 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(130f * ImGuiHelpers.GlobalScale));
                 if(ImGui.Combo("Other side###limber_mirror", ref mirror, MirrorNames, MirrorNames.Length))
                 {
                     _rigs.Checkpoint();
@@ -1036,7 +1036,7 @@ public sealed partial class LimberTab
             if(goal.Solve == GoalSolve.Chain && goal.HoldPosition)
             {
                 int length = goal.ChainLength;
-                ImGui.SetNextItemWidth(130 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(130f * ImGuiHelpers.GlobalScale));
                 bool lengthChanged = ImGui.SliderInt("Bones that bend", ref length, 1, 8);
                 if(ImGui.IsItemActivated())
                     _rigs.Checkpoint();
@@ -1490,7 +1490,7 @@ public sealed partial class LimberTab
         Tooltip("On: the whole breast is a soft body (hands dent the skin and move the breast, it bulges, both breasts push on each other, it wobbles).\nOff: the older skin-only dent.");
         void LiveSlider(string label, float value, Action<float> set, float min, float max, string tip, string format = "%.2f")
         {
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat(label, ref value, min, max, format))
                 set(value);
             if(ImGui.IsItemDeactivatedAfterEdit())
@@ -1500,7 +1500,7 @@ public sealed partial class LimberTab
         // Size works with the live mesh on too (it scales the breast bones; the live mesh follows them).
         var breasts = SoftFor(Limber.BodyRig.RigParts.Breasts);
         float size = breasts.Size;
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Breast size###lmb_live_size", ref size, 0.1f, 3f, "%.2f"))
             breasts.Size = size;
         if(ImGui.IsItemDeactivatedAfterEdit())
@@ -1509,7 +1509,7 @@ public sealed partial class LimberTab
         LiveSlider("Mesh collision strength###lmb_live_strength", Limber.Gpu.LiveSoftBody.Strength, v => Limber.Gpu.LiveSoftBody.Strength = v, 0f, 1f,
             "How hard colliders dent the skin. 1 = stays outside colliders; lower = it sinks in.");
         float bone = Math.Clamp(_config.PropBoneStrength, 0f, 1f);
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Bone collision strength###lmb_live_bone_strength", ref bone, 0f, 1f, "%.2f"))
             _config.PropBoneStrength = bone;
         if(ImGui.IsItemDeactivatedAfterEdit())
@@ -1548,14 +1548,14 @@ public sealed partial class LimberTab
             LiveSlider("Steadiness###lmb_live_steady", live.Steadiness, v => live.Steadiness = v, 0f, 0.9f,
                 "Smooths frame-to-frame jitter of the skin (higher: calmer, but it trails fast moves a little).");
             int accuracy = live.Accuracy;
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderInt("Accuracy###lmb_live_accuracy", ref accuracy, 2, 16))
                 live.Accuracy = accuracy;
             if(ImGui.IsItemDeactivatedAfterEdit())
                 _config.Save();
             Tooltip("Solver passes a 60 fps frame, shared out over the steps. Higher: firmer contact and less jitter; costs more time (see the ms above).");
             int substeps = live.Substeps;
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderInt("Steps a frame###lmb_live_substeps", ref substeps, 1, 8))
                 live.Substeps = substeps;
             if(ImGui.IsItemDeactivatedAfterEdit())
@@ -1738,7 +1738,7 @@ public sealed partial class LimberTab
         }
         void Slider(string label, float value, Action<float> set, float min, float max, string tip, string format = "%.2f")
         {
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat(label, ref value, min, max, format))
             {
                 set(value);
@@ -1844,7 +1844,7 @@ public sealed partial class LimberTab
         if(!all.TryGetValue(name, out var ex))
             all[name] = ex = new Limber.Rig.ExpansionSettings();
         float pregnant = ex.Pregnant * 100f;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Pregnancy###lmb_pregnant", ref pregnant, -50f, 300f, "%.0f%%"))
         {
             ex.Pregnant = pregnant / 100f;
@@ -1854,7 +1854,7 @@ public sealed partial class LimberTab
             + "on the belly rig, with or without its physics. To grow it over time (pumping, swelling, breathing...), use "
             + "Expansion > Belly in Limber Animations, on top of this.\nCtrl+click to type a value.");
         float shape = ex.Belly.Shape * 100f;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Belly shape###lmb_pregnant_shape", ref shape, -100f, 100f, "%.0f%%"))
         {
             ex.Belly.Shape = shape / 100f;
@@ -1878,7 +1878,7 @@ public sealed partial class LimberTab
         var shape = ShapeFor(part);
         bool changed = false;
         float size = shape.Size, forward = shape.Forward, up = shape.Up, outward = shape.Out, depth = shape.Depth;
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Size##lmb_rig", ref size, 0.3f, 8f, "%.2f"))
         {
             shape.Size = size;
@@ -1886,21 +1886,21 @@ public sealed partial class LimberTab
                 shape.Out = size * 0.5f; // (each belly half from the middle of the body out)
             changed = true;
         }
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Forward##lmb_rig", ref forward, -2f, 4f, "%.2f")) { shape.Forward = forward; changed = true; }
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Up / down##lmb_rig", ref up, -3f, 3f, "%.2f")) { shape.Up = up; changed = true; }
         if(!part.Region)
         {
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Outward##lmb_rig", ref outward, -3f, 3f, "%.2f")) { shape.Out = outward; changed = true; }
         }
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Depth##lmb_rig", ref depth, 0.1f, 5f, "%.2f")) { shape.Depth = depth; changed = true; }
         if(part.OwnHeight)
         {
             float height = shape.Height > 0f ? shape.Height : shape.Size;
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Height##lmb_rig", ref height, 0.3f, 8f, "%.2f")) { shape.Height = height; changed = true; }
         }
         Tooltip("The box the rig bones fill. Set automatically when the box is fitted; applies on the next rig.");
@@ -2157,7 +2157,7 @@ public sealed partial class LimberTab
 
         void Slider(string label, float value, Action<float> set, string tip, float min = -3f, float max = 3f)
         {
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat(label, ref value, min, max, "%.2f")) { set(value); changed = true; }
             Tooltip(tip);
         }
@@ -2205,7 +2205,7 @@ public sealed partial class LimberTab
                 {
                     ImGui.SameLine();
                     float v = move[part * 3 + a];
-                    ImGui.SetNextItemWidth(60 * ImGuiHelpers.GlobalScale);
+                    ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(60f * ImGuiHelpers.GlobalScale));
                     if(ImGui.SliderFloat($"###lmb_part_{part}_{a}", ref v, -0.5f, 0.5f, axes[a] + " %.2f"))
                     {
                         var next = (float[])move.Clone();
@@ -2273,7 +2273,7 @@ public sealed partial class LimberTab
         foreach(var shape in shapeList)
         {
             float amount = soft.Shapes.TryGetValue(shape.Name, out var a) ? a : 0f;
-            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat($"{shape.Name}##lmb_bshape_{part.Key}_{shape.Name}", ref amount, 0f, 1f, "%.2f"))
             {
                 // A new set each time (never changed in place), as the physics reads it on another thread.
@@ -2436,7 +2436,7 @@ public sealed partial class LimberTab
             }
 
             float size = _config.HandleSize;
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Dot size", ref size, 4f, 24f, "%.0f"))
             {
                 _config.HandleSize = size;
@@ -2559,13 +2559,14 @@ public sealed partial class LimberTab
     /// <summary>Undo / redo at the top of the window: posing, sliders, switches, every setting.</summary>
     public void DrawUndoRedo()
     {
+        Fit.Next(Fit.Button("Undo"));
         using(ImRaii.Disabled(!_rigs.CanUndo))
         {
             if(ImGui.Button("Undo###limber_undo"))
                 _rigs.Undo();
         }
         Tooltip("Undo the last change: a bone moved, a slider, a switch, anything in Limber. " + (_config.UndoKey ??= new()).Label);
-        ImGui.SameLine();
+        Fit.Next(Fit.Button("Redo"));
         using(ImRaii.Disabled(!_rigs.CanRedo))
         {
             if(ImGui.Button("Redo###limber_redo"))

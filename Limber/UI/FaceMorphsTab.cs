@@ -157,7 +157,7 @@ public sealed class FaceMorphsTab
         // ---- Sliders
         if(ImGui.CollapsingHeader("Shapes###fm_shapes", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             ImGui.InputTextWithHint("###fm_search", "Search shapes", ref _search, 64);
             var shapes = new List<(string Name, string Group, string Tip)>();
             foreach(var (n, g, t) in FaceMorphs.Own)
@@ -177,7 +177,7 @@ public sealed class FaceMorphsTab
                 foreach(var (n, _, t) in group)
                 {
                     float v = s.Values.GetValueOrDefault(n);
-                    ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                    ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
                     if(ImGui.SliderFloat($"{n}###fm_v_{n}", ref v, -1f, 1.5f, "%.2f"))
                     {
                         if(MathF.Abs(v) < 0.005f)
@@ -195,7 +195,7 @@ public sealed class FaceMorphsTab
                     ImGui.SameLine();
                     var conform = s.Conform ??= new();
                     int c = (int)MathF.Round(conform.GetValueOrDefault(n, 1f));
-                    ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+                    ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(90f * ImGuiHelpers.GlobalScale));
                     if(ImGui.SliderInt($"###fm_c_{n}", ref c, 1, 100, "conform %d"))
                     {
                         if(c <= 1)
@@ -237,7 +237,7 @@ public sealed class FaceMorphsTab
             void Amount(string label, string tip, Func<float> get, Action<float> set)
             {
                 float v = get();
-                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
                 if(ImGui.SliderFloat(label, ref v, 0f, 1.5f, "%.2f"))
                 {
                     set(v);
@@ -266,7 +266,7 @@ public sealed class FaceMorphsTab
         ImGui.TextWrapped("Their morphs are fitted onto this face (the features lined up, each morph's moves carried over and sized to it) "
             + "and saved for this face model next to Limber's settings. They're made from your own installs and stay on this PC.");
         string vam = _config.VamFolder ?? "";
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputTextWithHint("###fm_vam", "Virt-a-Mate's folder (the one with VaM.exe)", ref vam, 400))
         {
             _config.VamFolder = vam;
@@ -302,7 +302,7 @@ public sealed class FaceMorphsTab
         }
         if(candidates.Count > 0)
         {
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             ImGui.InputTextWithHint("###fm_isearch", "Search morphs", ref _importSearch, 64);
             ImGui.SameLine();
             if(ImGui.SmallButton("Tick suggested###fm_tick_s"))

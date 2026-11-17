@@ -306,7 +306,7 @@ public sealed class ClimaxTab
             remove = e;
 
         string name = e.Name;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputText("Name###name", ref name, 48))
         {
             e.Name = name;
@@ -546,7 +546,7 @@ public sealed class ClimaxTab
 
     private void ChooseCharacter(string label, string current, Action<string> set)
     {
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         using var combo = ImRaii.Combo(label, current.Length > 0 ? current : "(choose)");
         if(!combo)
             return;
@@ -562,7 +562,7 @@ public sealed class ClimaxTab
 
     private void ChooseBone(string label, string current, (string Bone, string Name)[] bones, Action<string> set)
     {
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         var found = Array.Find(bones, b => b.Bone == current);
         string shown = found.Name != null ? $"{found.Name} ({current})" : current;
         using(var combo = ImRaii.Combo(label, shown))
@@ -581,7 +581,7 @@ public sealed class ClimaxTab
         }
         ImGui.SameLine();
         string typed = current;
-        ImGui.SetNextItemWidth(130 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(130f * ImGuiHelpers.GlobalScale));
         if(ImGui.InputText($"###{label}_typed", ref typed, 64, ImGuiInputTextFlags.EnterReturnsTrue) && typed.Trim().Length > 0)
         {
             set(typed.Trim());
@@ -672,7 +672,7 @@ public sealed class ClimaxTab
             ImGui.TextWrapped("The liquid is drawn inside big prop models the game already has (only on your screen). More carriers give "
                 + "more room, so a finer surface. They're picked for you; any copy of the same props elsewhere in the room changes colour while liquid is out.");
             int want = l.GameCarrierCount;
-            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderInt("How many###clx_carrier_count", ref want, 1, 12))
                 l.GameCarrierCount = want;
             if(ImGui.IsItemDeactivatedAfterEdit())
@@ -752,7 +752,7 @@ public sealed class ClimaxTab
     private void F(string label, Func<float> get, Action<float> set, float min, float max, string format, string? tip = null)
     {
         float v = get();
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat($"{label}###{label}", ref v, min, max, format))
         {
             set(v);
@@ -765,7 +765,7 @@ public sealed class ClimaxTab
     private void Int(string label, Func<int> get, Action<int> set, int min, int max, string? tip = null)
     {
         int v = get();
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderInt($"{label}###{label}", ref v, min, max))
         {
             set(v);
@@ -778,7 +778,7 @@ public sealed class ClimaxTab
     private void V3(string label, Func<Vector3> get, Action<Vector3> set, float speed, float min, float max, string format, string? tip = null)
     {
         var v = get();
-        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(260f * ImGuiHelpers.GlobalScale));
         if(ImGui.DragFloat3(label, ref v, speed, min, max, format))
         {
             set(v);

@@ -12,7 +12,7 @@ internal static class TrackerChoice
     {
         bool changed = false;
         int model = cfg.TrackerAccurate ? 0 : 1;
-        ImGui.SetNextItemWidth(170);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(170f));
         if (ImGui.Combo($"Body model##{id}_model", ref model, Models, Models.Length))
         {
             cfg.TrackerAccurate = model == 0;

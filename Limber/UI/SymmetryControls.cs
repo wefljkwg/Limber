@@ -18,7 +18,7 @@ public static class SymmetryControls
         int mode = (int)(s?.Mode ?? SymmetryMode.Off);
         ImGui.TextUnformatted("Symmetry:");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.Combo($"###{id}_sym_mode", ref mode, Modes, Modes.Length))
         {
             s ??= all[character] = new SymmetrySettings();

@@ -56,7 +56,7 @@ public sealed class CameraTab
         {
             ImGui.SameLine();
             float speed = CameraControl.FreeSpeed;
-            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Speed###cam_free_speed", ref speed, 0.2f, 20f, "%.1f m/s", ImGuiSliderFlags.Logarithmic))
                 CameraControl.FreeSpeed = speed;
         }
@@ -74,17 +74,17 @@ public sealed class CameraTab
             bool edit = false;
             float near = _config.CameraMinDistance, far = _config.CameraMaxDistance;
             float fMin = _config.CameraMinFoV, fMax = _config.CameraMaxFoV, pMin = _config.CameraMinPitch, pMax = _config.CameraMaxPitch;
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             edit |= ImGui.SliderFloat("Closest###cam_near", ref near, 0.05f, 5f, "%.2f");
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             edit |= ImGui.SliderFloat("Furthest###cam_far", ref far, 5f, 500f, "%.0f", ImGuiSliderFlags.Logarithmic);
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             edit |= ImGui.SliderFloat("Narrowest view###cam_fmin", ref fMin, 0.01f, 0.69f, "%.2f");
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             edit |= ImGui.SliderFloat("Widest view###cam_fmax", ref fMax, 0.78f, 3f, "%.2f");
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             edit |= ImGui.SliderFloat("Furthest down###cam_pmin", ref pMin, -89.5f, 0f, "%.0f°");
-            ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
             edit |= ImGui.SliderFloat("Furthest up###cam_pmax", ref pMax, 0f, 89.5f, "%.0f°");
             if(edit)
             {
@@ -114,7 +114,7 @@ public sealed class CameraTab
 
         // Where the camera is: moved off the game's place, along the way it looks.
         var offset = _config.CameraOffset;
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.DragFloat3("Position###cam_offset", ref offset, 0.01f, -20f, 20f, "%.2f"))
         {
             _config.CameraOffset = offset;
@@ -134,7 +134,7 @@ public sealed class CameraTab
         bool changed = false;
 
         float distance = shot.Distance;
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Distance###cam_dist", ref distance, minD, maxD, "%.2f"))
         {
             shot.Distance = distance;
@@ -145,7 +145,7 @@ public sealed class CameraTab
             CameraControl.Reset(distance: true, fov: false, tilt: false, pitch: false);
 
         float fov = shot.FoV;
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Field of view###cam_fov", ref fov, minF, maxF, "%.3f"))
         {
             shot.FoV = fov;
@@ -156,7 +156,7 @@ public sealed class CameraTab
             CameraControl.Reset(distance: false, fov: true, tilt: false, pitch: false);
 
         float yaw = shot.Yaw * Deg;
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Round###cam_yaw", ref yaw, -180f, 180f, "%.1f°"))
         {
             shot.Yaw = yaw / Deg;
@@ -165,7 +165,7 @@ public sealed class CameraTab
         Tooltip("The camera's angle round what it looks at.");
 
         float pitch = shot.Pitch * Deg;
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Up / down###cam_pitch", ref pitch, minV * Deg, maxV * Deg, "%.1f°"))
         {
             shot.Pitch = pitch / Deg;
@@ -174,7 +174,7 @@ public sealed class CameraTab
         Tooltip("Looking up (+) or down (-).");
 
         float tilt = shot.Tilt;
-        ImGui.SetNextItemWidth(-140 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Label(140f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Tilt###cam_tilt", ref tilt, -1f, 1f, "%.3f"))
         {
             shot.Tilt = tilt;
@@ -208,7 +208,7 @@ public sealed class CameraTab
         ImGui.Spacing();
         ImGui.Separator();
         var shots = _config.CameraShots ??= new();
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         ImGui.InputTextWithHint("###cam_shot_name", "Name for this shot", ref _shotName, 48);
         ImGui.SameLine();
         if(ImGui.Button("Save this shot###cam_save"))

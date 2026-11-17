@@ -42,7 +42,7 @@ public sealed class BodySwapTab
 
         var races = Appearance.Races;
         int race = Math.Clamp(Race, 0, races.Length - 1);
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.BeginCombo("Race###swap_race", races[race].Name))
         {
             for(int i = 0; i < races.Length; i++)
@@ -52,7 +52,7 @@ public sealed class BodySwapTab
         }
         var clans = races[race].Clans;
         int clan = Math.Clamp(Clan, 0, clans.Length - 1);
-        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
         if(ImGui.BeginCombo("Clan###swap_clan", clans[clan].Name))
         {
             for(int i = 0; i < clans.Length; i++)
@@ -62,7 +62,7 @@ public sealed class BodySwapTab
         }
         string[] genders = ["Keep its own", "Male", "Female"];
         int gender = Math.Clamp(Gender, 0, 2);
-        ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
         if(ImGui.BeginCombo("Gender###swap_gender", genders[gender]))
         {
             for(int i = 0; i < genders.Length; i++)
@@ -148,13 +148,13 @@ public sealed class BodySwapTab
         var colour = t.Colour;
         float brightness = t.Brightness;
         bool apply = false;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.ColorEdit3("Body skin tint###swap_tint", ref colour, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.PickerHueWheel))
             t.Colour = colour;
         apply |= ImGui.IsItemDeactivatedAfterEdit();
         if(ImGui.IsItemHovered())
             ImGui.SetTooltip("Multiplies the swapped body's skin colour, to match the head.\nWhite: no tint. The body's own textures stay.");
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Brightness###swap_tint_bright", ref brightness, 0.5f, 1.5f, "%.2f"))
             t.Brightness = brightness;
         apply |= ImGui.IsItemDeactivatedAfterEdit();

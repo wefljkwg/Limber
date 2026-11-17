@@ -228,19 +228,19 @@ public sealed class MeshSculptTab
         DrawTools();
 
         float cm = _radius * 100f;
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat(_brushMode ? "Brush size###ms_radius" : "Soft falloff###ms_radius", ref cm, 0.1f, 5f, "%.1f cm"))
             _radius = cm / 100f;
         Tip(_brushMode ? "How far round the mouse the brush reaches, fading out (measured along the skin, so the upper lip doesn't pull the lower one)."
             : "How far around the selection the skin moves with it, fading out (measured along the skin).");
         if(_tool == Tool.Smooth)
         {
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             ImGui.SliderFloat("Smooth strength###ms_smooth", ref _smooth, 0.05f, 1f, "%.2f");
         }
         if(!_brushMode)
         {
-            ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(220f * ImGuiHelpers.GlobalScale));
             ImGui.SliderFloat("Paint size###ms_brush", ref _brush, 4f, 80f, "%.0f px");
             Tip("The paint brush's size for picking points (Shift or Alt + drag).");
         }
