@@ -249,6 +249,13 @@ public sealed class BodyShapeTab
         changed |= S("Side", "side", b.Side, v => b.Side = v, -1f, 1f, "Off to one side (-: her left... depending on the model; +: the other).");
         if (b.Follow)
             changed |= S("Follow speed", "speed", b.FollowSpeed, v => b.FollowSpeed = v, 0.1f, 5f, "How quickly it follows (it rises quickly and sinks a little slower).");
+        if (b.Enabled)
+        {
+            var actor = _selection.Actor;
+            string status = actor.IsSet && Limber.Rig.Bulge.Status.TryGetValue(actor.Address, out var st) ? st
+                : Limber.Rig.Bulge.Wanted.IsEmpty ? "not running (Limber off, outside GPose without \"Also run outside GPose\", or the live rig off)" : "waiting for the live rig";
+            ImGui.TextDisabled($"Status: {status}; {Limber.Rig.Bulge.TouchedLast} vertices pushed out last frame.");
+        }
         if (ImGui.SmallButton("Reset bulge###lmb_bulge_reset"))
         {
             bool enabled = b.Enabled;

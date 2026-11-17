@@ -341,7 +341,11 @@ public static unsafe class LiveRig
         // This frame's skinning matrices.
         var plan = person.Plan;
         if (plan == null || !ReferenceEquals(plan.Info, sk.Info) || plan.Models.Count == 0)
+        {
+            if (Limber.Rig.Bulge.Wanted.ContainsKey(person.Address))
+                Limber.Rig.Bulge.Status[person.Address] = "the live rig is getting this character ready" + (person.Report.Length > 0 ? $" ({person.Report})" : "");
             return;
+        }
         var skin = new Matrix4x4[plan.RealBone.Length];
         for (int s = 0; s < skin.Length; s++)
         {
@@ -381,10 +385,24 @@ public static unsafe class LiveRig
     // The stomach bulge this frame: the settings, and (following) how deep the partner's tip is, eased.
     private static Limber.Rig.Bulge.Now? BulgeNow(Person person, Plan plan, in ActorSkeleton sk, long now)
     {
-        if (plan.Marks is not { } marks || !Limber.Rig.Bulge.Wanted.TryGetValue(person.Address, out var bs) || !bs.Enabled)
+        if (!Limber.Rig.Bulge.Wanted.TryGetValue(person.Address, out var bs) || !bs.Enabled)
         {
             person.BulgeStrength = 0f;
             person.BulgeTicks = 0;
+            return null;
+        }
+        if (plan.Marks is not { } marks)
+        {
+            Limber.Rig.Bulge.Status[person.Address] = "couldn't find the hips and spine on this skeleton (j_asi_a_l / _r, j_kosi)";
+            return null;
+        }
+        int bellyVertices = 0;
+        foreach (var model in plan.Models)
+            foreach (var mesh in model.Meshes)
+                bellyVertices += mesh.Vertex.Length;
+        if (bellyVertices == 0)
+        {
+            Limber.Rig.Bulge.Status[person.Address] = "the live rig has no belly skin on this character yet (getting it ready, or no body model it knows)";
             return null;
         }
         float dt = person.BulgeTicks == 0 ? 0f : Math.Clamp((now - person.BulgeTicks) / 1000f, 0f, 0.2f);
@@ -433,6 +451,9 @@ public static unsafe class LiveRig
             person.BulgeSide = side;
             person.BulgeStrength = strength;
         }
+        string follow = !bs.Follow ? "" : Limber.Rig.Bulge.Tips.ContainsKey(person.Address)
+            ? $", following: tip {(person.BulgeStrength > 0.05f ? "inside" : "outside")}" : ", following: no partner's tip near the pelvis";
+        Limber.Rig.Bulge.Status[person.Address] = $"on: {person.BulgeLength * 100f:0} cm long, {person.BulgeStrength * 100f:0}% strength, {bellyVertices} live skin vertices{follow}";
         if (person.BulgeStrength <= 0.002f || person.BulgeLength <= 0.002f)
             return null;
         return Limber.Rig.Bulge.Make(marks, bs, person.BulgeLength, person.BulgeSide, person.BulgeStrength);
@@ -1707,6 +1728,7 @@ public static unsafe class LiveRig
 
     public static void Update()
     {
+        Limber.Rig.Bulge.TouchedLast = System.Threading.Interlocked.Exchange(ref Limber.Rig.Bulge.TouchedNow, 0);
         bool on = On();
         var wanted = on ? Wanted : [];
         // Who: new ones added, ones no longer wanted let go of.
@@ -2308,6 +2330,8 @@ public static unsafe class LiveRig
                     float h = Limber.Rig.Bulge.Height(bulge, p.X, p.Y);
                     if (h != 0f && float.IsFinite(h))
                     {
+                        if (MathF.Abs(h * k) > 1e-4f)
+                            System.Threading.Interlocked.Increment(ref Limber.Rig.Bulge.TouchedNow);
                         q += n / nl * (h * k);
                         if (normals)
                         {

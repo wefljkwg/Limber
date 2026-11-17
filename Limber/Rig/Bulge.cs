@@ -61,6 +61,12 @@ public static class Bulge
 
     public static bool AnyOn => !Wanted.IsEmpty;
 
+    /// <summary>What's happening with each character's bulge (for the page).</summary>
+    public static readonly ConcurrentDictionary<nint, string> Status = new();
+    /// <summary>Skin vertices the bulge moved last frame (all characters), and this frame's count so far.</summary>
+    public static volatile int TouchedLast;
+    public static int TouchedNow;
+
     /// <summary>Where the bulge is this frame, in the body's rest pose (see <see cref="Height"/>).</summary>
     public sealed class Now
     {
