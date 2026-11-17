@@ -117,6 +117,14 @@ public static class MdlRigger
         => Rig(file, sides, log, null, out _);
 
     /// <summary>
+    /// <see cref="Rig(byte[], IReadOnlyList{Side}, List{string})"/>, also adding to <paramref name="mix"/> where each rig
+    /// bone's weight came from (per rig bone: the model's bones that gave it up, by how much), for the racial deformers
+    /// (see Deformers.Remix).
+    /// </summary>
+    public static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log, Dictionary<string, Dictionary<string, float>> mix)
+        => Rig(file, sides, log, null, out _, mix);
+
+    /// <summary>
     /// The same weighting as <see cref="Rig"/>, for the live rig (which moves the vertices itself, so isn't bound by
     /// the game's vertex format): every weight each vertex wants, as floats, with no 8-bone limit, no rounding to
     /// 1/255 and no 64 / 128-bone table limit (the butt's cleft keeps both cheeks' corners, so it stays smooth).
@@ -129,7 +137,8 @@ public static class MdlRigger
     }
 
     private static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log,
-        Dictionary<int, List<(int Bone, float W)>?[]>? full, out List<MeshSkin>? fullSkins)
+        Dictionary<int, List<(int Bone, float W)>?[]>? full, out List<MeshSkin>? fullSkins,
+        Dictionary<string, Dictionary<string, float>>? mix = null)
     {
         fullSkins = null;
         var m = Parse(file);
@@ -213,6 +222,29 @@ public static class MdlRigger
 
                 // Vertices already weighted in this mesh, per part (so the second side doesn't redo the first's share).
                 var done = new Dictionary<string, HashSet<int>>();
+
+                // Each vertex's weights by bone name before anything changes (for the mix: LoD 0, the file's weights).
+                Dictionary<string, float>[]? beforeW = null;
+                Dictionary<string, float> ByName(int v)
+                {
+                    var byName = new Dictionary<string, float>(StringComparer.Ordinal);
+                    int wa = Address(we, v), ia = Address(ie, v);
+                    if (wa + slots > data.Length || ia + slots > data.Length)
+                        return byName;
+                    for (int k = 0; k < slots; k++)
+                        if (data[wa + k] != 0 && data[ia + k] < table.Count && table[data[ia + k]] < bones.Count)
+                        {
+                            var name = bones[table[data[ia + k]]];
+                            byName[name] = byName.GetValueOrDefault(name) + data[wa + k] / 255f;
+                        }
+                    return byName;
+                }
+                if (mix != null && full == null && lod == 0)
+                {
+                    beforeW = new Dictionary<string, float>[mesh.VertexCount];
+                    for (int v = 0; v < mesh.VertexCount; v++)
+                        beforeW[v] = ByName(v);
+                }
 
                 foreach (var side in sides)
                 {
@@ -521,6 +553,7 @@ public static class MdlRigger
                 }
 
                 // Even out where each part fades into the body, so it grows and moves without puckering there.
+                // (the mix is taken after this, below)
                 foreach (var (key, verts) in done)
                 {
                     if (verts.Count == 0)
@@ -549,6 +582,38 @@ public static class MdlRigger
                         }
                     }
                 }
+
+                // Where each rig bone's weight came from: on each vertex, the model's bones that lost weight, shared out
+                // over the rig bones it has now (by how much each lost).
+                if (beforeW != null && mix != null)
+                    for (int v = 0; v < mesh.VertexCount && v < beforeW.Length; v++)
+                    {
+                        var now = ByName(v);
+                        float lost = 0f;
+                        foreach (var (name, x) in beforeW[v])
+                            if (!RigParts.IsRigBone(name))
+                                lost += MathF.Max(0f, x - now.GetValueOrDefault(name));
+                        if (lost <= 1e-4f)
+                            continue;
+                        foreach (var (rigName, rx) in now)
+                        {
+                            if (!RigParts.IsRigBone(rigName) || rx <= 0f)
+                                continue;
+                            float gained = rx - beforeW[v].GetValueOrDefault(rigName);
+                            if (gained <= 1e-4f)
+                                continue;
+                            if (!mix.TryGetValue(rigName, out var src))
+                                mix[rigName] = src = new Dictionary<string, float>(StringComparer.Ordinal);
+                            foreach (var (name, x) in beforeW[v])
+                            {
+                                if (RigParts.IsRigBone(name))
+                                    continue;
+                                float gave = x - now.GetValueOrDefault(name);
+                                if (gave > 0f)
+                                    src[name] = src.GetValueOrDefault(name) + gained * gave / lost;
+                            }
+                        }
+                    }
             }
         }
 

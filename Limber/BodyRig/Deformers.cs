@@ -27,6 +27,87 @@ public static class Deformers
     }
 
     /// <summary>
+    /// Each rig bone fitted like the bones its weight was taken from (<paramref name="mix"/>: per rig bone, how much of
+    /// its weight came from each model bone), in every race's step. The game fits each vertex by the bones it's weighted
+    /// to; a rig bone fitted like only the bone it hangs from fits weight taken from another bone (the belly's, taken
+    /// from the spine; the crease's, from the thigh) like the wrong one, and on a race far from the model's (a
+    /// Roegadyn on a Midlander body mod) the skin there came out dented at rest. A rig bone the file has no entry for, or
+    /// a bone a step has none for, keeps what it had. The file as it was if it can't be read.
+    /// </summary>
+    public static byte[] Remix(byte[] pbd, IReadOnlyDictionary<string, Dictionary<string, float>> mix, out int changed)
+    {
+        changed = 0;
+        if (pbd.Length < 4)
+            return pbd;
+        int count = BitConverter.ToInt32(pbd, 0);
+        if (count <= 0 || count > 4096 || 4 + count * 20 > pbd.Length)
+            return pbd;
+        var deformers = new Deformer[count];
+        var offsets = new int[count];
+        int blobsEnd = 4 + count * 20;
+        for (int i = 0; i < count; i++)
+        {
+            int at = 4 + i * 12;
+            deformers[i] = new Deformer
+            {
+                Race = BitConverter.ToUInt16(pbd, at),
+                Tree = BitConverter.ToInt16(pbd, at + 2),
+                Scale = BitConverter.ToSingle(pbd, at + 8),
+            };
+            offsets[i] = BitConverter.ToInt32(pbd, at + 4);
+        }
+        var tree = pbd.AsSpan(4 + count * 12, count * 8).ToArray();
+        for (int i = 0; i < count; i++)
+        {
+            if (offsets[i] == 0)
+            {
+                deformers[i].Empty = true;
+                continue;
+            }
+            int end = ReadDeformer(pbd, offsets[i], deformers[i].Bones);
+            if (end < 0)
+                return pbd;
+            blobsEnd = Math.Max(blobsEnd, end);
+        }
+        var trailing = blobsEnd < pbd.Length ? pbd.AsSpan(blobsEnd).ToArray() : Array.Empty<byte>();
+
+        foreach (var d in deformers)
+        {
+            if (d.Empty)
+                continue;
+            var known = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var (bone, matrix) in d.Bones)
+                known.TryAdd(bone, matrix);
+            for (int k = 0; k < d.Bones.Count; k++)
+            {
+                var (bone, own) = d.Bones[k];
+                if (!mix.TryGetValue(bone, out var sources) || sources.Count == 0)
+                    continue;
+                float total = 0f;
+                foreach (var w in sources.Values)
+                    total += MathF.Max(0f, w);
+                if (total <= 1e-6f)
+                    continue;
+                var sum = new float[12];
+                foreach (var (source, w) in sources)
+                {
+                    if (w <= 0f)
+                        continue;
+                    var m = known.TryGetValue(source, out var sm) ? sm : own;
+                    for (int j = 0; j < 12; j++)
+                        sum[j] += BitConverter.ToSingle(m, j * 4) * (w / total);
+                }
+                var bytes = new byte[48];
+                for (int j = 0; j < 12; j++)
+                    BitConverter.TryWriteBytes(bytes.AsSpan(j * 4, 4), sum[j]);
+                d.Bones[k] = (bone, bytes);
+                changed++;
+            }
+        }
+        return changed == 0 ? pbd : Write(deformers, tree, trailing);
+    }
+
+    /// <summary>
     /// The deformer file with every bone <paramref name="isRig"/> picks (named in <paramref name="parentOf"/>) given its
     /// nearest fitted ancestor's matrix; earlier rig entries are replaced. Null if the file can't be read.
     /// </summary>

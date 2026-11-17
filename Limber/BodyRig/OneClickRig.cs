@@ -350,13 +350,15 @@ public static class OneClickRig
 
         // 4. Weight the models onto the boxes.
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        // (where each rig bone's weight came from, for the racial deformers)
+        var mix = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
         foreach (var (game, code, source) in models)
         {
             var log = new List<string>();
             byte[]? rigged;
             try
             {
-                rigged = MdlRigger.Rig(source, Sides(build.Bones[code], RigParts.Rigged, shapes, shaping), log);
+                rigged = MdlRigger.Rig(source, Sides(build.Bones[code], RigParts.Rigged, shapes, shaping), log, mix);
             }
             catch (Exception e)
             {
@@ -379,6 +381,19 @@ public static class OneClickRig
         var combined = new Dictionary<string, byte[]>(build.Files, StringComparer.OrdinalIgnoreCase);
         foreach (var (game, data) in files)
             combined[game] = data;
+        // The racial deformers: each rig bone fitted like the bones its weight came from (not only the one it hangs
+        // from), so the skin is fitted to another race exactly as it was before it was rigged.
+        if (mix.Count > 0 && combined.TryGetValue(Deformers.GamePath, out var pbd))
+            try
+            {
+                combined[Deformers.GamePath] = Deformers.Remix(pbd, mix, out int remixed);
+                if (remixed > 0)
+                    progress.Add($"  Racial deformers: {mix.Count} rig bones fitted like the bones their weight came from ({remixed} entries).");
+            }
+            catch (Exception e)
+            {
+                progress.Add($"  Racial deformers: couldn't fit the rig bones by their weights ({e.Message}).");
+            }
         var rigDir = await PutMod(root, modelsName, combined, $"Limber's rig for the \"{collectionName}\" collection: its skeleton bones, and the models worn there weighted to it (made by Limber; your own mods aren't changed). Rebuild from Limber's Body physics page after updating them.", progress, keepEarlier: true);
 
         // 3. On, and above everything else, in this character's collection.
