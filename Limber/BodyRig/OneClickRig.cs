@@ -352,13 +352,23 @@ public static class OneClickRig
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         // (where each rig bone's weight came from, for the racial deformers)
         var mix = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
+        // (only weight from bones fitted to other races like each part's own bone goes on its box)
+        Func<string, string, bool>? sameFit = null;
+        try
+        {
+            if (build.Files.TryGetValue(Deformers.GamePath, out var deformers))
+                sameFit = Deformers.SameFitting(deformers);
+        }
+        catch
+        {
+        }
         foreach (var (game, code, source) in models)
         {
             var log = new List<string>();
             byte[]? rigged;
             try
             {
-                rigged = MdlRigger.Rig(source, Sides(build.Bones[code], RigParts.Rigged, shapes, shaping), log, mix);
+                rigged = MdlRigger.Rig(source, Sides(build.Bones[code], RigParts.Rigged, shapes, shaping), log, mix, sameFit);
             }
             catch (Exception e)
             {

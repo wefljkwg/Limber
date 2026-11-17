@@ -27,6 +27,61 @@ public static class Deformers
     }
 
     /// <summary>
+    /// Whether two bones are fitted to every race alike (the same matrix, or none, in every step of the file).
+    /// </summary>
+    public static Func<string, string, bool>? SameFitting(byte[] pbd)
+    {
+        if (pbd.Length < 4)
+            return null;
+        int count = BitConverter.ToInt32(pbd, 0);
+        if (count <= 0 || count > 4096 || 4 + count * 20 > pbd.Length)
+            return null;
+        var steps = new List<Dictionary<string, byte[]>>();
+        for (int i = 0; i < count; i++)
+        {
+            int off = BitConverter.ToInt32(pbd, 4 + i * 12 + 4);
+            if (off <= 0)
+                continue;
+            var bones = new List<(string, byte[])>();
+            if (ReadDeformer(pbd, off, bones) < 0)
+                return null;
+            var d = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var (n, m) in bones)
+                d.TryAdd(n, m);
+            steps.Add(d);
+        }
+        var known = new Dictionary<(string, string), bool>();
+        return (a, b) =>
+        {
+            if (a == b)
+                return true;
+            lock (known)
+            {
+                if (known.TryGetValue((a, b), out var same))
+                    return same;
+                same = true;
+                foreach (var d in steps)
+                {
+                    bool ha = d.TryGetValue(a, out var ma), hb = d.TryGetValue(b, out var mb);
+                    if (ha != hb)
+                    {
+                        same = false;
+                        break;
+                    }
+                    if (!ha)
+                        continue;
+                    for (int j = 0; j < 12 && same; j++)
+                        same = MathF.Abs(BitConverter.ToSingle(ma!, j * 4) - BitConverter.ToSingle(mb!, j * 4)) < 1e-4f;
+                    if (!same)
+                        break;
+                }
+                known[(a, b)] = same;
+                return same;
+            }
+        };
+    }
+
+    /// <summary>
     /// Each rig bone fitted like the bones its weight was taken from (<paramref name="mix"/>: per rig bone, how much of
     /// its weight came from each model bone), in every race's step. The game fits each vertex by the bones it's weighted
     /// to; a rig bone fitted like only the bone it hangs from fits weight taken from another bone (the belly's, taken

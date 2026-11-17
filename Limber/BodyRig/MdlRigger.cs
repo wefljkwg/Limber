@@ -121,8 +121,12 @@ public static class MdlRigger
     /// bone's weight came from (per rig bone: the model's bones that gave it up, by how much), for the racial deformers
     /// (see Deformers.Remix).
     /// </summary>
-    public static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log, Dictionary<string, Dictionary<string, float>> mix)
-        => Rig(file, sides, log, null, out _, mix);
+    /// <param name="sameFit">Whether a bone is fitted to other races exactly like another (the racial deformers):
+    /// only weight from bones fitted like the part's own bone goes on its box, so the skin is fitted to every race as
+    /// it was (weight from the spine or a thigh on a box fitted like the hips came out dented on a Roegadyn).</param>
+    public static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log, Dictionary<string, Dictionary<string, float>> mix,
+        Func<string, string, bool>? sameFit = null)
+        => Rig(file, sides, log, null, out _, mix, sameFit);
 
     /// <summary>
     /// The same weighting as <see cref="Rig"/>, for the live rig (which moves the vertices itself, so isn't bound by
@@ -138,7 +142,7 @@ public static class MdlRigger
 
     private static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log,
         Dictionary<int, List<(int Bone, float W)>?[]>? full, out List<MeshSkin>? fullSkins,
-        Dictionary<string, Dictionary<string, float>>? mix = null)
+        Dictionary<string, Dictionary<string, float>>? mix = null, Func<string, string, bool>? sameFit = null)
     {
         fullSkins = null;
         var m = Parse(file);
@@ -333,7 +337,8 @@ public static class MdlRigger
                         local.TryAdd(bones[table[k]], k);
                     var source = new HashSet<int>();
                     foreach (var n in (side.Merge ? usedSources : usedSources.Take(1)).Concat(side.Bones).Append(side.Parent))
-                        if (local.TryGetValue(n, out var k))
+                        if (local.TryGetValue(n, out var k)
+                            && (sameFit == null || n == side.Parent || RigParts.IsRigBone(n) || sameFit(n, side.Parent)))
                             source.Add(k);
                     foreach (var (n, k) in local)
                         if (n.StartsWith(side.OldPrefix, StringComparison.Ordinal))
@@ -518,6 +523,10 @@ public static class MdlRigger
                             var body = others.Where(o => !IsRig(o.Bone)).OrderByDescending(o => o.W).ToList();
                             var rig = others.Where(o => IsRig(o.Bone)).ToList();
                             int keep = Math.Max(1, slots - need - rig.Count);
+                            // (only the small ones: a real share of another bone's, a thigh's at the butt's crease, is
+                            // kept, and the box gets fewer corners instead; moved onto another bone it bent wrong with
+                            // the leg, and was fitted to other races like the wrong bone)
+                            keep = Math.Max(keep, body.Count(o => o.W >= 0.06f));
                             if (body.Count > keep)
                             {
                                 float spare = body.Skip(keep).Sum(o => o.W);
@@ -572,9 +581,19 @@ public static class MdlRigger
                         int fallback = table.IndexOf((ushort)bones.IndexOf(group[0].Parent));
                         if (rigSlots.Count == 0)
                             continue;
+                        // (with the racial fitting known: weight only ever goes between the box and bones fitted like
+                        // its own bone, so the skin is fitted to every race as it was)
+                        HashSet<int>? likeParent = null;
+                        if (sameFit != null && fallback >= 0)
+                        {
+                            likeParent = new HashSet<int>();
+                            for (int k = 0; k < table.Count; k++)
+                                if (table[k] < bones.Count && !RigParts.IsRigBone(bones[table[k]]) && sameFit(bones[table[k]], group[0].Parent))
+                                    likeParent.Add(k);
+                        }
                         try
                         {
-                            Smooth(m, data, lod, mesh, pe, we, ie, slots, rigSlots, fallback, group[0].Optional, fw);
+                            Smooth(m, data, lod, mesh, pe, we, ie, slots, rigSlots, fallback, group[0].Optional, fw, likeParent);
                         }
                         catch (Exception e)
                         {
@@ -1651,7 +1670,7 @@ public static class MdlRigger
     /// grows or moves.
     /// </summary>
     private static void Smooth(Parsed m, byte[] data, int lod, Mesh mesh, Element pe, Element we, Element ie, int slots,
-        HashSet<int> rig, int fallback, bool toOwnBone = false, List<(int Bone, float W)>?[]? fw = null)
+        HashSet<int> rig, int fallback, bool toOwnBone = false, List<(int Bone, float W)>?[]? fw = null, HashSet<int>? likeParent = null)
     {
         int n = mesh.VertexCount;
         List<(int Bone, float W)> Current(int v)
@@ -1767,9 +1786,29 @@ public static class MdlRigger
                     body += x;
                 entries.Add((b, x));
             }
+            if (likeParent != null && !toOwnBone)
+            {
+                // Only between the box and the bones fitted like its own: less goes back to its own bone, more is
+                // taken from those bones only (by their share), never from any other.
+                if (wanted < current)
+                {
+                    if (fallback < 0)
+                        continue;
+                    entries = entries.Select(e => (e.Bone, rig.Contains(e.Bone) ? e.W * wanted / current : e.W)).Append((fallback, current - wanted)).ToList();
+                }
+                else
+                {
+                    float pool = entries.Where(e => !rig.Contains(e.Bone) && likeParent.Contains(e.Bone)).Sum(e => e.W);
+                    float more = MathF.Min(wanted - current, pool);
+                    if (more <= 1e-5f)
+                        continue;
+                    entries = entries.Select(e => (e.Bone, rig.Contains(e.Bone) ? e.W * (current + more) / current
+                        : likeParent.Contains(e.Bone) ? e.W * (pool - more) / pool : e.W)).ToList();
+                }
+            }
             // (a shape grid hands what it lets go of to its own bone, which it moves exactly with: never to the
             // bones around it, so nothing at a seam with another model changes)
-            if ((body <= 1e-6f || toOwnBone) && wanted < current)
+            else if ((body <= 1e-6f || toOwnBone) && wanted < current)
             {
                 // Nothing of the body's to hand the rest to: the part's own bone takes it.
                 if (fallback < 0)
