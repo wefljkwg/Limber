@@ -31,6 +31,24 @@ Koikatsu needs BepInEx and KKAPI, which any HF Patch or BetterRepack install alr
 
 Pose, shape and animate characters in group pose. Everything happens on your screen only. Open it with `/limber1` (or `/lmb`).
 
+### New in 0.69.0
+
+- **Paired Animations** (Posing): line two characters up with each other (face to face, behind, side by side...), give each an animation (any race's version) and start them together. Save the pairing with each one's IK, attached bones, FK pose and Move character.
+- **Stomach bulge** (Body shape): a ridge, peaked ridge or dome pushed out of the belly, with length, size, penis shape, creases, tightening and navel stretch, and presets. It can follow the partner's penis, growing and sinking as it moves, and a long one pushes the breasts apart.
+- **Body shape**: the detail sliders now sit in the main groups and all work live, with no build. New Neck length, and Leg spacing moves the whole legs down to the feet. Sliders no longer drop off when an animation plays.
+- **Body physics**: five sections (base to tip) for the breasts, butt and testicles, each with its own size and position, tilt, nipples up / down, hanging testicles, and colliders that press into the skin. A new **Physics collisions** page and an updated how-to guide.
+- **Body swap** (Body): the character becomes another race, whole or body only, with a gender setting and skin tint.
+- **Skin effects** (Scene): a wet sheen, a flush, wet eyes, and steam / musk rising off the body, the crotch, the chest, the armpits, the penis or the breath.
+- **Sync** (Scene): its own page, and it now syncs whole poses both ways for everything, not only Koikatsu.
+- **Always-on looks and presets**: give any player or NPC (a squadron member, say) a saved look and a global preset that goes on whenever they're around.
+- **Mesh morphing** (Posing): reshape the face's own mesh with brushes on a face map.
+- **Animations**: start frozen, play / pause everyone at once, and play another race's version of any animation (base animations too).
+- **Move character**: set a character's place and rotation in the world, or move them from where they started.
+- **Camera**: a free camera (WASD, E / Q).
+- **Entity spawning and Costume** (Scene): any creature as an actor, or drawn in place of a character.
+- **Extras**: walk around on the character select screen (with a following camera and actors), a flat-colour Backdrop, extra minions that follow you, and Limber Poses.
+- **Everywhere**: presets and Reset to default on every page, an actor list window, pages that pop out into their own windows, and a layout that fits narrow windows.
+
 ### Posing
 
 | Page | What it does |
@@ -44,8 +62,10 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 | **Hands** | Ready-made finger poses, such as a fist, an open hand or pointing. |
 | **Bone scale** | Make any bone bigger or smaller, choosing whether the bones attached to it grow too. |
 | **Attach** | Hold a bone onto another character, for hands on shoulders or holding hands. |
-| **Move character** | Move, turn and resize a whole character, along the world's directions or the way they face. |
-| **Animations** | Play any of the game's animations, shown as a grid with icons. You can change the speed too. |
+| **Move character** | Move, turn and resize a whole character, along the world's directions or the way they face, or set their place and rotation in the world directly. |
+| **Paired Animations** | Line two characters up with each other and start an animation on each at the same moment (any race's version). Save pairings with each one's posing. |
+| **Mesh morphing** | Reshape the face's own mesh with brushes (grab, push / pull, pinch, smooth) on a face map. |
+| **Animations** | Play any of the game's animations, shown as a grid with icons. Change the speed, start frozen, pause or play everyone at once, and play another race's version of any animation. |
 | **Actors** | Add extra characters to the scene, as copies of someone, wearing a saved look, or looking like any named character from the game. With "Also run outside GPose" on, you can add them in the open world too (only on your screen). |
 
 ### Body
@@ -53,18 +73,22 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 | Page | What it does |
 | --- | --- |
 | **Body physics** | Soft, jiggling breasts, butt, testicles and belly that react to movement and touch. Press **Rig** once, then turn each part on or off. The soft belly has its own rig, and the breasts rest on it. The live rig works with no rigging and no redraw, and with separate wobbles each nearby character wobbles on their own. Pick which characters it affects, or leave it on everyone. |
-| **Body shape** | Sliders for the body's shape, shown live or built into the character's models. With the live rig on, the detail sliders change the body as you drag them, with no build and no redraw. Pick which characters it affects, or leave it on everyone. |
+| **Body shape** | Sliders for the body's shape, all shown live as you drag them (no build, no redraw), or built into the character's models. Includes a **Stomach bulge** that can follow the partner's penis. Pick which characters it affects, or leave it on everyone. |
+| **Physics collisions** | What pushes each soft part (arms, hands, thighs, other characters, the floor, props) and how it gives way. |
+| **Body swap** | The character becomes another race: the whole body, or the body only (keeping the head and face). |
 | **Dynamic Bones** | Parts that sway and spring with the body, from stiff to loose. |
-| **Limber Animations** | Animations Limber plays by itself: throbbing, twerking, an ahegao face, expansion (breasts, butt, penis, and a pregnant belly that grows round) and height growth or shrinking (from ant-sized up to a mountain-sized giant), each with many patterns. Tick the ones you want and start them all at once with **Start all selected**. |
-| **Oral** | A two-character mode with head and mouth movement. The mouth rig can be turned off. |
+| **Limber Animations** | Animations Limber plays by itself: throbbing, an ahegao face, expansion (breasts, butt, penis, and a pregnant belly that grows round) and height growth or shrinking (from ant-sized up to a mountain-sized giant), each with many patterns. Tick the ones you want and start them all at once with **Start all selected**. |
 
 ### Scene
 
 | Page | What it does |
 | --- | --- |
-| **Appearance & gear** | Change a character's race, face, hair, colours, body, outfit and weapons. It has colour pickers, hairstyle previews, saved looks and look-file import. |
+| **Appearance & gear** | Change a character's race, face, hair, colours, body, outfit and weapons. It has colour pickers, hairstyle previews, saved looks, look-file import and a history of recent looks. Any saved look can go on a player or NPC by name, every time they're around. |
+| **Sync** | Sync with another player: whole poses are sent both ways, so you both see the same thing, whatever moves the characters. |
+| **Skin effects** | A wet sheen, a flush, wet eyes, and steam / musk rising off the body, fading in and out. |
+| **Entity spawning / Costume** | Any creature from the game as an actor you can pose, or drawn in place of a character. |
 | **Voice Switcher** | Give any character, each actor on its own, any player voice: from the game's list, another character's voice, or by number. |
-| **Camera** | Set the zoom, angles, tilt and position. You can unlock its limits, let it pass through walls and save camera shots. |
+| **Camera** | Set the zoom, angles, tilt and position. You can unlock its limits, let it pass through walls, fly a free camera and save camera shots. |
 | **Timeline** | Make your own animations by setting keyframes for poses, movement and almost any setting, then playing them back. It can open in its own window. |
 | **Devices** | Colliders (like hands or toys) that press the soft body, and motion devices that move bones on their own. |
 | **Housing props / World props** | Browse the game's furniture and objects, preview them, and place them in your scene. World props can be sorted by area or by type. Attach any placed prop to a character's bone (a hand, the head, the hips...) so it moves with them. |
@@ -94,13 +118,19 @@ Needs the Limber Koikatsu plugin (see **Install** above).
 - **Hide Limber window when UI is hidden**: an option in Advanced settings.
 - **Ragdoll mode** (Extras): a character goes limp and falls where they stand; push them again while they're down.
 - **Hide mounts** (Extras): riders' mounts aren't drawn, so they look like they're floating.
+- **Extra minions** (Extras): up to 12 minions that follow you around.
+- **Backdrop** (Extras): a flat colour all round the chosen character, for clean shots.
+- **Character select** (Extras): walk around on the character select screen, with a camera that follows and actors you can add.
+- **Global presets**: everything a character has, saved as one preset, put on anyone, or on a player or NPC every time they're around.
+- **Presets and Reset to default**: on every page.
+- **Actor list**: a small window listing every character, to choose, hide or show them.
 - **Performance (stutters)** (Advanced): lists any part of Limber that took long enough in a frame to cause a stutter, to track down hitches.
 
 ## Planned features
 
 Quality of life and bug fixes always come first.
 
-- [ ] Stomach / abdominal bulge (with shape)
+- [x] Stomach / abdominal bulge (with shape)
 - [x] Stomach / belly expansion and impregnation
 - [ ] Mouth / throat bulge (with shape)
 - [x] Vanilla voice switcher
