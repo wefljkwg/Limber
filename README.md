@@ -48,6 +48,7 @@ Pose, shape and animate characters in group pose. Everything happens on your scr
 - **Entity spawning and Costume** (Scene): any creature as an actor, or drawn in place of a character.
 - **Extras**: walk around on the character select screen (with a following camera and actors), a flat-colour Backdrop, extra minions that follow you, and Limber Poses.
 - **Everywhere**: presets and Reset to default on every page, an actor list window, pages that pop out into their own windows, and a layout that fits narrow windows.
+- **Fixes**: the butt's crease stays smooth at large Width / Height / Projection, Projection brings the whole cheek out (not only the tip), the soft belly follows Waist and Belly, and Rig everything no longer dents the hips and crease on races far from the body mod's (Roegadyn, Highlander...). Press Rig everything again to get this.
 
 ### Posing
 
