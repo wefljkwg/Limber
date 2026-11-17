@@ -61,6 +61,48 @@ public static class Bulge
 
     public static bool AnyOn => !Wanted.IsEmpty;
 
+    /// <summary>How far each character's breasts are pushed apart and forward by a bulge reaching them (model metres),
+    /// with their object table slot. Set by the live rig, used in the bone update (<see cref="UpdateBreasts"/>).</summary>
+    public static readonly ConcurrentDictionary<nint, (float Push, ushort Index)> BreastPush = new();
+    private static readonly Limber.Core.SkeletonInfoCache Cache = new();
+
+    /// <summary>Bone update: the breasts moved apart and forward where a long bulge reaches up between them.</summary>
+    public static void UpdateBreasts()
+    {
+        if(BreastPush.IsEmpty)
+            return;
+        foreach(var (address, (push, index)) in BreastPush)
+        {
+            if(push <= 0.0005f || !float.IsFinite(push) || !Wanted.ContainsKey(address))
+                continue;
+            if(!Limber.Core.ActorSkeleton.TryGet(address, index, Cache, out var sk))
+                continue;
+            int l = sk.Info.IndexOf("j_mune_l"), r = sk.Info.IndexOf("j_mune_r");
+            if(l < 0 || r < 0)
+                continue;
+            int chest = sk.Info.IndexOf("j_sebo_c"), neck = sk.Info.IndexOf("j_kubi");
+            var pl = sk.GetModelFrame(l).Position;
+            var pr = sk.GetModelFrame(r).Position;
+            var across = pl - pr;
+            if(across.LengthSquared() < 1e-8f)
+                continue;
+            across = Vector3.Normalize(across);
+            var up = chest >= 0 && neck >= 0 ? sk.GetModelFrame(neck).Position - sk.GetModelFrame(chest).Position : Vector3.UnitY;
+            up = up.LengthSquared() > 1e-8f ? Vector3.Normalize(up) : Vector3.UnitY;
+            var forward = Vector3.Cross(across, up);
+            if(forward.LengthSquared() < 1e-8f)
+                continue;
+            forward = Vector3.Normalize(forward);
+            var mid = (pl + pr) * 0.5f;
+            var chestAt = chest >= 0 ? sk.GetModelFrame(chest).Position : mid - forward * 0.05f;
+            if(Vector3.Dot(forward, mid - chestAt) < 0f)
+                forward = -forward;
+            // (apart, mostly, and a little forward: as if the bulge pushed up between and under them)
+            sk.SetModelPosition(l, pl + across * (push * 0.7f) + forward * (push * 0.45f));
+            sk.SetModelPosition(r, pr - across * (push * 0.7f) + forward * (push * 0.45f));
+        }
+    }
+
     /// <summary>What's happening with each character's bulge (for the page).</summary>
     public static readonly ConcurrentDictionary<nint, string> Status = new();
     /// <summary>Skin vertices the bulge moved last frame (all characters), and this frame's count so far.</summary>
@@ -79,6 +121,7 @@ public static class Bulge
     public sealed class Marks
     {
         public float MidX, PubisY, NavelY, PelvisZ, HipWidth;
+        public float BreastY = float.NaN;   // the breast bones' height at rest (NaN: none)
         public Vector3 NavelAt;
         public Matrix4x4 PelvisRest;
         public int PelvisBone = -1;
@@ -107,6 +150,7 @@ public static class Bulge
             NavelAt = new Vector3(midX, navel, z + hw * 0.55f),
             PelvisRest = Matrix4x4.CreateScale(pelvis.Scale) * Matrix4x4.CreateFromQuaternion(pelvis.Rotation) * Matrix4x4.CreateTranslation(pelvis.Position),
             PelvisBone = index("j_kosi"),
+            BreastY = rest("j_mune_l") is { } bl && rest("j_mune_r") is { } br ? (bl.Position.Y + br.Position.Y) * 0.5f : float.NaN,
         };
     }
 
@@ -148,28 +192,33 @@ public static class Bulge
     {
         float t = (y - b.Y0) / b.Length;
         float w = b.Width;
-        // (the head's rim: a little wider near the end, with a slight neck before it)
-        float rim = b.Penis * Smooth(0.72f, 0.9f, t) * (1f - Smooth(1.0f, 1.1f, t));
-        float wHere = w * (1f + 0.22f * rim);
+        // The penis's own shape (Penis shape): the shaft round and crisp-edged under the skin, a neck below the head,
+        // the head's rim (the corona) standing out wider, and the head itself fuller to its rounded end.
+        float pen = b.Penis;
+        float rim = MathF.Exp(-MathF.Pow((t - 0.86f) / 0.04f, 2f));                    // the corona's ridge
+        float head = Smooth(0.82f, 0.9f, t) * (1f - Smooth(1.0f, 1.12f, t));            // the head
+        float wHere = w * (1f + pen * (0.5f * rim + 0.25f * head));
         float xr = (x - b.X0) / wHere;
-        // Across: soft (a bell) or rounder like a shaft under the skin.
+        // Across: soft (a bell) or crisper; with Penis shape, a round shaft with a clear edge.
         float bell = MathF.Exp(-xr * xr * 2.2f);
         float shaft = xr * xr < 1f ? MathF.Sqrt(1f - xr * xr) : 0f;
         float crisp = MathF.Pow(MathF.Max(shaft, 0f), 0.6f);
         float soft = 0.35f + 0.65f * b.Soft;
         float across = bell * soft + (1f - soft) * crisp;
-        across = across * (1f - b.Penis * 0.6f) + shaft * b.Penis * 0.6f;
+        float shaftEdge = MathF.Pow(MathF.Max(shaft, 0f), 0.45f) * (1f - 0.15f * MathF.Max(0f, xr * xr - 0.7f));
+        across = across * (1f - pen) + shaftEdge * pen;
         // Along: rising out of the pubis, lower near it (taper), a round end, and the peak at the end.
         // (nothing at or below the pubis: the pubic hair and what's below stay as they are)
         float rise = Smooth(0.02f, 0.2f + 0.15f * b.Soft, t);
         float endLen = MathF.Max(w * b.Round / b.Length, 0.02f);
         float end = t <= 1f ? 1f : MathF.Exp(-MathF.Pow((t - 1f) / endLen, 2f));
         float level = 1f - b.Taper * (1f - Math.Clamp(t, 0f, 1f));
-        float neck = 1f - 0.18f * b.Penis * MathF.Exp(-MathF.Pow((t - 0.82f) / 0.05f, 2f));
-        float ridge = rise * end * level * neck * across;
-        // the peak: a rounder bump where the tip is
+        float neck = 1f - 0.4f * pen * MathF.Exp(-MathF.Pow((t - 0.79f) / 0.035f, 2f));
+        float shapeAlong = 1f + pen * (0.35f * rim + 0.18f * head);
+        float ridge = rise * end * level * neck * shapeAlong * across;
+        // the peak: a rounder bump where the tip is (less of it with the penis's shape showing: the head is the peak)
         float pr = MathF.Sqrt(xr * xr / 1.3f + MathF.Pow((t - 1f) * b.Length / (w * 1.25f), 2f));
-        float peak = b.Peak * MathF.Exp(-pr * pr * 1.6f) * Smooth(0.02f, 0.25f, t);
+        float peak = b.Peak * (1f - 0.6f * pen) * MathF.Exp(-pr * pr * 1.6f) * Smooth(0.02f, 0.25f, t);
         // A dome: round, centred on the far end.
         float dx = (x - b.X0) / (w * 2.2f), dy = (y - (b.Y0 + b.Length * 0.75f)) / MathF.Max(b.Length * 0.6f, w * 2f);
         float r2 = dx * dx + dy * dy;

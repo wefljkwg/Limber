@@ -389,6 +389,7 @@ public static unsafe class LiveRig
         {
             person.BulgeStrength = 0f;
             person.BulgeTicks = 0;
+            Limber.Rig.Bulge.BreastPush.TryRemove(person.Address, out _);
             return null;
         }
         if (plan.Marks is not { } marks)
@@ -455,8 +456,25 @@ public static unsafe class LiveRig
             ? $", following: tip {(person.BulgeStrength > 0.05f ? "inside" : "outside")}" : ", following: no partner's tip near the pelvis";
         Limber.Rig.Bulge.Status[person.Address] = $"on: {person.BulgeLength * 100f:0} cm long, {person.BulgeStrength * 100f:0}% strength, {bellyVertices} live skin vertices{follow}";
         if (person.BulgeStrength <= 0.002f || person.BulgeLength <= 0.002f)
+        {
+            Limber.Rig.Bulge.BreastPush.TryRemove(person.Address, out _);
             return null;
-        return Limber.Rig.Bulge.Make(marks, bs, person.BulgeLength, person.BulgeSide, person.BulgeStrength);
+        }
+        var made = Limber.Rig.Bulge.Make(marks, bs, person.BulgeLength, person.BulgeSide, person.BulgeStrength);
+        // Long enough to reach up between the breasts: they're pushed apart and forward (by how far past the underside
+        // of the breasts it reaches).
+        if (float.IsFinite(marks.BreastY))
+        {
+            float reach = made.Y0 + made.Length + made.Width * made.Round * 0.5f;
+            float under = marks.BreastY - marks.HipWidth * 0.3f;
+            float past = Math.Clamp((reach - under) / MathF.Max(marks.HipWidth * 0.5f, 0.01f), 0f, 1.5f);
+            float push = past * made.Amp * 0.8f;
+            if (push > 0.0005f)
+                Limber.Rig.Bulge.BreastPush[person.Address] = (push, person.Want.Index);
+            else
+                Limber.Rig.Bulge.BreastPush.TryRemove(person.Address, out _);
+        }
+        return made;
     }
 
     // ---- What a plan is made from (read in the bone update, used in the background)
