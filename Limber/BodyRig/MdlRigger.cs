@@ -114,7 +114,24 @@ public static class MdlRigger
 
     /// <summary>The model with the parts weighted onto their lattices, or null if nothing in it belongs to them.</summary>
     public static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log)
+        => Rig(file, sides, log, null, out _);
+
+    /// <summary>
+    /// The same weighting as <see cref="Rig"/>, for the live rig (which moves the vertices itself, so isn't bound by
+    /// the game's vertex format): every weight each vertex wants, as floats, with no 8-bone limit, no rounding to
+    /// 1/255 and no 64 / 128-bone table limit (the butt's cleft keeps both cheeks' corners, so it stays smooth).
+    /// LoD 0 only; the meshes nothing changed are as <see cref="Skin"/> gives them. Null if nothing was weighted.
+    /// </summary>
+    public static List<MeshSkin>? RigSkins(byte[] file, IReadOnlyList<Side> sides, List<string> log)
     {
+        Rig(file, sides, log, new Dictionary<int, List<(int Bone, float W)>?[]>(), out var skins);
+        return skins;
+    }
+
+    private static byte[]? Rig(byte[] file, IReadOnlyList<Side> sides, List<string> log,
+        Dictionary<int, List<(int Bone, float W)>?[]>? full, out List<MeshSkin>? fullSkins)
+    {
+        fullSkins = null;
         var m = Parse(file);
         if (m.NeckMorphs > 0)
         {
@@ -126,7 +143,8 @@ public static class MdlRigger
         var added = new List<string>();
         var tables = m.Tables.Select(t => new List<ushort>(t)).ToList();
         var data = file.AsSpan(m.DataStart).ToArray();
-        int cap = m.Version == V5 ? 64 : 128;
+        // (full: indices are still bytes in a MeshSkin, so 255 bones a table)
+        int cap = full != null ? 255 : m.Version == V5 ? 64 : 128;
         int total = 0;
         var compacted = new HashSet<int>(); // bone tables already cleared of unused bones
 
@@ -153,7 +171,7 @@ public static class MdlRigger
             }
         }
 
-        for (int lod = 0; lod < m.LodCount; lod++)
+        for (int lod = 0; lod < (full != null ? Math.Min(1, m.LodCount) : m.LodCount); lod++)
         {
             var (first, count) = m.Lods[lod];
             for (int mi = first; mi < first + count && mi < m.Meshes.Count; mi++)
@@ -161,6 +179,9 @@ public static class MdlRigger
                 var mesh = m.Meshes[mi];
                 if (mi >= m.Declarations.Count)
                     continue;
+                List<(int Bone, float W)>?[]? fw = null;
+                if (full != null && !full.TryGetValue(mi, out fw))
+                    full[mi] = fw = new List<(int Bone, float W)>?[mesh.VertexCount];
                 var decl = m.Declarations[mi];
                 var pe = decl.FirstOrDefault(e => e.Usage == 0);
                 var we = decl.FirstOrDefault(e => e.Usage == 1);
@@ -177,6 +198,18 @@ public static class MdlRigger
 
                 int Address(Element e, int v)
                     => (int)(m.VertexOffset[lod] - m.DataStart + mesh.BufferOffset[e.Stream] + v * mesh.Stride[e.Stream] + e.Offset);
+
+                // A vertex's weights now (bone = its slot in the mesh's bone table).
+                List<(int Bone, float W)> Current(int v, int wa, int ia)
+                {
+                    if (fw != null && v < fw.Length && fw[v] is { } have)
+                        return new List<(int Bone, float W)>(have);
+                    var list = new List<(int Bone, float W)>(slots);
+                    for (int k = 0; k < slots; k++)
+                        if (data[wa + k] != 0)
+                            list.Add((data[ia + k], data[wa + k] / 255f));
+                    return list;
+                }
 
                 // Vertices already weighted in this mesh, per part (so the second side doesn't redo the first's share).
                 var done = new Dictionary<string, HashSet<int>>();
@@ -211,9 +244,7 @@ public static class MdlRigger
                             int wa = Address(we, v), ia = Address(ie, v), pa = Address(pe, v);
                             if (wa + slots > data.Length || ia + slots > data.Length || pa + 12 > data.Length)
                                 break;
-                            bool on = false;
-                            for (int k = 0; k < slots && !on; k++)
-                                on = data[wa + k] != 0 && sourceSlots.Contains(data[ia + k]);
+                            bool on = Current(v, wa, ia).Any(e => sourceSlots.Contains(e.Bone));
                             if (!on)
                                 continue;
                             var at = ReadPosition(data, pa, pe.Type);
@@ -254,7 +285,8 @@ public static class MdlRigger
                         // No room: first the bones the mesh's table lists but no vertex uses are let go of (models
                         // often carry many), then it's tried again; still none, and this part is left out of this
                         // mesh only (the rest of the rig still goes on, and the model still loads as it was there).
-                        int freed = compacted.Add(mesh.BoneTable) ? Compact(m, data, tables, mesh.BoneTable) : 0;
+                        // (not for the full weights: their indices are the table's as it was)
+                        int freed = full == null && compacted.Add(mesh.BoneTable) ? Compact(m, data, tables, mesh.BoneTable) : 0;
                         if (freed > 0)
                             log.Add($"mesh {mi}: {freed} unused bone(s) taken out of its table to make room");
                         if (freed == 0 || !AddAll())
@@ -335,20 +367,17 @@ public static class MdlRigger
                         int wa = Address(we, v), ia = Address(ie, v), pa = Address(pe, v);
                         if (wa + slots > data.Length || ia + slots > data.Length || pa + 12 > data.Length)
                             break;
-                        data.AsSpan(wa, slots).CopyTo(w);
-                        data.AsSpan(ia, slots).CopyTo(ix);
+                        var cur = Current(v, wa, ia);
                         float weight = 0f;
                         var others = new List<(int Bone, float W)>();
                         bool already = doneHere.Contains(v);
-                        for (int k = 0; k < slots; k++)
+                        foreach (var (curBone, curW) in cur)
                         {
-                            if (w[k] == 0)
-                                continue;
                             // Already given its share of this side's box by the other side's pass: keep that as it is.
-                            if (source.Contains(ix[k]) && !(already && ownLattice.Contains(ix[k])))
-                                weight += w[k] / 255f;
+                            if (source.Contains(curBone) && !(already && ownLattice.Contains(curBone)))
+                                weight += curW;
                             else
-                                others.Add((ix[k], w[k] / 255f));
+                                others.Add((curBone, curW));
                         }
                         if (weight <= 0f)
                             continue;
@@ -369,9 +398,9 @@ public static class MdlRigger
                             share = RegionShare(c, side.Columns, side.Rows, side.Steps);
                             if (share < 1e-3f)
                                 continue;
-                            for (int k = 0; k < slots; k++)
-                                if (w[k] != 0 && source.Contains(ix[k]) && !ownLattice.Contains(ix[k]))
-                                    others.Add((ix[k], w[k] / 255f * (1f - share)));
+                            foreach (var (curBone, curW) in cur)
+                                if (source.Contains(curBone) && !ownLattice.Contains(curBone))
+                                    others.Add((curBone, curW * (1f - share)));
                             weight *= share;
                             share = 1f;
                         }
@@ -435,6 +464,19 @@ public static class MdlRigger
                         // largest (a tiny change, only where it fades into the body), never onto any rig bone.
                         int need = wanted.Count(kv => kv.Value > 1e-5f);
                         // (a shape grid never changes the body's own weights to make room: it takes what's free)
+                        if (fw != null)
+                        {
+                            // Full weights: everything it wants, as it is (only duplicates merged).
+                            var all = others.Concat(wanted.Select(kv => (Bone: kv.Key, W: kv.Value)))
+                                .GroupBy(e => e.Bone).Select(g => (Bone: g.Key, W: g.Sum(e => e.W))).Where(e => e.W > 1e-5f).ToList();
+                            float sumAll = all.Sum(e => e.W);
+                            if (sumAll <= 1e-6f)
+                                continue;
+                            fw[v] = all.Select(e => (e.Bone, e.W / sumAll)).ToList();
+                            doneHere.Add(v);
+                            changed++;
+                            continue;
+                        }
                         if (!side.Optional && others.Count > slots - need)
                         {
                             bool IsRig(int k) => k < table.Count && RigParts.IsRigBone(bones[table[k]]);
@@ -496,7 +538,7 @@ public static class MdlRigger
                             continue;
                         try
                         {
-                            Smooth(m, data, lod, mesh, pe, we, ie, slots, rigSlots, fallback, group[0].Optional);
+                            Smooth(m, data, lod, mesh, pe, we, ie, slots, rigSlots, fallback, group[0].Optional, fw);
                         }
                         catch (Exception e)
                         {
@@ -507,7 +549,55 @@ public static class MdlRigger
             }
         }
 
+        if (full != null)
+        {
+            fullSkins = total == 0 ? null : FullSkins(file, m, bones, tables, full);
+            return null;
+        }
         return total == 0 ? null : Rebuild(file, m, bones, added, tables, data);
+    }
+
+    private static List<MeshSkin> FullSkins(byte[] file, Parsed m, List<string> bones, List<List<ushort>> tables,
+        Dictionary<int, List<(int Bone, float W)>?[]> full)
+    {
+        var result = new List<MeshSkin>();
+        foreach (var skin in Skin(file, 0))
+        {
+            if (!full.TryGetValue(skin.Mesh, out var fw) || fw.All(x => x == null) || skin.Mesh >= m.Meshes.Count)
+            {
+                result.Add(skin);
+                continue;
+            }
+            var mesh = m.Meshes[skin.Mesh];
+            var names = tables[mesh.BoneTable].Select(t => t < bones.Count ? bones[t] : "").ToArray();
+            int n = mesh.VertexCount;
+            int stride = Math.Max(8, fw.Max(x => x?.Count ?? 0));
+            var indices = new byte[n * stride];
+            var weights = new float[n * stride];
+            for (int v = 0; v < n; v++)
+            {
+                if (v < fw.Length && fw[v] is { } list)
+                {
+                    int k = 0;
+                    foreach (var (b, x) in list.OrderByDescending(e => e.W))
+                    {
+                        if (b > 255)
+                            continue;
+                        indices[v * stride + k] = (byte)b;
+                        weights[v * stride + k] = x;
+                        k++;
+                    }
+                }
+                else
+                    for (int k = 0; k < 8; k++)
+                    {
+                        indices[v * stride + k] = skin.Indices[v * 8 + k];
+                        weights[v * stride + k] = skin.Weights[v * 8 + k];
+                    }
+            }
+            result.Add(new MeshSkin(skin.Mesh, names, indices, weights, stride, skin.Triangles, stride));
+        }
+        return result;
     }
 
     // ---- Rounding
@@ -1137,7 +1227,8 @@ public static class MdlRigger
     }
 
     /// <summary>One mesh's skinning (bone names, each vertex's 8 bone slots and weights) and triangles, for one LoD.</summary>
-    public sealed record MeshSkin(int Mesh, string[] Bones, byte[] Indices, float[] Weights, int Slots, ushort[] Triangles);
+    /// <summary>(<paramref name="Stride"/>: entries per vertex in Indices / Weights; 8, except the live rig's full weights.)</summary>
+    public sealed record MeshSkin(int Mesh, string[] Bones, byte[] Indices, float[] Weights, int Slots, ushort[] Triangles, int Stride = 8);
 
     public static List<MeshSkin> Skin(byte[] file, int lod)
     {
@@ -1492,9 +1583,20 @@ public static class MdlRigger
     /// grows or moves.
     /// </summary>
     private static void Smooth(Parsed m, byte[] data, int lod, Mesh mesh, Element pe, Element we, Element ie, int slots,
-        HashSet<int> rig, int fallback, bool toOwnBone = false)
+        HashSet<int> rig, int fallback, bool toOwnBone = false, List<(int Bone, float W)>?[]? fw = null)
     {
         int n = mesh.VertexCount;
+        List<(int Bone, float W)> Current(int v)
+        {
+            if (fw != null && v < fw.Length && fw[v] is { } have)
+                return have;
+            int wa = Address(m, lod, mesh, we, v), ia = Address(m, lod, mesh, ie, v);
+            var list = new List<(int Bone, float W)>(slots);
+            for (int k = 0; k < slots; k++)
+                if (data[wa + k] != 0)
+                    list.Add((data[ia + k], data[wa + k] / 255f));
+            return list;
+        }
         if (n == 0 || rig.Count == 0)
             return;
         // Welded by position (UV seams split vertices).
@@ -1517,11 +1619,10 @@ public static class MdlRigger
         var vertexShare = new float[n];
         for (int v = 0; v < n; v++)
         {
-            int wa = Address(m, lod, mesh, we, v), ia = Address(m, lod, mesh, ie, v);
             float x = 0f;
-            for (int k = 0; k < slots; k++)
-                if (data[wa + k] != 0 && rig.Contains(data[ia + k]))
-                    x += data[wa + k] / 255f;
+            foreach (var (b, bw) in Current(v))
+                if (rig.Contains(b))
+                    x += bw;
             vertexShare[v] = x;
             share[group[v]] += x;
             count[group[v]]++;
@@ -1585,21 +1686,18 @@ public static class MdlRigger
         for (int v = 0; v < n; v++)
         {
             float current = vertexShare[v], wanted = now[group[v]];
-            if (current <= 0f || MathF.Abs(wanted - current) < 1f / 255f)
+            if (current <= 0f || MathF.Abs(wanted - current) < (fw != null ? 1e-4f : 1f / 255f))
                 continue;
             if (toOwnBone && wanted > current)
                 continue; // (only ever handed back to its own bone; never taken from the others)
             int wa = Address(m, lod, mesh, we, v), ia = Address(m, lod, mesh, ie, v);
             var entries = new List<(int Bone, float W)>();
             float body = 0f;
-            for (int k = 0; k < slots; k++)
+            foreach (var (b, x) in Current(v))
             {
-                if (data[wa + k] == 0)
-                    continue;
-                float x = data[wa + k] / 255f;
-                if (!rig.Contains(data[ia + k]))
+                if (!rig.Contains(b))
                     body += x;
-                entries.Add((data[ia + k], x));
+                entries.Add((b, x));
             }
             // (a shape grid hands what it lets go of to its own bone, which it moves exactly with: never to the
             // bones around it, so nothing at a seam with another model changes)
@@ -1617,7 +1715,16 @@ public static class MdlRigger
                 continue;
             // Merge duplicates (the fallback may already be there) and keep what fits.
             entries = entries.GroupBy(e => e.Bone).Select(g => (Bone: g.Key, W: g.Sum(e => e.W))).Where(e => e.W > 1e-5f)
-                .OrderByDescending(e => e.W).Take(slots).ToList();
+                .OrderByDescending(e => e.W).ToList();
+            if (fw != null)
+            {
+                // (full weights: all of them, nothing rounded)
+                float sum = entries.Sum(e => e.W);
+                if (sum > 1e-6f && v < fw.Length)
+                    fw[v] = entries.Select(e => (e.Bone, e.W / sum)).ToList();
+                continue;
+            }
+            entries = entries.Take(slots).ToList();
             if (Quantize(entries, w, ix, slots))
             {
                 w[..slots].CopyTo(data.AsSpan(wa, slots));

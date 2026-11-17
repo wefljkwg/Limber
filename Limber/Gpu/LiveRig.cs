@@ -620,7 +620,8 @@ public static unsafe class LiveRig
     // The models as read, and as weighted onto a lattice (by what the lattice was), kept: making a plan again for a
     // slider change shouldn't read and weight every model again.
     private static readonly ConcurrentDictionary<string, byte[]?> FileCache = new();
-    private static readonly ConcurrentDictionary<string, byte[]?> RigCache = new();
+    // (the lattice weights in full: every weight a vertex wants, no 8-bone or bone-table limit, see MdlRigger.RigSkins)
+    private static readonly ConcurrentDictionary<string, List<MdlRigger.MeshSkin>?> RigCache = new();
 
     private static byte[]? Read(string file)
     {
@@ -954,19 +955,17 @@ public static unsafe class LiveRig
             var key = file + "|" + data.Length + "|" + sidesKey + "|" + string.Join(",", todo.Select(sd => sd.PartKey).Distinct());
             if (RigCache.Count > 32)
                 RigCache.Clear();
-            var weighted = RigCache.GetOrAdd(key, _ =>
+            onLattice = RigCache.GetOrAdd(key, _ =>
             {
                 try
                 {
-                    return MdlRigger.Rig(data, todo, new List<string>());
+                    return MdlRigger.RigSkins(data, todo, new List<string>());
                 }
                 catch
                 {
                     return null;
                 }
             });
-            if (weighted != null)
-                onLattice = MdlRigger.Skin(weighted, 0);
         }
         if (onLattice == null && sculpt == null && builtSculpt == null && surface == null && bulgeZone == null
             && (skinRef == null || (skinRef.Count == 0 && !materials.Any(MdlRigger.IsSkinMaterial))))
@@ -1020,8 +1019,8 @@ public static unsafe class LiveRig
                 var p = MdlRigger.ReadVector(original, pa, layout.PositionType);
                 for (int k = 0; k < 8; k++)
                 {
-                    idx[k] = skin.Indices[v * 8 + k];
-                    w[k] = skin.Weights[v * 8 + k];
+                    idx[k] = skin.Indices[v * skin.Stride + k];
+                    w[k] = skin.Weights[v * skin.Stride + k];
                 }
                 // The sculpts (a blend shape: the same move for this vertex every frame), as terms per slider, so new
                 // values go on with no new plan.
@@ -1063,23 +1062,23 @@ public static unsafe class LiveRig
                 float lat = 0f;
                 if (rskin != null && latticeBone != null)
                     for (int k = 0; k < rskin.Slots; k++)
-                        if (rskin.Weights[v * 8 + k] > 0f && rskin.Indices[v * 8 + k] < latticeBone.Length && latticeBone[rskin.Indices[v * 8 + k]])
-                            lat += rskin.Weights[v * 8 + k];
+                        if (rskin.Weights[v * rskin.Stride + k] > 0f && rskin.Indices[v * rskin.Stride + k] < latticeBone.Length && latticeBone[rskin.Indices[v * rskin.Stride + k]])
+                            lat += rskin.Weights[v * rskin.Stride + k];
                 if (capture != null)
                 {
                     var latW = new List<(string, float)>();
                     if (rskin != null && latticeBone != null)
                         for (int k = 0; k < rskin.Slots; k++)
-                            if (rskin.Weights[v * 8 + k] > 0f && rskin.Indices[v * 8 + k] < latticeBone.Length && latticeBone[rskin.Indices[v * 8 + k]])
-                                latW.Add((rskin.Bones[rskin.Indices[v * 8 + k]], rskin.Weights[v * 8 + k]));
+                            if (rskin.Weights[v * rskin.Stride + k] > 0f && rskin.Indices[v * rskin.Stride + k] < latticeBone.Length && latticeBone[rskin.Indices[v * rskin.Stride + k]])
+                                latW.Add((rskin.Bones[rskin.Indices[v * rskin.Stride + k]], rskin.Weights[v * rskin.Stride + k]));
                     // (a body already weighted onto the lattice, by the rig mod: its own weights are the lattice's)
                     float ownLat = 0f;
                     if (rskin == null)
                         for (int k = 0; k < skin.Slots; k++)
-                            if (skin.Weights[v * 8 + k] > 0f && skin.Indices[v * 8 + k] < skin.Bones.Length && RigParts.IsRigBone(skin.Bones[skin.Indices[v * 8 + k]]))
+                            if (skin.Weights[v * skin.Stride + k] > 0f && skin.Indices[v * skin.Stride + k] < skin.Bones.Length && RigParts.IsRigBone(skin.Bones[skin.Indices[v * skin.Stride + k]]))
                             {
-                                latW.Add((skin.Bones[skin.Indices[v * 8 + k]], skin.Weights[v * 8 + k]));
-                                ownLat += skin.Weights[v * 8 + k];
+                                latW.Add((skin.Bones[skin.Indices[v * skin.Stride + k]], skin.Weights[v * skin.Stride + k]));
+                                ownLat += skin.Weights[v * skin.Stride + k];
                             }
                     capture.Add(p, latW.ToArray(), rskin == null ? ownLat : lat);
                 }
@@ -1092,8 +1091,8 @@ public static unsafe class LiveRig
                     int b0 = slot.Count;
                     for (int k = 0; k < skin.Slots; k++)
                     {
-                        float wk = skin.Weights[v * 8 + k];
-                        int bone = skin.Indices[v * 8 + k];
+                        float wk = skin.Weights[v * skin.Stride + k];
+                        int bone = skin.Indices[v * skin.Stride + k];
                         if (wk <= 0f || bone >= skin.Bones.Length)
                             continue;
                         int sl = slotOf(skin.Bones[bone]);
@@ -1144,8 +1143,8 @@ public static unsafe class LiveRig
                 bool ok = true;
                 for (int k = 0; k < skin.Slots && ok; k++)
                 {
-                    float wk = skin.Weights[v * 8 + k];
-                    int bone = skin.Indices[v * 8 + k];
+                    float wk = skin.Weights[v * skin.Stride + k];
+                    int bone = skin.Indices[v * skin.Stride + k];
                     if (wk <= 0f || bone >= skin.Bones.Length)
                         continue;
                     int sl = slotOf(skin.Bones[bone]);
@@ -1159,8 +1158,8 @@ public static unsafe class LiveRig
                 if (rskin != null && keep > 0f)
                     for (int k = 0; k < rskin.Slots && ok; k++)
                     {
-                        float wk = rskin.Weights[v * 8 + k];
-                        int bone = rskin.Indices[v * 8 + k];
+                        float wk = rskin.Weights[v * rskin.Stride + k];
+                        int bone = rskin.Indices[v * rskin.Stride + k];
                         if (wk <= 0f || bone >= rskin.Bones.Length)
                             continue;
                         int sl = slotOf(rskin.Bones[bone]);
@@ -1305,20 +1304,19 @@ public static unsafe class LiveRig
         var key = file + "|" + data.Length + "|" + sidesKey + "|" + string.Join(",", todo.Select(sd => sd.PartKey).Distinct());
         if (RigCache.Count > 32)
             RigCache.Clear();
-        var weighted = RigCache.GetOrAdd(key, _ =>
+        var on = RigCache.GetOrAdd(key, _ =>
         {
             try
             {
-                return MdlRigger.Rig(data, todo, new List<string>());
+                return MdlRigger.RigSkins(data, todo, new List<string>());
             }
             catch
             {
                 return null;
             }
         });
-        if (weighted == null)
+        if (on == null)
             return skins;
-        var on = MdlRigger.Skin(weighted, 0);
         // (each mesh the lattice reweighted, the others as they were)
         return skins.Select(k => on.FirstOrDefault(o => o.Mesh == k.Mesh) ?? k).ToList();
     }
@@ -1495,8 +1493,8 @@ public static unsafe class LiveRig
                     _p.Add(pa + 12 <= block.Length ? MdlRigger.ReadVector(block, pa, layout.PositionType) : Vector3.Zero);
                     for (int k = 0; k < skin.Slots; k++)
                     {
-                        float wk = skin.Weights[v * 8 + k];
-                        int bone = skin.Indices[v * 8 + k];
+                        float wk = skin.Weights[v * skin.Stride + k];
+                        int bone = skin.Indices[v * skin.Stride + k];
                         if (wk <= 0f || bone >= skin.Bones.Length)
                             continue;
                         int sl = slotOf(skin.Bones[bone]);
@@ -1591,8 +1589,8 @@ public static unsafe class LiveRig
             if (lattice != null)
                 for (int k = 0; k < lattice.Slots; k++)
                 {
-                    float wk = lattice.Weights[v * 8 + k];
-                    int bone = lattice.Indices[v * 8 + k];
+                    float wk = lattice.Weights[v * lattice.Stride + k];
+                    int bone = lattice.Indices[v * lattice.Stride + k];
                     if (wk <= 0f || bone >= lattice.Bones.Length)
                         continue;
                     int sl = slotOf(lattice.Bones[bone]);
