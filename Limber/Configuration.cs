@@ -109,6 +109,8 @@ public class Configuration : IPluginConfiguration
     public bool ShowFaceMorphsTab { get; set; } = false;
     public bool ShowTwerk { get; set; } = false;
     public bool ShowEngineLayerTab { get; set; } = false;
+    /// <summary>Unfinished: Dataset capture (Extras). Off: hidden, and a capture running is stopped.</summary>
+    public bool ShowDatasetCapture { get; set; } = false;
     /// <summary>The Oral and Climax pages (still being made): hidden, and not running, unless switched on.</summary>
     public bool ShowOralTab { get; set; } = false;
     public bool ShowClimaxTab { get; set; } = false;

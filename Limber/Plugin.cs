@@ -447,7 +447,7 @@ public sealed class Plugin : IDalamudPlugin
             _followers = new Limber.Rig.Followers(_spawner, _config.Ik);
             _mainWindow.EntitiesTab = new EntitiesTab(_selection, _config.Ik, _spawner, _followers);
             _mainWindow.BodySwapTab = new BodySwapTab(_selection, _actors);
-            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab, Backdrop = _backdrop, Dataset = _dataset };
+            _mainWindow.ExtrasTab = new ExtrasTab(_selection, _ragdoll, _config.Ik) { Entities = _mainWindow.EntitiesTab, Backdrop = _backdrop, Dataset = _dataset, DatasetShown = () => _config.ShowDatasetCapture };
             limberTab.SyncLink = _koi;
             _windows.AddWindow(_mainWindow);
             foreach(var pageWindow in _mainWindow.PageWindows())
@@ -1032,10 +1032,10 @@ public sealed class Plugin : IDalamudPlugin
             // The camera works in GPose and out of it (whenever Limber is on).
             UpdateCamera(_config.PluginEnabled);
             // Dataset pictures: taken here, before anything (Limber's or other plugins') is drawn into the picture.
-            if(_config.PluginEnabled)
+            if(_config.PluginEnabled && _config.ShowDatasetCapture)
                 _dataset.Step();
             else if(_dataset.Running)
-                _dataset.Stop("Stopped: Limber was turned off.");
+                _dataset.Stop(_config.PluginEnabled ? "Stopped: Dataset capture was turned off (Advanced)." : "Stopped: Limber was turned off.");
             perf.Mark("selection and camera");
             if(_config.PluginEnabled)
             {

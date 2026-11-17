@@ -17,6 +17,8 @@ public sealed class ExtrasTab
     public BackdropService? Backdrop { get; set; }
     /// <summary>Dataset capture.</summary>
     public DatasetCapture? Dataset { get; set; }
+    /// <summary>Dataset capture shown (Advanced: unfinished, off by default).</summary>
+    public System.Func<bool> DatasetShown { get; set; } = () => true;
 
     public ExtrasTab(Selection selection, RagdollService ragdoll, RigSettings? config = null)
     {
@@ -191,7 +193,7 @@ public sealed class ExtrasTab
 
     private void DrawDataset()
     {
-        if(_config == null || Dataset == null)
+        if(_config == null || Dataset == null || !DatasetShown())
             return;
         ImGui.Spacing();
         ImGui.Separator();

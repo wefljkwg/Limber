@@ -1493,6 +1493,14 @@ public sealed class MainWindow : Window
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Experimental > Engine animation layer. Off: the page is hidden and it doesn't run.");
+        var dataset = Cfg.ShowDatasetCapture;
+        if (ImGui.Checkbox("Show Dataset capture (Extras)###limber_show_dataset", ref dataset))
+        {
+            Cfg.ShowDatasetCapture = dataset;
+            SaveLocked();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The Dataset capture section of Extras. Off: hidden, and a capture that's running stops.");
     }
 
     private void SaveLocked()
