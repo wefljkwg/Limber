@@ -483,6 +483,11 @@ public static unsafe class LiveRig
     {
         public required SkeletonInfo Info;
         public required (Vector3 Position, Quaternion Rotation, Vector3 Scale)[] Rest; // the skeleton at rest, model space
+        // The body models' own rest per bone (the inverse of the bind matrices the game skins them with), when it isn't
+        // the skeleton's: a body model made for another race (a body mod's Midlander body on a Roegadyn, a swapped body)
+        // is fitted by the game with its racial deformer folded into those matrices, so its vertices are in that
+        // race's shape, not this skeleton's. Everything the plan does is then in the model's own space (Rest too).
+        public Matrix4x4?[]? Bind;
         public required List<string> Files;
         public required Dictionary<string, BreastRigShape> Placements;
         public required bool Fit, Physics;
@@ -523,6 +528,31 @@ public static unsafe class LiveRig
                 }
                 else
                     rest[i] = local;
+            }
+            // The body models' own rest (see Bind): the rest pose moved into their space, bone by bone.
+            Matrix4x4?[]? bind = null;
+            try
+            {
+                bind = ModelBinds((nint)obj->DrawObject, info, rest);
+            }
+            catch
+            {
+            }
+            string bindKey = "";
+            if (bind != null)
+            {
+                float sum = 0f;
+                for (int i = 0; i < info.Count; i++)
+                {
+                    if (bind[i] is not { } e)
+                        continue;
+                    sum += e.M41 * 3.1f + e.M42 * 1.7f + e.M43 * 2.3f + e.M11 + e.M22 + e.M33;
+                    if (Matrix4x4.Decompose(e, out var sc, out var ro, out var tr) && MathUtil.IsFinite(sc) && MathUtil.IsFinite(tr))
+                        rest[i] = (tr, Quaternion.Normalize(ro), sc);
+                    else
+                        rest[i] = (e.Translation, rest[i].Item2, rest[i].Item3);
+                }
+                bindKey = $"fit{sum:0.####}";
             }
             var real = new HashSet<string>(RigParts.All.Where(p => info.IndexOf(p.BoneName(true, 0)) >= 0).Select(p => p.Key));
             var parts = RigParts.All.Where(p => PartWanted(p.Key)).ToArray();
@@ -587,15 +617,123 @@ public static unsafe class LiveRig
                 string.Join(";", files.OrderBy(f => f, StringComparer.Ordinal)),
                 want.Physics ? "p" : "-", fit ? "f" : "-", string.Join(",", real.OrderBy(x => x)), string.Join(",", parts.Select(p => p.Key)),
                 string.Join(";", placements.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + ":" + ShapeKey(kv.Value))),
-                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built), bodyFile ?? "",
+                string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built), bodyFile ?? "", bindKey,
                 Limber.Rig.Bulge.Wanted.ContainsKey(want.Address) ? "bulge" : "");
             return new Inputs
             {
                 Bulge = Limber.Rig.Bulge.Wanted.ContainsKey(want.Address),
-                Info = info, Rest = rest, Files = files, Placements = placements, Fit = fit, Physics = want.Physics, RealParts = real, Parts = parts,
+                Info = info, Rest = rest, Bind = bind, Files = files, Placements = placements, Fit = fit, Physics = want.Physics, RealParts = real, Parts = parts,
                 Sculpt = sculpt, Built = built, Key = key, BodyFile = bodyFile,
             };
         }
+    }
+
+    // The body models' rest per skeleton bone: the inverse of the bind matrices the game skins the body, hands, legs and
+    // feet with (each model's bone tables, +0xB8: one 3x4 per bone; +0xC0: which bone, partial << 12 | index). For a
+    // model of this skeleton's own race they're its rest pose and nothing changes (null); a model fitted from another
+    // race's has the racial deformer in them. Bones none of the models use go with their parent's fitting.
+    private static Matrix4x4?[]? ModelBinds(nint draw, SkeletonInfo info, (Vector3 Position, Quaternion Rotation, Vector3 Scale)[] rest)
+    {
+        var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)draw;
+        if (cb == null || cb->Skeleton == null || cb->Models == null)
+            return null;
+        var names = Limber.Rig.BodySwap.BodyBoneNames(cb);
+        if (names == null)
+            return null;
+        int slotCount = cb->SlotCount;
+        if (slotCount <= 0 || slotCount > 64)
+            return null;
+        var found = new Dictionary<int, float[]>();
+        // (1 body, 2 hands, 3 legs, 4 feet: the body's models; the head's are its own race's)
+        for (int slot = 1; slot <= 4 && slot < slotCount; slot++)
+        {
+            nint model = SafeMemory.ReadPointer((nint)(cb->Models + slot));
+            if (!SafeMemory.Plausible(model))
+                continue;
+            nint list = SafeMemory.ReadPointer(model + 0x58);
+            int tables = SafeMemory.Read<int>(model + 0x60, 0);
+            if (!SafeMemory.Plausible(list) || tables <= 0 || tables > 16)
+                continue;
+            for (int t = 0; t < tables; t++)
+            {
+                nint table = list + t * 0xE0;
+                nint matrices = SafeMemory.ReadPointer(table + 0xB8);
+                nint refsAt = SafeMemory.ReadPointer(table + 0xC0);
+                int count = SafeMemory.Read<int>(table + 0xC8, 0);
+                if (!SafeMemory.Plausible(matrices) || !SafeMemory.Plausible(refsAt) || count <= 0 || count > 1024)
+                    continue;
+                var floats = new float[count * 12];
+                var refs = new ushort[count];
+                fixed (float* to = floats)
+                    if (!SafeMemory.Copy(matrices, to, count * 48))
+                        continue;
+                fixed (ushort* to = refs)
+                    if (!SafeMemory.Copy(refsAt, to, count * 2))
+                        continue;
+                for (int e = 0; e < count; e++)
+                {
+                    int partial = refs[e] >> 12, bone = refs[e] & 0xFFF;
+                    if (partial != 0 || bone >= names.Length)
+                        continue;
+                    int at = info.IndexOf(names[bone]);
+                    if (at < 0 || at >= rest.Length || found.ContainsKey(at))
+                        continue;
+                    var one = new float[12];
+                    Array.Copy(floats, e * 12, one, 0, 12);
+                    found[at] = one;
+                }
+            }
+        }
+        if (found.Count == 0)
+            return null;
+
+        Matrix4x4 Own(int i) => Matrix4x4.CreateScale(rest[i].Scale) * Matrix4x4.CreateFromQuaternion(rest[i].Rotation) * Matrix4x4.CreateTranslation(rest[i].Position);
+        static float Diff(in Matrix4x4 a, in Matrix4x4 b)
+        {
+            var d = a - b;
+            return MathF.Abs(d.M11) + MathF.Abs(d.M12) + MathF.Abs(d.M13) + MathF.Abs(d.M21) + MathF.Abs(d.M22) + MathF.Abs(d.M23)
+                 + MathF.Abs(d.M31) + MathF.Abs(d.M32) + MathF.Abs(d.M33) + MathF.Abs(d.M41) + MathF.Abs(d.M42) + MathF.Abs(d.M43);
+        }
+        // How the 3x4s are laid out: whichever reads closer to the skeleton's own inverse rest.
+        float errA = 0f, errB = 0f;
+        foreach (var (i, f) in found)
+        {
+            if (!Matrix4x4.Invert(Own(i), out var inv))
+                continue;
+            errA += Diff(Limber.Rig.BodySwap.ToRowVector(f, 0, true), inv);
+            errB += Diff(Limber.Rig.BodySwap.ToRowVector(f, 0, false), inv);
+        }
+        bool columns = errA <= errB;
+
+        var result = new Matrix4x4?[info.Count];
+        var fit = new Matrix4x4?[info.Count]; // the model's space -> the skeleton's, per bone (null: the same)
+        bool any = false;
+        for (int i = 0; i < info.Count && i < rest.Length; i++)
+        {
+            var own = Own(i);
+            if (found.TryGetValue(i, out var f))
+            {
+                var inverseBind = Limber.Rig.BodySwap.ToRowVector(f, 0, columns);
+                if (!MathUtil.IsFinite(inverseBind.Translation) || !Matrix4x4.Invert(inverseBind, out var model))
+                    continue;
+                var d = inverseBind * own;
+                if (Diff(d, Matrix4x4.Identity) < 1e-4f)
+                    continue;
+                result[i] = model;
+                fit[i] = d;
+                any = true;
+            }
+            else
+            {
+                int p = info.Parents[i];
+                if (p >= 0 && p < i && fit[p] is { } pd && Matrix4x4.Invert(pd, out var undo))
+                {
+                    result[i] = own * undo;
+                    fit[i] = pd;
+                }
+            }
+        }
+        return any ? result : null;
     }
 
     private static string ShapeKey(BreastRigShape s)
@@ -662,6 +800,8 @@ public static unsafe class LiveRig
         }
         Matrix4x4 RestModel(int i)
         {
+            if (inp.Bind != null && i < inp.Bind.Length && inp.Bind[i] is { } fitted)
+                return fitted;
             var (pos, rot, scale) = inp.Rest[i];
             return Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(rot) * Matrix4x4.CreateTranslation(pos);
         }

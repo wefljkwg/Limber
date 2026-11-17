@@ -1131,7 +1131,7 @@ public static unsafe class BodySwap
         return MathF.Abs(Len(r0) - 1f) + MathF.Abs(Len(r1) - 1f) + MathF.Abs(Len(r2) - 1f);
     }
 
-    private static System.Numerics.Matrix4x4 ToRowVector(float[] m, int o, bool columnLayout) => columnLayout
+    internal static System.Numerics.Matrix4x4 ToRowVector(float[] m, int o, bool columnLayout) => columnLayout
         ? new System.Numerics.Matrix4x4(
             m[o + 0], m[o + 4], m[o + 8], 0f,
             m[o + 1], m[o + 5], m[o + 9], 0f,
@@ -1161,7 +1161,7 @@ public static unsafe class BodySwap
     }
 
     // The body skeleton's bone names (partial 0), by its Havok skeleton.
-    private static string[]? BodyBoneNames(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase* cb)
+    internal static string[]? BodyBoneNames(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase* cb)
     {
         var skeleton = cb->Skeleton;
         if(skeleton == null || skeleton->PartialSkeletonCount < 1 || skeleton->PartialSkeletons == null)
