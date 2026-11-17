@@ -226,7 +226,8 @@ public sealed class BodyShapeTab
 
         bool S(string label, string id, float value, Action<float> set, float min, float max, string tip)
         {
-            ImGui.SetNextItemWidth(-160 * ImGuiHelpers.GlobalScale);
+            // (a width that leaves the label room however narrow the window is)
+            ImGui.SetNextItemWidth(MathF.Max(80f * ImGuiHelpers.GlobalScale, MathF.Min(260f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X * 0.55f)));
             bool edited = ImGui.SliderFloat($"{label}###lmb_bulge_{id}", ref value, min, max, "%.2f");
             Tooltip(tip);
             if (edited)
