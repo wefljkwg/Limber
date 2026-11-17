@@ -1747,7 +1747,11 @@ public sealed unsafe class SoftBody
             // (a belly half from the middle of the body, so the two halves stay together)
             // (the butt across from its inner edge, at the cleft: the cheeks touch there, so grown from their middles
             // each would push its inner side through the other's and crumple the skin in the cleft)
-            pivot = new Vector3(_part.Region ? 0f : _part == RigParts.Butt ? inner : centre.X, centre.Y, back);
+            // (and out from its bone, not from the box's back face: the box sits on the outer part of the cheek, so
+            // grown from its back face only the tip got longer; from the bone the whole cheek comes out, the skin
+            // between following as the butt bone's own weights fade into the hips)
+            pivot = new Vector3(_part.Region ? 0f : _part == RigParts.Butt ? inner : centre.X, centre.Y,
+                _part == RigParts.Butt ? MathF.Min(back, 0f) : back);
 
         for (int i = 0; i < Side; i++)
         {
