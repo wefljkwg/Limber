@@ -95,7 +95,23 @@ public static class RigBuilder
         var parentOf = new Dictionary<string, string>();
         bool rebuiltFromRig = false;
 
-        foreach (var code in BodySkeletonCodes())
+        // Most races wear a body model made for the Midlander's (a body mod's c0201 / c0101), which the game fits to them
+        // with the racial deformers, bone by bone. The models are weighted to the Midlander skeleton's grid, so on
+        // another race the grid goes where that deformer puts the Midlander's (moved with the bone it hangs from):
+        // then the model sits in its grid there exactly as it does on the Midlander, and grows, shapes and jiggles the
+        // same. (Placed afresh on each race, the grid sat a little off the model on races far from the Midlander's
+        // shape, a Roegadyn: the hips and the butt's crease creased when it was shaped.)
+        byte[]? deformers = null;
+        try
+        {
+            deformers = ReadActive(Deformers.GamePath, out _);
+        }
+        catch
+        {
+        }
+        var baseParents = new Dictionary<string, Dictionary<string, string>>();
+        var codes = BodySkeletonCodes().OrderBy(c => c == "c0101" || c == "c0201" ? 0 : 1).ToList();
+        foreach (var code in codes)
         {
             var gamePath = GamePath(code);
             try
@@ -103,7 +119,32 @@ public static class RigBuilder
                 var source = ReadActive(gamePath, out var from);
                 if (source == null)
                     continue; // no such skeleton
-                var built = AddRig(source, RigParts.Built, shapes, out var added, out int replaced, out var bones, out var parents);
+                Func<string, Vector3, Vector3?>? relocate = null;
+                string baseCode = int.Parse(code.AsSpan(1, 2)) % 2 == 0 ? "c0201" : "c0101";
+                // (Lalafell and Hrothgar wear bodies of their own)
+                bool ownBody = code is "c1101" or "c1201" or "c1501" or "c1601";
+                if (!ownBody && code != baseCode && deformers != null && placed.TryGetValue(baseCode, out var baseBones)
+                    && baseParents.TryGetValue(baseCode, out var baseParent)
+                    && Deformers.Fitting(deformers, ushort.Parse(baseCode.AsSpan(1)), ushort.Parse(code.AsSpan(1))) is { Count: > 0 } fitting)
+                {
+                    lines.Add($"{code}: grids placed where the racial deformer puts {baseCode}'s.");
+                    relocate = (name, _) =>
+                    {
+                        if (!baseBones.TryGetValue(name, out var b))
+                            return null;
+                        // (fitted like the nearest bone above it the deformer has, as the game does: see WithRig)
+                        string? up = b.Parent;
+                        for (int guard = 0; up != null && guard < 64; guard++)
+                        {
+                            if (!RigParts.IsRigBone(up) && fitting.TryGetValue(up, out var m))
+                                return Vector3.Transform(b.Position, m);
+                            up = baseParent.TryGetValue(up, out var next) ? next : null;
+                        }
+                        return null;
+                    };
+                }
+                var built = AddRig(source, RigParts.Built, shapes, out var added, out int replaced, out var bones, out var parents, relocate);
+                baseParents[code] = parents;
                 foreach (var (child, parent) in parents)
                     parentOf.TryAdd(child, parent);
                 if (built == null)
@@ -222,9 +263,10 @@ public static class RigBuilder
         => AddRig(sklb, parts, shapes, out added, out replaced, out bones, out _);
 
     /// <param name="parentOf">Every bone's parent (by name) in the rigged skeleton.</param>
+    /// <param name="relocate">Where a bone goes instead (model space; by name and where it would go), or null.</param>
     public static byte[]? AddRig(byte[] sklb, RigPart[] parts, IReadOnlyDictionary<string, BreastRigShape> shapes,
         out string added, out int replaced, out Dictionary<string, (Vector3 Position, string Parent)> bones,
-        out Dictionary<string, string> parentOf)
+        out Dictionary<string, string> parentOf, Func<string, Vector3, Vector3?>? relocate = null)
     {
         bones = new Dictionary<string, (Vector3, string)>();
         parentOf = new Dictionary<string, string>();
@@ -235,7 +277,18 @@ public static class RigBuilder
         var placed = Place(parts, shapes, skeleton.IndexOf, i => (model[i].Position, model[i].Rotation, model[i].Scale), i => skeleton.Names[i],
             bones, out var report, out var missing);
         foreach (var bone in placed)
-            skeleton.Add(bone.Name, bone.Parent, new SkeletonXml.Transform(bone.Local, Quaternion.Identity, Vector3.One));
+        {
+            var local = bone.Local;
+            if (relocate?.Invoke(bone.Name, bone.Model) is { } at && float.IsFinite(at.X) && float.IsFinite(at.Y) && float.IsFinite(at.Z)
+                && bone.Parent >= 0 && bone.Parent < model.Length)
+            {
+                var bp = model[bone.Parent];
+                local = Vector3.Transform(at - bp.Position, Quaternion.Inverse(bp.Rotation)) / Safe(bp.Scale);
+                if (bones.TryGetValue(bone.Name, out var was))
+                    bones[bone.Name] = (at, was.Parent);
+            }
+            skeleton.Add(bone.Name, bone.Parent, new SkeletonXml.Transform(local, Quaternion.Identity, Vector3.One));
+        }
         added = (report.Count > 0 ? "added " + string.Join(", ", report) : "") + (missing.Count > 0 ? (report.Count > 0 ? "; " : "") + "no " + string.Join("; no ", missing) : "");
         if (report.Count == 0)
             return null;
