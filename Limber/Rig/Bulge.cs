@@ -160,7 +160,8 @@ public static class Bulge
         float across = bell * soft + (1f - soft) * crisp;
         across = across * (1f - b.Penis * 0.6f) + shaft * b.Penis * 0.6f;
         // Along: rising out of the pubis, lower near it (taper), a round end, and the peak at the end.
-        float rise = Smooth(-0.12f, 0.12f + 0.15f * b.Soft, t);
+        // (nothing at or below the pubis: the pubic hair and what's below stay as they are)
+        float rise = Smooth(0.02f, 0.2f + 0.15f * b.Soft, t);
         float endLen = MathF.Max(w * b.Round / b.Length, 0.02f);
         float end = t <= 1f ? 1f : MathF.Exp(-MathF.Pow((t - 1f) / endLen, 2f));
         float level = 1f - b.Taper * (1f - Math.Clamp(t, 0f, 1f));
@@ -168,12 +169,12 @@ public static class Bulge
         float ridge = rise * end * level * neck * across;
         // the peak: a rounder bump where the tip is
         float pr = MathF.Sqrt(xr * xr / 1.3f + MathF.Pow((t - 1f) * b.Length / (w * 1.25f), 2f));
-        float peak = b.Peak * MathF.Exp(-pr * pr * 1.6f);
+        float peak = b.Peak * MathF.Exp(-pr * pr * 1.6f) * Smooth(0.02f, 0.25f, t);
         // A dome: round, centred on the far end.
         float dx = (x - b.X0) / (w * 2.2f), dy = (y - (b.Y0 + b.Length * 0.75f)) / MathF.Max(b.Length * 0.6f, w * 2f);
         float r2 = dx * dx + dy * dy;
         float dome = r2 < 1f ? MathF.Pow(1f - r2, 1.2f + (1f - b.Soft)) : 0f;
-        dome *= 1f + b.Peak * 0.4f;
+        dome *= (1f + b.Peak * 0.4f) * Smooth(0.02f, 0.25f, t);
         return (ridge + peak) * (1f - b.Shape) + dome * b.Shape;
     }
 
@@ -184,10 +185,10 @@ public static class Bulge
             return 0f;
         float h = Raised(b, x, y);
         float t = (y - b.Y0) / b.Length;
-        float along = Smooth(-0.15f, 0.15f, t) * (t <= 1.15f ? 1f : MathF.Exp(-MathF.Pow((t - 1.15f) * 4f, 2f)));
+        float along = Smooth(0.02f, 0.25f, t) * (t <= 1.15f ? 1f : MathF.Exp(-MathF.Pow((t - 1.15f) * 4f, 2f)));
         float xr = MathF.Abs(x - b.X0) / (b.Width * (1f + b.Shape * 1.2f));
         float crease = b.Creases * 0.22f * MathF.Exp(-MathF.Pow((xr - 1.45f) / 0.28f, 2f)) * along;
-        float tight = b.Tight * 0.12f * MathF.Exp(-MathF.Pow(xr / 3.2f, 2f)) * Smooth(-0.3f, 0.2f, t) * (t < 1.3f ? 1f : MathF.Exp(-MathF.Pow(t - 1.3f, 2f) * 6f));
+        float tight = b.Tight * 0.12f * MathF.Exp(-MathF.Pow(xr / 3.2f, 2f)) * Smooth(0.02f, 0.3f, t) * (t < 1.3f ? 1f : MathF.Exp(-MathF.Pow(t - 1.3f, 2f) * 6f));
         float total = h - crease - tight * (1f - MathF.Min(h, 1f));
         // the navel filled out (stretched flat) where the bulge reaches it
         float nd = MathF.Sqrt(MathF.Pow(x - b.NavelAt.X, 2f) + MathF.Pow(y - b.NavelAt.Y, 2f)) / MathF.Max(b.NavelRadius, 0.005f);

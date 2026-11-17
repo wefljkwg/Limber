@@ -2381,10 +2381,11 @@ public static unsafe class LiveRig
             var bulgeTilt = Vector3.Zero;
             if (bulge != null)
             {
-                float nl = n.Length();
-                float nz = nl > 1e-6f ? n.Z / nl : 0f;
+                // (by where it is only, never which way its own normal faces: the navel's dimple and the pubic hair
+                // face every way, and seams have two vertices in one place with different normals; moved along their
+                // normals they tore apart, so everything is moved the same way, forward)
                 float hw = bulge.HipWidth;
-                float front = SmoothStep(0.05f, 0.45f, nz) * SmoothStep(bulge.FrontZ - 0.01f, bulge.FrontZ + hw * 0.25f, p.Z)
+                float front = SmoothStep(bulge.FrontZ - 0.01f, bulge.FrontZ + hw * 0.2f, p.Z)
                               * (1f - SmoothStep(bulge.FrontZ + hw * 0.9f, bulge.FrontZ + hw * 1.2f, p.Z));
                 float k = front;
                 if (k > 1e-3f)
@@ -2394,7 +2395,7 @@ public static unsafe class LiveRig
                     {
                         if (MathF.Abs(h * k) > 1e-4f)
                             System.Threading.Interlocked.Increment(ref Limber.Rig.Bulge.TouchedNow);
-                        q += n / nl * (h * k);
+                        q += new Vector3(0f, 0f, h * k);
                         if (normals)
                         {
                             const float e = 0.004f;
