@@ -645,6 +645,22 @@ public sealed unsafe class SoftBody
         float dt = state.LastTicks == 0 ? 0f : (float)((now - state.LastTicks) / (double)Stopwatch.Frequency);
         state.LastTicks = now;
 
+        // The belly hangs from the pelvis, but the skin it carries is the waist's too: the waist's own shape (Body
+        // Shape's Waist, Belly... scale the lower spine) taken onto it, more the higher up (the top row as much as the
+        // spine, the bottom hardly), as the size of the spine bone over the pelvis's (so its turning, the head's, isn't).
+        int spine = _part.Region ? skeleton.IndexOf("j_sebo_a") : -1, pelvis = _part.Region ? skeleton.IndexOf("j_kosi") : -1;
+        Vector3 spineRatio = Vector3.One;
+        Frame spineFrame = default;
+        if (spine >= 0 && pelvis >= 0)
+        {
+            var ps = skeleton.GetModelScale(pelvis);
+            var ss = skeleton.GetModelScale(spine);
+            if (MathF.Abs(ps.X) > 1e-4f && MathF.Abs(ps.Y) > 1e-4f && MathF.Abs(ps.Z) > 1e-4f)
+                spineRatio = ss / ps;
+            if (!MathUtil.IsFinite(spineRatio) || Vector3.DistanceSquared(spineRatio, Vector3.One) < 1e-8f)
+                spineRatio = Vector3.One;
+            spineFrame = skeleton.GetModelFrame(spine);
+        }
         // Where the body puts every grid point this frame: its rest spot under the breast bone as posed now.
         foreach (var b in new[] { state.Left, state.Right })
         {
@@ -653,6 +669,15 @@ public sealed unsafe class SoftBody
                 var parent = skeleton.GetModelFrame(b.Parents[i]);
                 var scale = skeleton.GetModelScale(b.Parents[i]);
                 var model = parent.Position + Vector3.Transform(scale * b.RestLocal[i], parent.Rotation);
+                if (spineRatio != Vector3.One)
+                {
+                    int row = i % _part.PerLayer / _part.Columns;
+                    float f = _part.Rows > 1 ? 1f - 0.8f * row / (_part.Rows - 1) : 1f;
+                    var inverse = Quaternion.Inverse(spineFrame.Rotation);
+                    var local = Vector3.Transform(model - spineFrame.Position, inverse);
+                    var shaped = spineFrame.Position + Vector3.Transform(local * spineRatio, spineFrame.Rotation);
+                    model += (shaped - model) * f;
+                }
                 b.Target[i] = skeleton.ModelToWorldPoint(model);
                 b.RestTarget[i] = b.Target[i];
             }
