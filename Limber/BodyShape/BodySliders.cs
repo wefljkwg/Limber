@@ -87,11 +87,10 @@ public sealed record Morph
 /// <summary>Every slider the Body Shape tab has, in its groups.</summary>
 public static class BodySliders
 {
-    public static readonly string[] Groups = ["Size", "Breasts", "Butt", "Hips & waist", "Legs", "Arms & shoulders", "Torso",
-        "Detail: thighs", "Detail: calves", "Detail: hips", "Detail: belly & waist", "Detail: chest & back", "Detail: arms", "Detail: neck"];
+    public static readonly string[] Groups = ["Size", "Breasts", "Butt", "Hips & waist", "Legs", "Arms & shoulders", "Torso"];
 
-    /// <summary>The detail groups are sculpted into the models when building.</summary>
-    public static bool IsDetail(string group) => group.StartsWith("Detail", StringComparison.Ordinal);
+    /// <summary>A sculpting slider (shown live by the live rig, like the stomach bulge; Build can still bake it in).</summary>
+    public static bool IsDetail(BodySlider s) => s.Morphs.Length > 0;
 
     // ---- Detail sliders: sculpted into the vertices when building (like BodySlide's sliders, but Limber's own,
     // worked out on the body's bones: no extra bones, so nothing to keep in line at the seams between models).
@@ -99,7 +98,7 @@ public static class BodySliders
 
     private static BodySlider Detail(string key, string group, string name, string tip, params Morph[] morphs) => new()
     {
-        Key = key, Group = group, Name = name, Tip = tip + " Live with the live rig; Build bakes it into the models.", Morphs = morphs, BuildOnly = true,
+        Key = key, Group = group, Name = name, Tip = tip, Morphs = morphs, BuildOnly = true,
     };
 
     // A limb: fuller where the lobe points, over a stretch of its length (0 = its joint, 1 = the next).
@@ -117,52 +116,52 @@ public static class BodySliders
 
     private static readonly BodySlider[] Details =
     [
-        Detail("d_thigh_inner", "Detail: thighs", "Inner thigh", "Fuller (+) or slimmer (-) on the inside of the thigh.", Limb(Thigh, Knee, In)),
-        Detail("d_thigh_outer", "Detail: thighs", "Outer thigh", "Fuller or slimmer on the outside.", Limb(Thigh, Knee, Out)),
-        Detail("d_thigh_front", "Detail: thighs", "Front thigh", "Fuller or flatter at the front.", Limb(Thigh, Knee, Forward)),
-        Detail("d_thigh_back", "Detail: thighs", "Back thigh", "Fuller or flatter at the back (under the butt).", Limb(Thigh, Knee, Back)),
-        Detail("d_thigh_upper", "Detail: thighs", "Upper thigh", "The top of the thigh fuller or slimmer.", Limb(Thigh, Knee, Any, 0f, 0.4f)),
-        Detail("d_thigh_mid", "Detail: thighs", "Mid thigh", "The middle of the thigh fuller or slimmer.", Limb(Thigh, Knee, Any, 0.3f, 0.7f)),
-        Detail("d_thigh_lower", "Detail: thighs", "Above the knee", "Just above the knee fuller or slimmer.", Limb(Thigh, Knee, Any, 0.6f, 1f)),
-        Detail("d_thigh_gap", "Detail: thighs", "Inner upper thigh", "The top of the inner thigh fuller (-: a thigh gap).", Limb(Thigh, Knee, In, 0f, 0.45f)),
-        Detail("d_saddlebags", "Detail: thighs", "Saddlebags", "The top of the outer thigh fuller.", Limb(Thigh, Knee, Out, 0f, 0.45f)),
+        Detail("d_thigh_inner", "Legs", "Inner thigh", "Fuller (+) or slimmer (-) on the inside of the thigh.", Limb(Thigh, Knee, In)),
+        Detail("d_thigh_outer", "Legs", "Outer thigh", "Fuller or slimmer on the outside.", Limb(Thigh, Knee, Out)),
+        Detail("d_thigh_front", "Legs", "Front thigh", "Fuller or flatter at the front.", Limb(Thigh, Knee, Forward)),
+        Detail("d_thigh_back", "Legs", "Back thigh", "Fuller or flatter at the back (under the butt).", Limb(Thigh, Knee, Back)),
+        Detail("d_thigh_upper", "Legs", "Upper thigh", "The top of the thigh fuller or slimmer.", Limb(Thigh, Knee, Any, 0f, 0.4f)),
+        Detail("d_thigh_mid", "Legs", "Mid thigh", "The middle of the thigh fuller or slimmer.", Limb(Thigh, Knee, Any, 0.3f, 0.7f)),
+        Detail("d_thigh_lower", "Legs", "Above the knee", "Just above the knee fuller or slimmer.", Limb(Thigh, Knee, Any, 0.6f, 1f)),
+        Detail("d_thigh_gap", "Legs", "Inner upper thigh", "The top of the inner thigh fuller (-: a thigh gap).", Limb(Thigh, Knee, In, 0f, 0.45f)),
+        Detail("d_saddlebags", "Legs", "Saddlebags", "The top of the outer thigh fuller.", Limb(Thigh, Knee, Out, 0f, 0.45f)),
 
-        Detail("d_calf_muscle", "Detail: calves", "Calf muscle", "The back of the calf fuller or flatter.", Limb(Shin, Ankle, Back, 0f, 0.6f)),
-        Detail("d_shins", "Detail: calves", "Shins", "The front of the lower leg fuller or flatter.", Limb(Shin, Ankle, Forward)),
-        Detail("d_calf_upper", "Detail: calves", "Upper calf", "Below the knee fuller or slimmer.", Limb(Shin, Ankle, Any, 0f, 0.45f)),
-        Detail("d_ankles", "Detail: calves", "Ankles", "Above the ankle thicker or slimmer.", Limb(Shin, Ankle, Any, 0.6f, 1f)),
-        Detail("d_calf_inner", "Detail: calves", "Inner calf", "The inside of the calf fuller or slimmer.", Limb(Shin, Ankle, In)),
-        Detail("d_calf_outer", "Detail: calves", "Outer calf", "The outside of the calf fuller or slimmer.", Limb(Shin, Ankle, Out)),
-        Detail("d_knees", "Detail: calves", "Knees", "The knees fuller or slimmer.", Limb(Knee, Shin, Any)),
+        Detail("d_calf_muscle", "Legs", "Calf muscle", "The back of the calf fuller or flatter.", Limb(Shin, Ankle, Back, 0f, 0.6f)),
+        Detail("d_shins", "Legs", "Shins", "The front of the lower leg fuller or flatter.", Limb(Shin, Ankle, Forward)),
+        Detail("d_calf_upper", "Legs", "Upper calf", "Below the knee fuller or slimmer.", Limb(Shin, Ankle, Any, 0f, 0.45f)),
+        Detail("d_ankles", "Legs", "Above the ankles", "Above the ankle thicker or slimmer.", Limb(Shin, Ankle, Any, 0.6f, 1f)),
+        Detail("d_calf_inner", "Legs", "Inner calf", "The inside of the calf fuller or slimmer.", Limb(Shin, Ankle, In)),
+        Detail("d_calf_outer", "Legs", "Outer calf", "The outside of the calf fuller or slimmer.", Limb(Shin, Ankle, Out)),
+        Detail("d_knees", "Legs", "Knee fullness", "The knees fuller or slimmer.", Limb(Knee, Shin, Any)),
 
-        Detail("d_hips_upper", "Detail: hips", "Upper hips", "The top of the hips wider (a curvier waist-to-hip line).", Trunk("j_kosi", Out, -0.02f, 0.08f)),
-        Detail("d_hips_lower", "Detail: hips", "Lower hips", "The lower hips wider (-: hip dips).", Trunk("j_kosi", Out, -0.12f, -0.02f)),
-        Detail("d_pelvis_front", "Detail: hips", "Pelvis front", "The front of the pelvis fuller or flatter.", Trunk("j_kosi", Forward, -0.1f, 0.06f)),
-        Detail("d_lower_back_hips", "Detail: hips", "Lower back", "The small of the back fuller (+) or more arched (-).", Trunk("j_kosi", Back, 0f, 0.1f)),
+        Detail("d_hips_upper", "Hips & waist", "Upper hips", "The top of the hips wider (a curvier waist-to-hip line).", Trunk("j_kosi", Out, -0.02f, 0.08f)),
+        Detail("d_hips_lower", "Hips & waist", "Lower hips", "The lower hips wider (-: hip dips).", Trunk("j_kosi", Out, -0.12f, -0.02f)),
+        Detail("d_pelvis_front", "Hips & waist", "Pelvis front", "The front of the pelvis fuller or flatter.", Trunk("j_kosi", Forward, -0.1f, 0.06f)),
+        Detail("d_lower_back_hips", "Hips & waist", "Small of the back", "The small of the back fuller (+) or more arched (-).", Trunk("j_kosi", Back, 0f, 0.1f)),
 
-        Detail("d_belly", "Detail: belly & waist", "Belly", "The belly rounder or flatter.", Trunk("j_sebo_a", Forward, -0.08f, 0.1f)),
-        Detail("d_belly_upper", "Detail: belly & waist", "Upper belly", "Just under the ribs rounder or flatter.", Trunk("j_sebo_a", Forward, 0.02f, 0.12f)),
-        Detail("d_belly_lower", "Detail: belly & waist", "Lower belly", "Below the navel rounder or flatter.", Trunk("j_kosi", Forward, 0.02f, 0.12f)),
-        Detail("d_waist_sides", "Detail: belly & waist", "Waist sides", "The sides of the waist out (+) or in (-: more pinched).", Trunk("j_sebo_a", Out, -0.06f, 0.1f)),
-        Detail("d_love_handles", "Detail: belly & waist", "Love handles", "Fuller at the back of the waist's sides.", Trunk("j_sebo_a", Out + Back, -0.08f, 0.04f)),
-        Detail("d_waist_back", "Detail: belly & waist", "Lower back", "The back of the waist fuller (+) or more arched (-).", Trunk("j_sebo_a", Back, -0.06f, 0.1f)),
+        Detail("d_belly", "Hips & waist", "Belly roundness", "The belly rounder or flatter.", Trunk("j_sebo_a", Forward, -0.08f, 0.1f)),
+        Detail("d_belly_upper", "Hips & waist", "Upper belly", "Just under the ribs rounder or flatter.", Trunk("j_sebo_a", Forward, 0.02f, 0.12f)),
+        Detail("d_belly_lower", "Hips & waist", "Lower belly", "Below the navel rounder or flatter.", Trunk("j_kosi", Forward, 0.02f, 0.12f)),
+        Detail("d_waist_sides", "Hips & waist", "Waist sides", "The sides of the waist out (+) or in (-: more pinched).", Trunk("j_sebo_a", Out, -0.06f, 0.1f)),
+        Detail("d_love_handles", "Hips & waist", "Love handles", "Fuller at the back of the waist's sides.", Trunk("j_sebo_a", Out + Back, -0.08f, 0.04f)),
+        Detail("d_waist_back", "Hips & waist", "Lower back", "The back of the waist fuller (+) or more arched (-).", Trunk("j_sebo_a", Back, -0.06f, 0.1f)),
 
-        Detail("d_ribs", "Detail: chest & back", "Ribcage sides", "The sides of the ribcage out or in.", Trunk("j_sebo_b", Out, -0.08f, 0.12f)),
-        Detail("d_underbust", "Detail: chest & back", "Under the bust", "Just below the breasts fuller or flatter.", Trunk("j_sebo_b", Forward, -0.1f, 0f)),
-        Detail("d_back", "Detail: chest & back", "Back", "The back fuller (+) or flatter (-).", Trunk("j_sebo_b", Back, -0.08f, 0.14f)),
-        Detail("d_lats", "Detail: chest & back", "Lats", "The back's sides wider (a V shape).", Trunk("j_sebo_b", Out + Back, -0.04f, 0.12f)),
-        Detail("d_shoulder_blades", "Detail: chest & back", "Upper back", "Between the shoulder blades fuller or flatter.", Trunk("j_sebo_c", Back, -0.06f, 0.1f)),
+        Detail("d_ribs", "Torso", "Ribcage sides", "The sides of the ribcage out or in.", Trunk("j_sebo_b", Out, -0.08f, 0.12f)),
+        Detail("d_underbust", "Torso", "Under the bust", "Just below the breasts fuller or flatter.", Trunk("j_sebo_b", Forward, -0.1f, 0f)),
+        Detail("d_back", "Torso", "Back fullness", "The back fuller (+) or flatter (-).", Trunk("j_sebo_b", Back, -0.08f, 0.14f)),
+        Detail("d_lats", "Torso", "Lats", "The back's sides wider (a V shape).", Trunk("j_sebo_b", Out + Back, -0.04f, 0.12f)),
+        Detail("d_shoulder_blades", "Torso", "Upper back", "Between the shoulder blades fuller or flatter.", Trunk("j_sebo_c", Back, -0.06f, 0.1f)),
 
-        Detail("d_biceps", "Detail: arms", "Biceps", "The front of the upper arm fuller or slimmer.", Limb(UpperArm, Forearm, Forward)),
-        Detail("d_triceps", "Detail: arms", "Triceps", "The back of the upper arm fuller or slimmer.", Limb(UpperArm, Forearm, Back)),
-        Detail("d_upper_arm_top", "Detail: arms", "Upper arm (top)", "By the shoulder fuller or slimmer.", Limb(UpperArm, Forearm, Any, 0f, 0.45f)),
-        Detail("d_upper_arm_low", "Detail: arms", "Upper arm (low)", "Above the elbow fuller or slimmer.", Limb(UpperArm, Forearm, Any, 0.55f, 1f)),
-        Detail("d_forearms", "Detail: arms", "Forearms", "Below the elbow fuller or slimmer.", Limb(Forearm, Hand, Any, 0f, 0.6f)),
-        Detail("d_wrists", "Detail: arms", "Wrists", "Thicker or slimmer wrists.", Limb(Forearm, Hand, Any, 0.65f, 1f)),
+        Detail("d_biceps", "Arms & shoulders", "Biceps", "The front of the upper arm fuller or slimmer.", Limb(UpperArm, Forearm, Forward)),
+        Detail("d_triceps", "Arms & shoulders", "Triceps", "The back of the upper arm fuller or slimmer.", Limb(UpperArm, Forearm, Back)),
+        Detail("d_upper_arm_top", "Arms & shoulders", "Upper arm (top)", "By the shoulder fuller or slimmer.", Limb(UpperArm, Forearm, Any, 0f, 0.45f)),
+        Detail("d_upper_arm_low", "Arms & shoulders", "Upper arm (low)", "Above the elbow fuller or slimmer.", Limb(UpperArm, Forearm, Any, 0.55f, 1f)),
+        Detail("d_forearms", "Arms & shoulders", "Forearms", "Below the elbow fuller or slimmer.", Limb(Forearm, Hand, Any, 0f, 0.6f)),
+        Detail("d_wrists", "Arms & shoulders", "Wrists", "Thicker or slimmer wrists.", Limb(Forearm, Hand, Any, 0.65f, 1f)),
 
-        Detail("d_neck_front", "Detail: neck", "Neck front", "The front of the neck fuller or slimmer.", Trunk("j_kubi", Forward, -0.03f, 0.08f)),
-        Detail("d_nape", "Detail: neck", "Nape", "The back of the neck fuller or slimmer.", Trunk("j_kubi", Back, -0.03f, 0.08f)),
-        Detail("d_neck_sides", "Detail: neck", "Neck sides", "The sides of the neck out or in.", Trunk("j_kubi", Out, -0.03f, 0.08f)),
+        Detail("d_neck_front", "Torso", "Neck front", "The front of the neck fuller or slimmer.", Trunk("j_kubi", Forward, -0.03f, 0.08f)),
+        Detail("d_nape", "Torso", "Nape", "The back of the neck fuller or slimmer.", Trunk("j_kubi", Back, -0.03f, 0.08f)),
+        Detail("d_neck_sides", "Torso", "Neck sides", "The sides of the neck out or in.", Trunk("j_kubi", Out, -0.03f, 0.08f)),
     ];
 
     private const string Mune = "j_mune_{side}", Shiri = "iv_shiri_{side}";
@@ -173,11 +172,11 @@ public static class BodySliders
     [
         // Size (live only: done on the skeleton, with the face and hair kept in step).
         new() { Key = "body_size", Group = "Size", Name = "Body size", LiveOnly = true,
-            Tip = "The whole character bigger or smaller, taller or shorter, everything in proportion (the feet stay on the floor), while the head stays the size it is. Live only." },
+            Tip = "The whole character bigger or smaller, taller or shorter, everything in proportion (the feet stay on the floor), while the head stays the size it is." },
         new() { Key = "body_thickness", Group = "Size", Name = "Body thickness", LiveOnly = true,
-            Tip = "Every part of the body thicker or thinner in place (the bones' own size, not the skeleton's), the head as it is. Live only." },
+            Tip = "Every part of the body thicker or thinner in place (the bones' own size, not the skeleton's), the head as it is." },
         new() { Key = "head_size", Group = "Size", Name = "Head size", LiveOnly = true,
-            Tip = "The head bigger or smaller, the face, eyes, mouth and hair with it. Live only." },
+            Tip = "The head bigger or smaller, the face, eyes, mouth and hair with it." },
 
         // Breasts (the game's breast bone; Limber's breast rig and the nipples go with it).
         new() { Key = "breast_size", Group = "Breasts", Name = "Size", Tip = "Bigger or smaller breasts.",
@@ -221,25 +220,22 @@ public static class BodySliders
         new() { Key = "waist_width", Group = "Hips & waist", Name = "Waist width", Tip = "The waist wider or narrower (side to side only).",
             Ops = [new() { Bone = "j_sebo_a", Axes = OpAxes.SideToSide, Scale = 0.3f, Keep = OpKeep.Children }] },
         new() { Key = "hip_position", Group = "Hips & waist", Name = "Hip position", LiveOnly = true,
-            Tip = "The hips (and the body above them) higher or lower, the legs longer or shorter to match, so the feet stay on the floor; the butt stays where it is (+100% = 5 cm up). Live only." },
+            Tip = "The hips (and the body above them) higher or lower, the legs longer or shorter to match, so the feet stay on the floor; the butt stays where it is (+100% = 5 cm up)." },
         new() { Key = "hip_length", Group = "Hips & waist", Name = "Hip length", LiveOnly = true,
-            Tip = "The pelvis taller: the body above it raised, the legs as they are. Live only.",
+            Tip = "The pelvis taller: the body above it raised, the legs as they are.",
             Ops = [new() { Bone = "j_kosi", Next = "j_sebo_a", Scale = 0.5f, Stretch = true, Keep = OpKeep.Named, KeepNames = PelvisKeep }] },
         new() { Key = "waist_position", Group = "Hips & waist", Name = "Waist position", LiveOnly = true,
-            Tip = "The waist moved up (+) or down (-) between the hips and the chest; the hips, chest and everything else stay where they are (+100% = 3 cm). Live only.",
+            Tip = "The waist moved up (+) or down (-) between the hips and the chest; the hips, chest and everything else stay where they are (+100% = 3 cm).",
             Ops = [new() { Bone = "j_sebo_a", Move = new Vector3(0f, 0.03f, 0f), Keep = OpKeep.Children }] },
         new() { Key = "waist_length", Group = "Hips & waist", Name = "Waist length", LiveOnly = true,
-            Tip = "A longer (or shorter) waist. Live only.",
+            Tip = "A longer (or shorter) waist.",
             Ops = [new() { Bone = "j_sebo_a", Next = "j_sebo_b", Scale = 0.5f, Stretch = true, Keep = OpKeep.Children }] },
         new() { Key = "belly", Group = "Hips & waist", Name = "Belly", Tip = "The middle deeper front to back.",
             Ops = [new() { Bone = "j_sebo_a", Axes = OpAxes.FrontBack, Scale = 0.35f, Keep = OpKeep.Children }] },
 
         // Legs.
         new() { Key = "leg_spacing", Group = "Legs", Name = "Leg spacing", LiveOnly = true,
-            Tip = "The whole legs set further apart (+) or closer together (-), thighs, knees, calves and feet together (+100% = 2 cm each side). Live only.",
-            // (The top of the thigh moved, and the knee with everything below it by as much: it adds up with Thigh spacing.)
-            Ops = [new() { Bone = "j_asi_a_{side}", Move = new Vector3(0.02f, 0f, 0f), Keep = OpKeep.Named, KeepNames = ["j_asi_b_"] },
-                   new() { Bone = "j_asi_b_{side}", Move = new Vector3(0.02f, 0f, 0f) }] },
+            Tip = "The whole legs set further apart (+) or closer together (-), thighs, knees, calves and feet together, all the way down (+100% = 2 cm each side)." },
         new() { Key = "thigh_spacing", Group = "Legs", Name = "Thigh spacing",
             Tip = "The tops of the thighs further apart (+, a wider gap between them) or closer together (-); the knees and lower legs stay where they are (+100% = 1.5 cm each side).",
             Ops = [new() { Bone = "j_asi_a_{side}", Move = new Vector3(0.015f, 0f, 0f), Keep = OpKeep.Named, KeepNames = ["j_asi_b_"] }] },
@@ -262,7 +258,7 @@ public static class BodySliders
         new() { Key = "calf_thickness", Group = "Legs", Name = "Calf thickness", Tip = "The calves thicker or thinner front to back only.",
             Ops = [new() { Bone = "j_asi_c_{side}", Axes = OpAxes.FrontBack, Scale = 0.4f, Keep = OpKeep.Children }] },
         new() { Key = "ankles", Group = "Legs", Name = "Ankles", BuildOnly = true,
-            Tip = "Thicker or slimmer ankles; the feet stay as they are. Live with the live rig; Build bakes it into the models.",
+            Tip = "Thicker or slimmer ankles; the feet stay as they are.",
             Morphs = [Limb(Shin, Ankle, Any, 0.7f, 1f, 1.5f), Limb(Ankle, Toes, Any, 0f, 0.3f, 1f)] },
         new() { Key = "feet", Group = "Legs", Name = "Feet",
             Tip = "Bigger or smaller feet, toes and all (longer and wider, the same height, so the soles stay on the floor).",
@@ -271,11 +267,11 @@ public static class BodySliders
         new() { Key = "foot_width", Group = "Legs", Name = "Foot width", Tip = "Wider or narrower feet, toes and all.",
             Ops = [new() { Bone = "j_asi_d_{side}", Axes = OpAxes.SideToSide, Scale = 0.4f }] },
         new() { Key = "leg_length", Group = "Legs", Name = "Leg length", LiveOnly = true,
-            Tip = "Longer or shorter thighs and shins; the feet stay as they are. Live only (not built into the models)." },
+            Tip = "Longer or shorter thighs and shins; the feet stay as they are." },
 
         // Arms and shoulders.
         new() { Key = "arm_length", Group = "Arms & shoulders", Name = "Arm length", LiveOnly = true,
-            Tip = "Longer or shorter arms (upper arm and forearm); the hands stay as they are. Live only.",
+            Tip = "Longer or shorter arms (upper arm and forearm); the hands stay as they are.",
             Ops = [new() { Bone = "j_ude_a_{side}", Next = "j_ude_b_{side}", Scale = 0.5f, Stretch = true, Keep = OpKeep.Children },
                    new() { Bone = "j_ude_b_{side}", Next = "j_te_{side}", Scale = 0.5f, Stretch = true, Keep = OpKeep.Children }] },
         new() { Key = "upper_arms", Group = "Arms & shoulders", Name = "Upper arms", Tip = "Thicker or slimmer upper arms.",
@@ -299,7 +295,7 @@ public static class BodySliders
 
         // Torso.
         new() { Key = "chest_length", Group = "Torso", Name = "Chest length", LiveOnly = true,
-            Tip = "A longer (or shorter) chest, from the waist up to the shoulders. Live only.",
+            Tip = "A longer (or shorter) chest, from the waist up to the shoulders.",
             Ops = [new() { Bone = "j_sebo_b", Next = "j_sebo_c", Scale = 0.5f, Stretch = true, Keep = OpKeep.Children }] },
         new() { Key = "ribcage", Group = "Torso", Name = "Chest width", Tip = "The chest wider or narrower (the breasts stay as they are).",
             Ops = [new() { Bone = "j_sebo_b", Axes = OpAxes.SideToSide, Scale = 0.3f, Keep = OpKeep.Children }] },
@@ -310,7 +306,7 @@ public static class BodySliders
         new() { Key = "upper_back_thickness", Group = "Torso", Name = "Upper back thickness", Tip = "The upper back and chest thicker front to back.",
             Ops = [new() { Bone = "j_sebo_c", Axes = OpAxes.FrontBack, Scale = 0.3f, Keep = OpKeep.Children }] },
         new() { Key = "neck_length", Group = "Torso", Name = "Neck length", LiveOnly = true,
-            Tip = "A longer (or shorter) neck: the head goes up (or down) with it. Live only.",
+            Tip = "A longer (or shorter) neck: the head goes up (or down) with it.",
             Ops = [new() { Bone = "j_kubi", Next = "j_kao", Scale = 0.6f, Stretch = true, Keep = OpKeep.Children }] },
         new() { Key = "neck", Group = "Torso", Name = "Neck thickness", Tip = "The neck thicker or slimmer all round.",
             Ops = [new() { Bone = "j_kubi", Next = "j_kao", Axes = OpAxes.Across, Scale = 0.35f, Keep = OpKeep.Children }] },

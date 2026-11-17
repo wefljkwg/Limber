@@ -26,6 +26,7 @@ public sealed class BodyShapeLive
         public Dictionary<string, ShapeOp> Applied = new();
         public float Legs = 1f;
         public float Hip;   // metres the hips are moved up (Hip position)
+        public float Spread; // metres each leg is moved out (Leg spacing)
         public float Size = 1f; // Body size applied (the whole skeleton scaled about the feet)
         public bool LegsFeet = true;
         public Dictionary<string, Vector3> Written = new(); // scales as written, to tell a rebuilt pose
@@ -125,6 +126,7 @@ public sealed class BodyShapeLive
             state.Applied.Clear();
             state.Legs = 1f;
             state.Hip = 0f;
+            state.Spread = 0f;
             state.Size = 1f;
         }
 
@@ -160,6 +162,7 @@ public sealed class BodyShapeLive
         float legs = MathF.Max(0.05f, 1f + (values.TryGetValue("leg_length", out var lv) && float.IsFinite(lv) ? Math.Clamp(lv, -10f, 10f) : 0f));
         bool feet = KeepFeet();
         float hip = values.TryGetValue("hip_position", out var hv) && float.IsFinite(hv) ? Math.Clamp(hv, -10f, 10f) * HipStep : 0f;
+        float spread = values.TryGetValue("leg_spacing", out var sv) && float.IsFinite(sv) ? Math.Clamp(sv, -10f, 10f) * SpreadStep : 0f;
 
         // A Bone scale on / off choice changed: everything applied is taken off the way it was put on, and done
         // again the new way (a change on top of the old one wouldn't come out the same).
@@ -201,8 +204,10 @@ public sealed class BodyShapeLive
         }
         float legStep = legs / state.Legs;
         float hipStep = hip - state.Hip;
+        float spreadStep = spread - state.Spread;
         float sizeStep = bodySize / state.Size;
-        if (!undone && todo.Count == 0 && MathF.Abs(legStep - 1f) < 1e-6f && MathF.Abs(hipStep) < 1e-6f && MathF.Abs(sizeStep - 1f) < 1e-6f)
+        if (!undone && todo.Count == 0 && MathF.Abs(legStep - 1f) < 1e-6f && MathF.Abs(hipStep) < 1e-6f && MathF.Abs(spreadStep) < 1e-6f
+            && MathF.Abs(sizeStep - 1f) < 1e-6f)
             return;
 
         // The whole skeleton (body, face, hair, tail) scaled about the feet, first: the other changes are made on it.
@@ -220,6 +225,8 @@ public sealed class BodyShapeLive
             Lengthen(skeleton, legStep, feet);
         if (MathF.Abs(hipStep) > 1e-6f)
             MoveHips(skeleton, hipStep);
+        if (MathF.Abs(spreadStep) > 1e-6f)
+            SpreadLegs(skeleton, spreadStep);
 
         // The face, hair and other extra skeletons onto the moved body again.
         skeleton.RealignPartials(_cache);
@@ -229,6 +236,7 @@ public sealed class BodyShapeLive
         state.Applied = wanted;
         state.Legs = legs;
         state.Hip = hip;
+        state.Spread = spread;
         state.Size = bodySize;
         state.Record = true;
     }
@@ -250,7 +258,7 @@ public sealed class BodyShapeLive
                 continue;
             var info = skeleton.Info;
             var marks = new List<string>();
-            if (state.Legs != 1f || state.Hip != 0f)
+            if (state.Legs != 1f || state.Hip != 0f || state.Spread != 0f)
                 marks.Add("j_asi_a_l");
             if (state.Size != 1f)
                 marks.Add("j_kosi");
@@ -572,6 +580,41 @@ public sealed class BodyShapeLive
     // way, so its skin stretches evenly) and the next joint moved out with it; the ankle and foot as they are. With
     // the feet kept, the body goes up by what the legs reached down.
     private const float HipStep = 0.05f; // metres per 100% of Hip position
+    private const float SpreadStep = 0.02f; // metres per 100% of Leg spacing (each side)
+
+    // Leg spacing: each whole leg (the thigh and every bone below it, down to the toes) moved out from the middle by
+    // as much, turned as it was.
+    private static void SpreadLegs(in ActorSkeleton skeleton, float step)
+    {
+        var info = skeleton.Info;
+        int l = info.IndexOf("j_asi_a_l"), r = info.IndexOf("j_asi_a_r");
+        if (l < 0 || r < 0)
+            return;
+        var across = skeleton.GetModelFrame(l).Position - skeleton.GetModelFrame(r).Position;
+        across.Y = 0f;
+        if (across.LengthSquared() < 1e-8f)
+            return;
+        across = Vector3.Normalize(across);
+        foreach (var (top, dir) in new[] { (l, across), (r, -across) })
+        {
+            var delta = dir * step;
+            var under = new HashSet<int> { top };
+            var moved = new List<(int Bone, Frame Frame)> { (top, skeleton.GetModelFrame(top)) };
+            for (int b = top + 1; b < info.Count; b++)
+            {
+                int parent = info.ParentOf(b);
+                if (parent < 0 || !under.Contains(parent))
+                    continue;
+                under.Add(b);
+                moved.Add((b, skeleton.GetModelFrame(b)));
+            }
+            foreach (var (b, f) in moved)
+            {
+                skeleton.SetModelPosition(b, f.Position + delta);
+                skeleton.SetModelRotation(b, f.Rotation);
+            }
+        }
+    }
 
     // Hip position: the hips (and the body above them) moved up or down, the legs made longer or shorter by just
     // enough that the feet stay where they were; the butt stays where it is.

@@ -106,26 +106,20 @@ public sealed class BodyShapeTab
         ImGui.InputText("Filter###lmb_bs_filter", ref _filter, 64);
         Tooltip("Only the sliders (or groups) whose name has this in it.");
 
-        bool detailShown = false;
+        if (!_config.LiveRig)
+        {
+            ImGui.TextColored(new Vector4(0.95f, 0.75f, 0.3f, 1f),
+                "The live rig is off (Body physics): the sculpting sliders (fuller / slimmer parts) only show once built.");
+            bool auto = _config.BodyShapeAutoBuild;
+            if (ImGui.Checkbox("Auto-build###lmb_bs_autobuild", ref auto))
+            {
+                _config.BodyShapeAutoBuild = auto;
+                changed = true;
+            }
+            Tooltip("Builds (and redraws the character) about a second after you let go of a sculpting slider (the live rig off only).");
+        }
         foreach (var group in BodySliders.Groups)
         {
-            if (BodySliders.IsDetail(group) && !detailShown)
-            {
-                detailShown = true;
-                ImGui.Spacing();
-                ImGui.TextColored(Accent, "Detail");
-                ImGui.TextColored(Dim, _config.LiveRig
-                    ? "Shown live on the chosen character by the live rig (Body physics page): no build, no redraw.\nBuild bakes them into the models (for every character wearing them)."
-                    : "Sculpted into the models when building: press Build to see them, or turn on Auto-build to build\nby itself a moment after you let go of one. (Or turn on the live rig on the Body physics page to see them live.)");
-                bool auto = _config.BodyShapeAutoBuild;
-                if (ImGui.Checkbox("Auto-build###lmb_bs_autobuild", ref auto))
-                {
-                    _config.BodyShapeAutoBuild = auto;
-                    changed = true;
-                }
-                Tooltip("Builds (and redraws the character) about a second after you let go of a detail slider."
-                    + "\nNot while the live rig is on: it shows the detail sliders as you drag them, with no build or redraw.");
-            }
             var sliders = BodySliders.All.Where(s => s.Group == group && Matches(s)).ToList();
             if (sliders.Count == 0)
                 continue;
@@ -273,11 +267,11 @@ public sealed class BodyShapeTab
     {
         float value = (values.TryGetValue(slider.Key, out var v) ? v : 0f) * 100f;
         ImGui.SetNextItemWidth(-130 * ImGuiHelpers.GlobalScale);
-        string label = slider.LiveOnly ? $"{slider.Name} (live)" : slider.BuildOnly ? $"{slider.Name} (build)" : slider.Name;
+        string label = slider.Name;
         bool edited = ImGui.SliderFloat($"{label}###lmb_bs_{slider.Key}", ref value, slider.Min * 100f, slider.Max * 100f, "%+.0f%%");
         bool released = ImGui.IsItemDeactivatedAfterEdit();
         bool reset = ImGui.IsItemClicked(ImGuiMouseButton.Right);
-        if (slider.BuildOnly && (released || reset))
+        if (slider.BuildOnly && !_config.LiveRig && (released || reset))
             _buildSoon = DateTime.UtcNow.AddSeconds(1.0);
         Tooltip(slider.Tip + "\nCtrl+click to type a value. Right-click: back to 0.");
         if (reset)
