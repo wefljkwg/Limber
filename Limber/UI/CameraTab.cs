@@ -430,21 +430,39 @@ public sealed class CameraTab
         ImGui.Separator();
         ImGui.TextUnformatted("Live screens research (experiment)");
         var exOn = Limber.Gpu.ViewExperiment.On;
-        if(ImGui.Checkbox("Draw the world a second time from a camera prop (may crash the game)###cam_rig_ex", ref exOn))
+        if(ImGui.Checkbox("Draw the world from a camera prop into a spare preview picture (may crash the game)###cam_rig_ex", ref exOn))
         {
             Limber.Gpu.ViewExperiment.On = exOn;
             Limber.Gpu.ViewExperiment.StartCounting();
         }
-        Tooltip("Copies the game's own world view into an unused view slot that the game draws just before it, with a camera at the first monitor's camera prop (or the first camera prop). Turn \"Monitors on\" off while testing. Save anything first: a wrong setup can crash the game.");
+        Tooltip("The game can draw the world up to 8 extra times a frame into its own preview pictures (the ones Try On and the Character window use). This borrows a spare one, with a camera at the first monitor's camera prop (or the first camera prop), and shows the picture below. Turn \"Monitors on\" off while testing. Save anything first.");
         ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
         var exSlot = Limber.Gpu.ViewExperiment.Slot;
-        if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 26, 29))
+        if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 0, 7))
             Limber.Gpu.ViewExperiment.Slot = exSlot;
-        Tooltip("Which unused view slot gets the copy (26 to 29 are drawn just before the game's own, 30).");
+        Tooltip("Which preview picture to borrow (0-7). It needs one the game has made and isn't using: press List the preview slots to see which.");
+        ImGui.SameLine();
+        var exUpd = Limber.Gpu.ViewExperiment.LetGameUpdateCamera;
+        if(ImGui.Checkbox("Game updates the camera###cam_rig_ex_upd", ref exUpd))
+            Limber.Gpu.ViewExperiment.LetGameUpdateCamera = exUpd;
+        Tooltip("If the picture shows your own view instead of the camera prop's, untick this.");
+        if(ImGui.SmallButton("List the preview slots###cam_rig_ex_list"))
+            Limber.Gpu.ViewExperiment.Inspect();
         ImGui.SameLine();
         if(ImGui.SmallButton("Record one frame's clears###cam_rig_ex_rec"))
             Limber.Gpu.ViewExperiment.RecordOneFrame();
         Tooltip("Lists every render target and depth buffer the game clears in one frame into the box below (try it with the experiment off, then on).");
+        if(Limber.Gpu.ViewExperiment.State.Length > 0)
+            ImGui.TextUnformatted("Experiment: " + Limber.Gpu.ViewExperiment.State);
+        if(Limber.Gpu.ViewExperiment.On)
+        {
+            var srv = Limber.Gpu.ViewExperiment.SlotPicture(Limber.Gpu.ViewExperiment.Slot, out var pw, out var ph);
+            if(srv != 0 && pw > 0 && ph > 0)
+            {
+                float iw = 320 * ImGuiHelpers.GlobalScale;
+                ImGui.Image(new ImTextureID(srv), new Vector2(iw, iw * ph / pw));
+            }
+        }
         if(Limber.Gpu.ViewExperiment.Counting)
             ImGui.TextUnformatted($"Per frame: {Limber.Gpu.ViewExperiment.TargetClears:0.0} target clears, {Limber.Gpu.ViewExperiment.DepthClears:0.0} depth clears ({Limber.Gpu.ViewExperiment.MainDepthClears:0.0} of the main depth), {Limber.Gpu.ViewExperiment.FrameMs:0.0} ms a frame; set up {Limber.Gpu.ViewExperiment.Applied} times");
         if(Limber.Gpu.ViewExperiment.Error.Length > 0)
