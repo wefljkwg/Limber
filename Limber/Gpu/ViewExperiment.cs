@@ -194,6 +194,14 @@ public static unsafe class ViewExperiment
             Restore();
             return;
         }
+        // The preview pass's shaders are only made the first time the game draws a preview itself: drawing a slot
+        // before that crashes the game on the render thread (SetPixelShader, sub_140239A10).
+        if(!PreviewSeen)
+        {
+            Restore();
+            State = "open Try On or the Character window once first (the game sets up the preview drawing then), then close it";
+            return;
+        }
         try
         {
             nint views = Views(out var manager);
@@ -275,6 +283,8 @@ public static unsafe class ViewExperiment
     private const string LightSig = "83 FA 07 77 ?? 48 63 C2 48 83 C0 2B 8B CA 48 C1 E0 06 48 03 05";
     private static nint _lightGlobal = -1;
     public static string LightState = "";
+    /// <summary>The game has drawn a preview of its own since Limber loaded (so the preview pass is set up).</summary>
+    public static bool PreviewSeen;
 
     private static void Light(int n)
     {
@@ -662,7 +672,12 @@ public static unsafe class ViewExperiment
             {
                 var sb = new StringBuilder();
                 for(int n = 0; n < 8; n++)
-                    sb.Append(*(byte*)(manager + 0x3837c + n) != 0 ? '1' : '0');
+                {
+                    bool drawn = *(byte*)(manager + 0x3837c + n) != 0;
+                    sb.Append(drawn ? '1' : '0');
+                    if(drawn && n != _usedSlot)
+                        PreviewSeen = true;
+                }
                 nint sc = *(nint*)SlotCameraAt(views, Slot);
                 string where = "";
                 if(SafeMemory.Plausible(sc))
