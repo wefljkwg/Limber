@@ -282,10 +282,10 @@ public static unsafe class ResearchConsole
                 LiveCharacters.NormalIndex = (int)Number(value);
                 break;
             case "brightness":
-                LiveCharacters.Brightness = float.Parse(value, CultureInfo.InvariantCulture);
+                if(LiveCharacters.Config != null) LiveCharacters.Config.MonitorCharacterBrightness = float.Parse(value, CultureInfo.InvariantCulture);
                 break;
             case "ambient":
-                LiveCharacters.Ambient = float.Parse(value, CultureInfo.InvariantCulture);
+                if(LiveCharacters.Config != null) LiveCharacters.Config.MonitorCharacterAmbient = float.Parse(value, CultureInfo.InvariantCulture);
                 break;
             case "retake":
                 Limber.Rig.CameraRig.RetakeRoom();

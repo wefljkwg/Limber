@@ -896,7 +896,7 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
             {
                 bool depth = _workSrv != 0 && Matrix4x4.Invert(_shadeProj, out var invP);
                 Matrix4x4.Invert(_shadeProj, out var ip);
-                *(Vector4*)m.Data = new Vector4(Brightness, Ambient, depth ? 1f : 0f, 0);
+                *(Vector4*)m.Data = new Vector4(Config?.MonitorCharacterBrightness ?? Brightness, Config?.MonitorCharacterAmbient ?? Ambient, depth ? 1f : 0f, 0);
                 *(Matrix4x4*)((byte*)m.Data + 16) = ip;
                 *(Vector4*)((byte*)m.Data + 80) = new Vector4(w, h, 1f / w, 1f / h);
                 ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 15))(c, _cb, 0);

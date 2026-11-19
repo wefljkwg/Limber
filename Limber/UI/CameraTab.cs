@@ -292,6 +292,14 @@ public sealed class CameraTab
             ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
             if(ImGui.SliderFloat("Room every###cam_rig_every", ref every, 0f, 600f, every <= 0f ? "only when needed" : "%.0f s")) { _config.MonitorRoomEvery = every; save = true; }
             Tooltip("Retake the room this often (0: only when a camera moves or you ask).");
+            float cb = _config.MonitorCharacterBrightness, ca = _config.MonitorCharacterAmbient;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Character brightness###cam_rig_cbright", ref cb, 0.2f, 4f, "%.2f")) { _config.MonitorCharacterBrightness = cb; save = true; }
+            Tooltip("How bright the live characters are on the screens.");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(180f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Shadow light###cam_rig_cambient", ref ca, 0f, 1.5f, "%.2f")) { _config.MonitorCharacterAmbient = ca; save = true; }
+            Tooltip("How much light the characters' shadowed side still gets (low: strong shading, high: flat and even).");
             if(Limber.Gpu.LiveCharacters.Error.Length > 0)
                 ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Live characters: " + Limber.Gpu.LiveCharacters.Error);
         }
@@ -334,11 +342,6 @@ public sealed class CameraTab
             ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
             if(ImGui.InputText("###name", ref name, 40)) { cam.Name = name; save = true; }
             ImGui.SameLine();
-            float fov = cam.FoV;
-            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
-            if(ImGui.SliderFloat("FoV###fov", ref fov, 0f, 120f, fov < 1f ? "game's" : "%.0f°")) { cam.FoV = fov; save = true; }
-            Tooltip("Its field of view (0: the same as the game camera's).");
-            ImGui.SameLine();
             if(ImGui.SmallButton("To my view###here") && CameraRig.Eye(out var e2, out var f2))
             {
                 cam.Position = e2;
@@ -349,6 +352,22 @@ public sealed class CameraTab
             ImGui.SameLine();
             if(ImGui.SmallButton("Remove###rm"))
                 dropCam = cam;
+            // its lens: field of view in degrees, or the same as zoom (1x: 60 degrees)
+            ImGui.Indent(24f * ImGuiHelpers.GlobalScale);
+            float fov = cam.FoV;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(200f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Field of view###fov", ref fov, 0f, 120f, fov < 1f ? "the game camera's" : "%.0f°")) { cam.FoV = fov < 1f ? 0f : Math.Max(fov, 3f); save = true; }
+            Tooltip("How wide it sees (0: the same as the game camera's). The screen's room is taken again when this changes.");
+            ImGui.SameLine();
+            float zoom = cam.FoV < 1f ? 1f : MathF.Tan(30f * MathF.PI / 180f) / MathF.Tan(cam.FoV * MathF.PI / 360f);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Zoom###zoom", ref zoom, 0.5f, 10f, "%.2fx", ImGuiSliderFlags.Logarithmic))
+            {
+                cam.FoV = Math.Clamp(2f * MathF.Atan(MathF.Tan(30f * MathF.PI / 180f) / Math.Max(zoom, 0.05f)) * 180f / MathF.PI, 3f, 120f);
+                save = true;
+            }
+            Tooltip("The same lens as a zoom: 1x is 60 degrees, higher sees closer.");
+            ImGui.Unindent(24f * ImGuiHelpers.GlobalScale);
         }
         if(dropCam != null)
         {
