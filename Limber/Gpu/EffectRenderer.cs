@@ -776,8 +776,7 @@ float4 PsSlime(float4 pos : SV_Position) : SV_Target0
     o += pow(saturate(dot(reflect(-V, N), normalize(V - Up.xyz * 0.3 - Right.xyz * 0.6))), 25) * P.y * 0.25;
     // (the inner lines: a darker crease with a bright lip)
     o = lerp(o, A * 0.25, lines * 0.8) + lines * 0.15;
-    float opacity = Q.z > 0 || Q.w > 0 || Q.x > 0 || Q.y > 0 ? Q.z : 1;
-    return float4(saturate(o), alpha * saturate(F.Head.y) * saturate(opacity));
+    return float4(saturate(o), alpha * saturate(F.Head.y) * saturate(Q.z));
 }
 
 float4 PsOutline(float4 pos : SV_Position) : SV_Target0
@@ -1890,6 +1889,9 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
 
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 6, none);
     }
+
+    /// <summary>Whether the game's depth goes from 1 near to 0 far (for other overlays' depth tests).</summary>
+    public static bool DepthBackwards => DepthRunsBackwards();
 
     // Whether the game's depth goes from 1 near to 0 far (most modern games), from its camera.
     private static bool DepthRunsBackwards()

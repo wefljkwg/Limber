@@ -394,8 +394,58 @@ public static unsafe class CameraControl
         }
     }
 
+    // ---- One frame drawn from a camera prop (Camera page: monitors): the camera put there for that frame only
+
+    /// <summary>A frame from a camera prop: which one, where, what it looks at, its field of view (degrees, 0: the game's).</summary>
+    public readonly record struct Grab(int Camera, Vector3 Position, Vector3 Look, float FoV);
+
+    private static Grab? _grab;
+    private static float? _fovSaved;
+    private static nint _fovCamera;
+
+    /// <summary>This frame is drawn from a camera prop (till the game's next camera update): overlays keep last frame's view.</summary>
+    public static volatile bool GrabFrame;
+
+    /// <summary>The camera prop this frame was drawn from (-1: none, or taken already).</summary>
+    public static int Grabbed = -1;
+
+    public static void SetGrab(Grab? grab, float unused)
+    {
+        _grab = grab;
+        if(grab != null)
+            EnsureHook();
+    }
+
     private static void UpdateDetour(nint camera)
     {
+        GrabFrame = false;
+        if(_fovSaved is { } savedFoV && _fovCamera == camera)
+        {
+            try
+            {
+                ((GameCamera*)camera)->FoV = savedFoV;
+            }
+            catch
+            {
+            }
+            _fovSaved = null;
+        }
+        var grab = _grab;
+        bool grabbing = grab != null && camera == (nint)Active();
+        if(grabbing && grab!.Value.FoV > 1f)
+        {
+            try
+            {
+                var gc = (GameCamera*)camera;
+                _fovSaved = gc->FoV;
+                _fovCamera = camera;
+                gc->FoV = grab.Value.FoV * MathF.PI / 180f;
+            }
+            catch
+            {
+                _fovSaved = null;
+            }
+        }
         if(_wroteCamera != 0)
         {
             try
@@ -418,6 +468,30 @@ public static unsafe class CameraControl
             }
         }
         _update!.Original(camera);
+        if(grabbing)
+        {
+            try
+            {
+                var gs = &((FFXIVClientStructs.FFXIV.Client.Game.CameraBase*)camera)->SceneCamera;
+                var go = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)gs;
+                var gamePosition = *(Vector3*)&go->Position;
+                var gameLook = *(Vector3*)&gs->LookAtVector;
+                *(Vector3*)&go->Position = grab!.Value.Position;
+                *(Vector3*)&gs->LookAtVector = grab.Value.Look;
+                _wroteCamera = camera;
+                _wrotePosition = grab.Value.Position;
+                _wroteLook = grab.Value.Look;
+                _gamePosition = gamePosition;
+                _gameLook = gameLook;
+                Grabbed = grab.Value.Camera;
+                GrabFrame = true;
+            }
+            catch
+            {
+            }
+            _grab = null;
+            return;
+        }
         if(!HasOffset)
             return;
         try

@@ -108,6 +108,7 @@ public sealed class Plugin : IDalamudPlugin
         _config.Ik ??= new RigSettings();
         _config.Ik.StopLimberAnimations(); // (Limber Animations never start by themselves)
         HandleCatalog.ShowRigBones = _config.Ik.ShowRigBones;
+        Limber.Rig.CameraRig.Config = _config.Ik;
         // Hotkeys saved by 0.36 (ImGui key numbers): back to the defaults.
         if(_config.Ik.UndoKey is { } uk && uk.Key >= 256) { uk.Key = 0x5A; uk.Ctrl = true; uk.Shift = false; uk.Alt = false; }
         if(_config.Ik.RedoKey is { } rk && rk.Key >= 256) { rk.Key = 0x59; rk.Ctrl = true; rk.Shift = false; rk.Alt = false; }
@@ -356,7 +357,7 @@ public sealed class Plugin : IDalamudPlugin
             _softBodyBelly.BoneStrength = () => _config.Ik.PropBoneStrength;
             _propOverlay = new PropOverlay(_props, _config.Ik, GameGui) { BodyColliders = [_softBody, _softBodyTesticles, _softBodyButt, _softBodyBelly] };
             _overlay.SuppressGizmo = () => _propOverlay.GizmoWanted || Limber.Koi.Props.KoiPropNodes.GizmoWanted;
-            _overlay.MouseTakenElsewhere = () => _propOverlay.OwnsMouse || _motions.OwnsMouse || Limber.Koi.Props.KoiPropNodes.OwnsMouse;
+            _overlay.MouseTakenElsewhere = () => Limber.Rig.CameraRig.OwnsMouse || _propOverlay.OwnsMouse || _motions.OwnsMouse || Limber.Koi.Props.KoiPropNodes.OwnsMouse;
             _motions.Changed = () => _config.Ik.Save();
             _overlay.Motions = _motions;
             _hook.Running = () => _config.PluginEnabled;
@@ -771,6 +772,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 _skinEffects.Update(here, framework.UpdateDelta.TotalSeconds);
                 _shaders.Update(here && _config.PluginEnabled);
+                Limber.Rig.CameraRig.Update(here && _config.PluginEnabled, framework.UpdateDelta.TotalSeconds);
                 _steam.Update(here && _config.PluginEnabled, framework.UpdateDelta.TotalSeconds);
                 _engineLayer.Update(here && _config.ShowEngineLayerTab, framework.UpdateDelta.TotalSeconds, _selection.Actor.IsSet ? _selection.Actor.Address : 0);
             }
@@ -1055,6 +1057,7 @@ public sealed class Plugin : IDalamudPlugin
                 _faceTab?.DrawScene();
                 _mainWindow?.MeshSculptTab?.DrawScene();
                 _propOverlay.Draw();
+                Limber.Rig.CameraRig.Draw();
                 Limber.Koi.Props.KoiPropNodes.Draw(GameGui);
                 _motions.Draw();
                 _oral.DrawGuide(GameGui);
@@ -1071,6 +1074,7 @@ public sealed class Plugin : IDalamudPlugin
                 Limber.Gpu.GameLiquid.Render(_climax);
                 Limber.Gpu.SteamRenderer.Draw(_steam, _config.Ik.SteamHideBehind);
                 Limber.Gpu.EffectRenderer.Draw(Limber.Rig.Shaders.EffectTargets);
+                Limber.Gpu.MonitorRenderer.Draw();
                 Limber.Koi.Props.KoiPropRuntime.Update();
                 perf.Mark("climax liquid");
                 _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
@@ -1364,6 +1368,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Gpu.FluidRenderer.Dispose();
         try { Limber.Gpu.SteamRenderer.Dispose(); } catch { }
         try { Limber.Gpu.EffectRenderer.Dispose(); } catch { }
+        try { Limber.Gpu.MonitorRenderer.Dispose(); Limber.Rig.CameraControl.SetGrab(null, 0f); } catch { }
         Limber.Gpu.GameLiquid.Stop();
         Limber.Rig.PlayerLook.Dispose();
         _video.Dispose();

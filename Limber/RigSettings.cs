@@ -219,6 +219,14 @@ public sealed class RigSettings
     /// <summary>The camera moved off its place: sideways (+ right), up, forward (metres, the way it looks).</summary>
     public System.Numerics.Vector3 CameraOffset { get; set; }
 
+    /// <summary>Camera props and monitors (Camera page).</summary>
+    public List<Limber.Rig.CameraProp> CameraProps { get; set; } = new();
+    public List<Limber.Rig.MonitorProp> Monitors { get; set; } = new();
+    public bool MonitorsOn { get; set; } = true;
+    public float MonitorRefresh { get; set; } = 6f;      // pictures a second, per camera
+    public bool ShowCameraProps { get; set; } = true;
+    public bool ShowCameraPropsAlways { get; set; }
+
     /// <summary>The Timeline page's animations, which one is open, and its options.</summary>
     public System.Collections.Generic.List<Limber.Rig.TimelineClip> Timelines { get; set; } = new();
     /// <summary>Saved paired animations (Posing &gt; Paired Animations).</summary>

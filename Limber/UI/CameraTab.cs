@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
@@ -240,6 +241,194 @@ public sealed class CameraTab
             shots.RemoveAt(remove);
             _config.Save();
         }
+
+        DrawRig();
+    }
+
+    // ---- Camera props and monitors
+
+    private static readonly (string Label, float Aspect)[] Aspects = [("16:9", 16f / 9f), ("4:3", 4f / 3f), ("1:1", 1f), ("21:9", 21f / 9f), ("9:16", 9f / 16f)];
+
+    private void DrawRig()
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        if(!ImGui.CollapsingHeader("Camera props and monitors###cam_rig"))
+            return;
+        CameraRig.TabOpen();
+        var cams = _config.CameraProps ??= new();
+        var mons = _config.Monitors ??= new();
+        bool save = false;
+        ImGui.TextWrapped("Place cameras in the world and screens that show what they see (like Koikatsu's studio cameras). "
+                          + "The game can only draw from one camera at a time, so now and then one frame is drawn from a camera prop "
+                          + "for its screens and the last normal frame is shown instead: a higher refresh is smoother on the screens "
+                          + "but makes the game itself a little less smooth.");
+        bool on = _config.MonitorsOn;
+        if(ImGui.Checkbox("Monitors on###cam_rig_on", ref on)) { _config.MonitorsOn = on; save = true; }
+        Tooltip("Off: no frames are taken for the screens (and they aren't drawn).");
+        ImGui.SameLine();
+        float refresh = _config.MonitorRefresh;
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
+        if(ImGui.SliderFloat("Refresh###cam_rig_hz", ref refresh, 0.5f, 30f, "%.1f / s", ImGuiSliderFlags.Logarithmic)) { _config.MonitorRefresh = refresh; save = true; }
+        Tooltip("How many new pictures a second each camera's screens get. Each one is a frame the game shows twice, so keep it low (3-8) for smooth play.
+"
+            + "With DLSS / FSR the frame after a picture can smear a little: plain anti-aliasing avoids that.");
+        bool show = _config.ShowCameraProps, always = _config.ShowCameraPropsAlways;
+        if(ImGui.Checkbox("Show the cameras###cam_rig_show", ref show)) { _config.ShowCameraProps = show; save = true; }
+        Tooltip("Small wireframe cameras where they are (only while this section is open, unless Always).");
+        ImGui.SameLine();
+        if(ImGui.Checkbox("Always###cam_rig_always", ref always)) { _config.ShowCameraPropsAlways = always; save = true; }
+        ImGui.SameLine();
+        bool move = CameraRig.GizmoMove;
+        if(ImGui.RadioButton("Move###cam_rig_move", move)) CameraRig.GizmoMove = true;
+        ImGui.SameLine();
+        if(ImGui.RadioButton("Turn###cam_rig_turn", !move)) CameraRig.GizmoMove = false;
+        Tooltip("What the handles on the chosen camera or screen do.");
+
+        // Cameras
+        ImGui.TextUnformatted("Cameras");
+        ImGui.SameLine();
+        if(ImGui.SmallButton("+ Camera here###cam_rig_addcam") && CameraRig.Eye(out var eye, out var fwd))
+        {
+            var cam = new CameraProp { Name = $"Camera {cams.Count + 1}", Position = eye, Rotation = CameraRig.Facing(fwd) };
+            cams.Add(cam);
+            CameraRig.Selected = cam.Id;
+            save = true;
+        }
+        Tooltip("A camera where the game camera is now, looking the same way.");
+        CameraProp? dropCam = null;
+        foreach(var cam in cams)
+        {
+            using var id = ImRaii.PushId(cam.Id.ToString());
+            bool sel = CameraRig.Selected == cam.Id;
+            if(ImGui.RadioButton($"###sel", sel))
+                CameraRig.Selected = sel ? Guid.Empty : cam.Id;
+            Tooltip("Choose it (handles to move / turn it).");
+            ImGui.SameLine();
+            string name = cam.Name;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
+            if(ImGui.InputText("###name", ref name, 40)) { cam.Name = name; save = true; }
+            ImGui.SameLine();
+            float fov = cam.FoV;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("FoV###fov", ref fov, 0f, 120f, fov < 1f ? "game's" : "%.0f°")) { cam.FoV = fov; save = true; }
+            Tooltip("Its field of view (0: the same as the game camera's).");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("To my view###here") && CameraRig.Eye(out var e2, out var f2))
+            {
+                cam.Position = e2;
+                cam.Rotation = CameraRig.Facing(f2);
+                save = true;
+            }
+            Tooltip("Moves it to where the game camera is, looking the same way.");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Remove###rm"))
+                dropCam = cam;
+        }
+        if(dropCam != null)
+        {
+            cams.Remove(dropCam);
+            save = true;
+        }
+
+        // Monitors
+        ImGui.TextUnformatted("Screens");
+        ImGui.SameLine();
+        if(ImGui.SmallButton("+ Screen in front of me###cam_rig_addmon") && CameraRig.Eye(out var me, out var mf))
+        {
+            var mon = new MonitorProp
+            {
+                Name = $"Screen {mons.Count + 1}", Position = me + mf * 2.5f, Rotation = CameraRig.Facing(-mf),
+                Camera = cams.Count > 0 ? cams[^1].Id : Guid.Empty,
+            };
+            mons.Add(mon);
+            CameraRig.Selected = mon.Id;
+            save = true;
+        }
+        Tooltip("A screen 2.5 m in front of the game camera, facing it, showing the last camera.");
+        MonitorProp? dropMon = null;
+        foreach(var mon in mons)
+        {
+            using var id = ImRaii.PushId(mon.Id.ToString());
+            bool sel = CameraRig.Selected == mon.Id;
+            if(ImGui.RadioButton($"###sel", sel))
+                CameraRig.Selected = sel ? Guid.Empty : mon.Id;
+            Tooltip("Choose it (handles to move / turn it).");
+            ImGui.SameLine();
+            bool mOn = mon.On;
+            if(ImGui.Checkbox("###on", ref mOn)) { mon.On = mOn; save = true; }
+            Tooltip("Screen on.");
+            ImGui.SameLine();
+            string name = mon.Name;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(110f * ImGuiHelpers.GlobalScale));
+            if(ImGui.InputText("###name", ref name, 40)) { mon.Name = name; save = true; }
+            ImGui.SameLine();
+            var current = cams.FirstOrDefault(c => c.Id == mon.Camera);
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
+            using(var combo = ImRaii.Combo("###cam", current?.Name ?? "(no camera)"))
+            {
+                if(combo.Success)
+                    foreach(var c in cams)
+                        if(ImGui.Selectable($"{c.Name}###c_{c.Id}", c.Id == mon.Camera)) { mon.Camera = c.Id; save = true; }
+            }
+            Tooltip("Which camera it shows.");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Remove###rm"))
+                dropMon = mon;
+            if(!sel)
+                continue;
+            using var indent = ImRaii.PushIndent();
+            float w = mon.Width;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Width###w", ref w, 0.1f, 20f, "%.2f m", ImGuiSliderFlags.Logarithmic)) { mon.Width = w; save = true; }
+            ImGui.SameLine();
+            string aspect = Aspects.FirstOrDefault(a => MathF.Abs(a.Aspect - mon.Aspect) < 0.01f).Label ?? $"{mon.Aspect:0.00}";
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(80f * ImGuiHelpers.GlobalScale));
+            using(var combo = ImRaii.Combo("Shape###asp", aspect))
+            {
+                if(combo.Success)
+                    foreach(var a in Aspects)
+                        if(ImGui.Selectable(a.Label, MathF.Abs(a.Aspect - mon.Aspect) < 0.01f)) { mon.Aspect = a.Aspect; save = true; }
+            }
+            float bright = mon.Brightness, bezel = mon.Bezel;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Brightness###br", ref bright, 0f, 3f, "%.2f")) { mon.Brightness = bright; save = true; }
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Frame###bz", ref bezel, 0f, 0.2f, "%.3f")) { mon.Bezel = bezel; save = true; }
+            Tooltip("The frame round the picture (of the width).");
+            ImGui.SameLine();
+            var bc = new Vector4(mon.BezelColour is { Length: >= 3 } b ? new Vector3(b[0], b[1], b[2]) : new Vector3(0.05f), 1f);
+            if(ImGui.ColorEdit4("###bzc", ref bc, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.NoAlpha)) { mon.BezelColour = [bc.X, bc.Y, bc.Z, 1f]; save = true; }
+            Tooltip("The frame's colour.");
+            bool mirror = mon.Mirror, backPanel = mon.BackPanel;
+            if(ImGui.Checkbox("Mirror###mir", ref mirror)) { mon.Mirror = mirror; save = true; }
+            Tooltip("The picture flipped left to right (like a mirror).");
+            ImGui.SameLine();
+            if(ImGui.Checkbox("Dark back###back", ref backPanel)) { mon.BackPanel = backPanel; save = true; }
+            Tooltip("From behind it's a dark panel (off: the picture shows from both sides).");
+            ImGui.SameLine();
+            if(ImGui.SmallButton("In front of me###mhere") && CameraRig.Eye(out var me2, out var mf2))
+            {
+                mon.Position = me2 + mf2 * 2.5f;
+                mon.Rotation = CameraRig.Facing(-mf2);
+                save = true;
+            }
+        }
+        if(dropMon != null)
+        {
+            mons.Remove(dropMon);
+            save = true;
+        }
+        if(Limber.Gpu.MonitorRenderer.Error.Length > 0)
+        {
+            ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Can't draw the screens: " + Limber.Gpu.MonitorRenderer.Error);
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Try again###cam_rig_retry"))
+                Limber.Gpu.MonitorRenderer.Retry();
+        }
+        if(save)
+            _config.Save();
     }
 
     private static void Tooltip(string text)

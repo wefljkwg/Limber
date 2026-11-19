@@ -7,7 +7,27 @@ public static unsafe class CameraUtil
 {
     // The active camera's view (world -> camera) and projection matrices, in the row-vector form
     // System.Numerics and ImGuizmo use.
+    private static Matrix4x4 _lastView = Matrix4x4.Identity, _lastProjection = Matrix4x4.Identity;
+    private static bool _haveLast;
+
     public static bool TryGetMatrices(out Matrix4x4 view, out Matrix4x4 projection)
+    {
+        // (a frame drawn from a camera prop for a monitor: the last frame's view, so handles and gizmos don't jump)
+        if(Limber.Rig.CameraControl.GrabFrame && _haveLast)
+        {
+            view = _lastView;
+            projection = _lastProjection;
+            return true;
+        }
+        if(!TryGetLive(out view, out projection))
+            return false;
+        _lastView = view;
+        _lastProjection = projection;
+        _haveLast = true;
+        return true;
+    }
+
+    private static bool TryGetLive(out Matrix4x4 view, out Matrix4x4 projection)
     {
         view = Matrix4x4.Identity;
         projection = Matrix4x4.Identity;
