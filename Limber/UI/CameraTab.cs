@@ -429,6 +429,15 @@ public sealed class CameraTab
         }
         ImGui.Separator();
         ImGui.TextUnformatted("Live screens research (experiment)");
+        var console = Limber.Gpu.ResearchConsole.Enabled;
+        if(ImGui.Checkbox("Let Claude run the experiments (through files in Limber's settings folder)###cam_rig_console", ref console))
+            Limber.Gpu.ResearchConsole.Enabled = console;
+        Tooltip("While ticked, Limber reads experiment commands from pluginConfigs/Limber/research/cmd.txt and writes the results (and pictures) next to it, so Claude can run the tests itself. Off again whenever Limber reloads.");
+        if(Limber.Gpu.ResearchConsole.Enabled && Limber.Gpu.ResearchConsole.Last.Length > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextUnformatted(Limber.Gpu.ResearchConsole.Last);
+        }
         var exOn = Limber.Gpu.ViewExperiment.On;
         if(ImGui.Checkbox("Draw the world from a camera prop into a spare preview picture (may crash the game)###cam_rig_ex", ref exOn))
         {

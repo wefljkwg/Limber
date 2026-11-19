@@ -123,7 +123,7 @@ public static unsafe class ViewExperiment
     /// <summary>Whose camera sat in the slot right after the game drew (Limber's: the slot was drawn from it).</summary>
     public static string DuringDraw = "";
 
-    private static void EnsureRenderHook()
+    internal static void EnsureRenderHook()
     {
         if(_renderTried)
             return;
@@ -147,6 +147,13 @@ public static unsafe class ViewExperiment
 
     private static void RenderDetour(nint manager)
     {
+        try
+        {
+            ResearchConsole.ApplyWrites();
+        }
+        catch
+        {
+        }
         try
         {
             if(On || _usedSlot >= 0)
@@ -285,7 +292,7 @@ public static unsafe class ViewExperiment
             if(_lightGlobal == 0)
                 LightState = "couldn't find the slots' lighting";
         }
-        if(_lightGlobal == 0)
+        if(_lightGlobal == 0 || n < 0 || n > 7)
             return;
         nint table = *(nint*)_lightGlobal;
         if(!SafeMemory.Plausible(table))
@@ -312,6 +319,19 @@ public static unsafe class ViewExperiment
     private static byte _saved205;
 
     // Slot n's own camera (the one the game puts into view 25's sub-view n before drawing it).
+    internal static nint SlotCamerasObject()
+    {
+        SlotOwnCamera(0);
+        return _slotCamerasGlobal == 0 ? 0 : SafeMemory.ReadPointer(_slotCamerasGlobal);
+    }
+
+    internal static nint LightsObject()
+    {
+        if(_lightGlobal == -1)
+            Light(-1);
+        return _lightGlobal <= 0 ? 0 : SafeMemory.ReadPointer(_lightGlobal);
+    }
+
     private static nint SlotOwnCamera(int n)
     {
         if(_slotCamerasGlobal == -1)
@@ -618,6 +638,8 @@ public static unsafe class ViewExperiment
             _recording = false;
             Record.Insert(0, $"Limber: one frame's clears (extra view {(On ? $"ON in slot {Slot}" : "off")}): {_rtvClears} target clears, {_dsvClears} depth clears ({_mainClears} of the main depth)\n");
             CameraRig.LastViews = Record.ToString();
+            _lastRecord = CameraRig.LastViews;
+            LastRecordReady = true;
             foreach(var line in CameraRig.LastViews.Split('\n'))
                 if(line.Length > 0)
                     Plugin.Log.Information(line);
@@ -660,6 +682,15 @@ public static unsafe class ViewExperiment
         _rtvClears = 0;
         _dsvClears = 0;
         _mainClears = 0;
+    }
+
+    private static string _lastRecord = "";
+    public static bool LastRecordReady;
+
+    public static string TakeRecord()
+    {
+        LastRecordReady = false;
+        return _lastRecord;
     }
 
     public static void Dispose()

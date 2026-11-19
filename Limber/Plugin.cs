@@ -1076,6 +1076,7 @@ public sealed class Plugin : IDalamudPlugin
                 Limber.Gpu.SteamRenderer.Draw(_steam, _config.Ik.SteamHideBehind);
                 Limber.Gpu.EffectRenderer.Draw(Limber.Rig.Shaders.EffectTargets);
                 Limber.Gpu.MonitorRenderer.Draw(_config.Ik.MonitorDelay);
+                Limber.Gpu.ResearchConsole.Frame();
                 Limber.Gpu.ViewExperiment.Frame();
                 Limber.Koi.Props.KoiPropRuntime.Update();
                 perf.Mark("climax liquid");
