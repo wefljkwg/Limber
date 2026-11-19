@@ -150,6 +150,7 @@ public static unsafe class ViewExperiment
         try
         {
             ResearchConsole.ApplyWrites();
+            LiveCharacters.OnRender();
         }
         catch
         {

@@ -67,6 +67,7 @@ public static unsafe class LiveCharacters
         }
         int index = CameraRig.Cameras.IndexOf(cam);
         LiveCamera = index;
+        ViewExperiment.EnsureRenderHook();
         if(ViewExperiment.RenderViewFor(cam, out var view))
         {
             view.M14 = view.M24 = view.M34 = 0;
@@ -426,6 +427,8 @@ public static unsafe class LiveCharacters
         if(_bgDepth != 0)
             ((delegate* unmanaged[Stdcall]<nint, nint, nint, void>)V(c, 47))(c, _workDepth, _bgDepth);
         UpdateCamera(c, camCb);
+        if(_cbReady)
+            Reproject(c);
     }
 
     // The game's camera buffer read back (a frame late, without waiting), its matrices swapped for the prop's, uploaded.
@@ -489,7 +492,56 @@ public static unsafe class LiveCharacters
     public static string LastPatch = "";
     /// <summary>0: the camera's matrices swapped (world and camera-relative ones); 1: also the projection made to take
     /// the main camera's view space to the prop's picture (for shaders handed positions already in view space).</summary>
-    public static int PatchMode;
+    public static int PatchMode = 1;
+
+    // Where the projection (and its inverse) sit in the buffer, in which order: rewritten every frame with this frame's
+    // main view (the characters' positions arrive in it), so the picture doesn't lag a frame behind the game camera.
+    private static readonly List<(int At, int Order, bool Inverse)> ProjSlots = new();
+    private static Matrix4x4 _propView, _propProj;
+    private static bool _haveProj;
+
+    // The main render camera's view as each frame was recorded (main thread, in the game's render function), taken in
+    // order on the render thread: the head is the frame being drawn now.
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<Matrix4x4> FrameViews = new();
+    private static Matrix4x4 _lastFrameView;
+
+    /// <summary>Main thread, right before the game records a frame's drawing (ViewExperiment's render hook).</summary>
+    public static void OnRender()
+    {
+        if(LiveCamera < 0)
+            return;
+        var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+        if(cm == null || cm->CurrentCamera == null || cm->CurrentCamera->RenderCamera == null)
+            return;
+        var v = *(Matrix4x4*)&cm->CurrentCamera->RenderCamera->ViewMatrix;
+        v.M14 = v.M24 = v.M34 = 0;
+        v.M44 = 1;
+        FrameViews.Enqueue(v);
+        while(FrameViews.Count > 6)
+            FrameViews.TryDequeue(out _);
+    }
+
+    // This frame's projection slots written and uploaded.
+    private static void Reproject(nint c)
+    {
+        if(PatchMode != 1 || !_haveProj || ProjSlots.Count == 0 || _ourCb == 0)
+            return;
+        var mv = FrameViews.TryPeek(out var head) ? head : _lastFrameView;
+        _lastFrameView = mv;
+        if(!Matrix4x4.Invert(mv, out var back))
+            return;
+        var m = back * _propView * _propProj;
+        if(!Matrix4x4.Invert(m, out var mi))
+            return;
+        foreach(var (at, order, inverse) in ProjSlots)
+        {
+            var put = Floats(order == 0 ? Matrix4x4.Transpose(inverse ? mi : m) : inverse ? mi : m);
+            for(int k = 0; k < 16 && at + k < CbFloats.Length; k++)
+                CbFloats[at + k] = put[k];
+        }
+        fixed(float* f = CbFloats)
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, void*, void*, uint, uint, void>)V(c, 48))(c, _ourCb, 0, null, f, 0, 0);
+    }
 
     // Every copy of the main camera's matrices (and its position) in the buffer swapped for the prop's, in the same
     // layout (the game keeps them transposed; views as 3 rows).
@@ -539,6 +591,10 @@ public static unsafe class LiveCharacters
         };
         var done = new bool[n];
         var log = new StringBuilder();
+        ProjSlots.Clear();
+        _propView = pv;
+        _propProj = pp;
+        _haveProj = true;
         foreach(var (main, propM, size, name) in kinds)
             for(int order = 0; order < 2; order++)
             {
@@ -556,6 +612,8 @@ public static unsafe class LiveCharacters
                         done[at + k] = true;
                     }
                     log.Append($"{name}{(order == 1 ? " (as is)" : "")} at 0x{at * 4:X}; ");
+                    if(name is "projection" or "inverse projection")
+                        ProjSlots.Add((at, order, name == "inverse projection"));
                 }
             }
         // the camera's position, wherever it's on its own
@@ -690,7 +748,7 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
     private static nint _vs, _ps, _cb, _live, _liveRtv, _liveSrv;
     private static uint _liveW, _liveH;
     private static bool _shadersFailed;
-    public static float Brightness = 1.1f, Ambient = 0.55f;
+    public static float Brightness = 1.5f, Ambient = 0.55f;
 
     private static nint Compile(string entry, string target)
     {
@@ -746,6 +804,9 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
     /// <summary>Whether this frame has a live picture (for the screens), made here (state saved by the caller).</summary>
     public static bool Compose(nint c)
     {
+        // (this frame is drawn: the next one's view is next in line)
+        if(FrameViews.TryDequeue(out var done))
+            _lastFrameView = done;
         bool drew = _drewThisFrame;
         LastReplays = Replays;
         Replays = 0;
