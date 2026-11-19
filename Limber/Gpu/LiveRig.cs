@@ -496,6 +496,7 @@ public static unsafe class LiveRig
         public required Dictionary<string, float> Sculpt, Built;
         public required string Key;
         public bool Bulge;                         // a stomach bulge on: the belly's skin goes on the plan too
+        public bool Press;                         // props with Mesh collision on: all the skin goes on the plan (to be pressed)
         // The body model the worn top replaces (resolved through the mod manager), read but never drawn: the skin the
         // clothing is wrapped onto, also where the top itself has no skin (under a bra's cups). Null: none.
         public string? BodyFile;
@@ -611,6 +612,16 @@ public static unsafe class LiveRig
             catch
             {
             }
+            // (Mesh collision: the skin is pressed only where the live rig moves it, so with props that press the mesh,
+            // all of it goes on the plan, also on models a rig mod already weighted, which otherwise had none on it)
+            bool press = false;
+            try
+            {
+                press = Props()?.Any(p => p.Mesh && p.MeshStrength > 0f) ?? false;
+            }
+            catch
+            {
+            }
             static string Of(Dictionary<string, float> d) => string.Join(",", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value:0.###}"));
             string key = string.Join("|",
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(info), info.Count,
@@ -618,9 +629,10 @@ public static unsafe class LiveRig
                 want.Physics ? "p" : "-", fit ? "f" : "-", string.Join(",", real.OrderBy(x => x)), string.Join(",", parts.Select(p => p.Key)),
                 string.Join(";", placements.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + ":" + ShapeKey(kv.Value))),
                 string.Join(",", sculpt.Keys.OrderBy(k => k, StringComparer.Ordinal)), Of(built), bodyFile ?? "", bindKey,
-                Limber.Rig.Bulge.Wanted.ContainsKey(want.Address) ? "bulge" : "");
+                Limber.Rig.Bulge.Wanted.ContainsKey(want.Address) ? "bulge" : "", press ? "press" : "");
             return new Inputs
             {
+                Press = press,
                 Bulge = Limber.Rig.Bulge.Wanted.ContainsKey(want.Address),
                 Info = info, Rest = rest, Bind = bind, Files = files, Placements = placements, Fit = fit, Physics = want.Physics, RealParts = real, Parts = parts,
                 Sculpt = sculpt, Built = built, Key = key, BodyFile = bodyFile,
@@ -929,7 +941,7 @@ public static unsafe class LiveRig
         {
             try
             {
-                var plan = MakeModel(file, data, sides, sidesKey, sculpt, builtSculpt, SlotOf, idx, w, ref movingTotal, ref shapedTotal, null, surface, bulgeZone);
+                var plan = MakeModel(file, data, sides, sidesKey, sculpt, builtSculpt, SlotOf, idx, w, ref movingTotal, ref shapedTotal, null, surface, bulgeZone, inp.Press);
                 if (plan != null)
                     wrappedTotal += plan.Wraps.Sum(x => x.Vertex.Length);
                 if (plan != null)
@@ -1061,7 +1073,7 @@ public static unsafe class LiveRig
     private static ModelPlan? MakeModel(string file, byte[] data, List<MdlRigger.Side> sides, string sidesKey,
         Action<Vector3, string[], byte[], float[], int, List<Limber.BodyShape.BodyShapeBuild.SculptTerm>>? sculpt,
         Func<Vector3, string[], byte[], float[], int, Vector3>? builtSculpt, Func<string, int> slotOf, byte[] idx, float[] w, ref int movingTotal, ref int shapedTotal,
-        SkinRef? skinRef = null, SkinSurface? surface = null, Func<Vector3, bool>? bulgeZone = null)
+        SkinRef? skinRef = null, SkinSurface? surface = null, Func<Vector3, bool>? bulgeZone = null, bool press = false)
     {
         string[] materials;
         try
@@ -1107,7 +1119,7 @@ public static unsafe class LiveRig
                 }
             });
         }
-        if (onLattice == null && sculpt == null && builtSculpt == null && surface == null && bulgeZone == null
+        if (onLattice == null && sculpt == null && builtSculpt == null && surface == null && bulgeZone == null && !press
             && (skinRef == null || (skinRef.Count == 0 && !materials.Any(MdlRigger.IsSkinMaterial))))
             return null;
         var wraps = new List<WrapPlan>();
@@ -1226,7 +1238,7 @@ public static unsafe class LiveRig
                 // the lattice already.
                 void BulgeOnly()
                 {
-                    if (bulgeZone == null || !bulgeZone(p))
+                    if ((bulgeZone == null || !bulgeZone(p)) && !(press && isSkin))
                         return;
                     int b0 = slot.Count;
                     for (int k = 0; k < skin.Slots; k++)

@@ -2175,6 +2175,14 @@ public sealed partial class LimberTab
             "How much it stays where it is instead of swinging (0 = swings as simulated, 1 = stays put; it still ripples).", 0f, 1f);
         Slider("Keep rotation##lmb_soft", soft.KeepRotation, v => soft.KeepRotation = v,
             "How much it keeps its angle (0 = turns with the swing, 1 = moves along with it without turning).", 0f, 1f);
+        if(part != Limber.BodyRig.RigParts.Belly)
+        {
+            bool still = soft.IgnoreModJiggle;
+            if(ImGui.Checkbox("Ignore the body mod's own jiggle##lmb_soft", ref still)) { soft.IgnoreModJiggle = still; changed = true; }
+            Tooltip("On: the part is held where the body mod's bone for it sits at rest, so only these settings move it. "
+                + "Off: the body mod's own physics (a Jiggle version's breast or butt bones) moves it too, on top of these, "
+                + "which flails much more.");
+        }
         if(part == Limber.BodyRig.RigParts.Testicles)
         {
             Slider("Hang##lmb_soft", soft.Hang, v => soft.Hang = v,

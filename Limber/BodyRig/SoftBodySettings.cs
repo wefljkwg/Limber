@@ -24,6 +24,9 @@ public sealed class SoftBodySettings
     // How much the swing keeps the part where it is (0 = swings as simulated, 1 = stays put; it still ripples), and
     // how much it keeps its angle (0 = turns with the swing, 1 = slides with it without turning).
     public float KeepPosition { get; set; }
+    // The body mod's own jiggle (its physics bones the part hangs from) ignored: the part is held where that bone sits
+    // at rest on the body, so only Limber's physics moves it (both together flailed far too much).
+    public bool IgnoreModJiggle { get; set; } = true;
     public float KeepRotation { get; set; }
     public bool Collisions { get; set; } = true;   // arms, hands, thighs, the floor, and other characters' hands
     // What it collides with and how (the Physics collisions page).
