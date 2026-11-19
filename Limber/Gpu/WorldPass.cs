@@ -106,45 +106,59 @@ public static unsafe class WorldPass
         ((delegate* unmanaged<nint, void>)((nint*)*(nint*)cam)[6])(cam);
     }
 
-    // ---- Render thread: the copy at the main depth's second clear in a frame
+    // ---- Render thread: copies at a boundary. The game clears some targets once per world drawing (inside RenderView)
+    // and others once a frame; Boundary is a resource (ID3D11Resource*) cleared once per drawing: at its second clear
+    // in a frame the first drawing (the prop's) is finished, and the Sources (ID3D11Texture2D*) are copied into
+    // Limber's own textures, Captures[i]. With no Boundary set, the main depth's second clear is used.
 
-    private static int _clearsThisFrame;
-    private static nint _capture, _captureSrv;
-    private static uint _cw, _ch, _cf;
-    public static nint CaptureTexture => _capture;
-    public static nint CaptureView => _captureSrv;
-    public static uint CaptureWidth => _cw;
-    public static uint CaptureHeight => _ch;
+    public static nint Boundary;
+    public static readonly nint[] Sources = new nint[3];
+    public static readonly nint[] Captures = new nint[3];
+    private static readonly nint[] CaptureViews = new nint[3];
+    private static readonly uint[] CapW = new uint[3], CapH = new uint[3], CapF = new uint[3];
+    public static nint CaptureTexture => Captures[0];
+    public static nint CaptureView => CaptureViews[0];
+    public static uint CaptureWidth => CapW[0];
+    public static uint CaptureHeight => CapH[0];
 
-    /// <summary>From ViewExperiment's ClearDepthStencilView hook, for the main depth, before it's cleared.</summary>
-    public static void OnMainDepthClear(nint ctx)
+    private static int _clearsThisFrame, _boundaryThisFrame;
+    public static int LastClears, LastBoundary;
+
+    /// <summary>From ViewExperiment's clear hooks: the resource behind every cleared view, before it's cleared.</summary>
+    public static void OnClear(nint ctx, nint view, bool mainDepth)
     {
-        _clearsThisFrame++;
-        if(!On || _clearsThisFrame != 2)
+        if(mainDepth)
+            _clearsThisFrame++;
+        if(!On)
+            return;
+        bool hit;
+        if(Boundary != 0)
+        {
+            nint res = 0;
+            ((delegate* unmanaged[Stdcall]<nint, nint*, void>)V(view, 7))(view, &res);
+            bool same = res == Boundary;
+            if(res != 0)
+                ((delegate* unmanaged[Stdcall]<nint, uint>)V(res, 2))(res);
+            if(!same)
+                return;
+            hit = ++_boundaryThisFrame == 2;
+        }
+        else
+            hit = mainDepth && _clearsThisFrame == 2;
+        if(!hit)
             return;
         try
         {
-            var rtm = (nint)FFXIVClientStructs.FFXIV.Client.Graphics.Render.RenderTargetManager.Instance();
-            if(rtm == 0)
-                return;
-            nint tex = SafeMemory.ReadPointer(rtm + SourceOffset);
-            if(!SafeMemory.Plausible(tex))
-                return;
-            nint src = SafeMemory.ReadPointer(tex + 0x68);
-            if(!SafeMemory.Plausible(src))
-                return;
-            Desc d;
-            ((delegate* unmanaged[Stdcall]<nint, Desc*, void>)V(src, 10))(src, &d);
-            if(d.SampleCount != 1)
+            if(Sources[0] == 0)
             {
-                Error = "the source is multisampled";
-                return;
+                var rtm = (nint)FFXIVClientStructs.FFXIV.Client.Graphics.Render.RenderTargetManager.Instance();
+                nint tex = rtm == 0 ? 0 : SafeMemory.ReadPointer(rtm + SourceOffset);
+                if(SafeMemory.Plausible(tex))
+                    Copy(ctx, 0, SafeMemory.ReadPointer(tex + 0x68));
             }
-            if(_capture == 0 || d.Width != _cw || d.Height != _ch || d.Format != _cf)
-                Make(d);
-            if(_capture == 0)
-                return;
-            ((delegate* unmanaged[Stdcall]<nint, nint, uint, uint, uint, uint, nint, uint, void*, void>)V(ctx, 46))(ctx, _capture, 0, 0, 0, 0, src, 0, null);
+            for(int i = 0; i < Sources.Length; i++)
+                if(Sources[i] != 0)
+                    Copy(ctx, i, Sources[i]);
             Captured++;
         }
         catch(Exception e)
@@ -153,14 +167,32 @@ public static unsafe class WorldPass
         }
     }
 
+    private static void Copy(nint ctx, int i, nint src)
+    {
+        if(!SafeMemory.Plausible(src))
+            return;
+        Desc d;
+        ((delegate* unmanaged[Stdcall]<nint, Desc*, void>)V(src, 10))(src, &d);
+        if(d.SampleCount != 1)
+        {
+            Error = $"source {i} is multisampled";
+            return;
+        }
+        if(Captures[i] == 0 || d.Width != CapW[i] || d.Height != CapH[i] || d.Format != CapF[i])
+            Make(i, d);
+        if(Captures[i] == 0)
+            return;
+        ((delegate* unmanaged[Stdcall]<nint, nint, uint, uint, uint, uint, nint, uint, void*, void>)V(ctx, 46))(ctx, Captures[i], 0, 0, 0, 0, src, 0, null);
+    }
+
     /// <summary>Once a frame (Present).</summary>
     public static void Frame()
     {
         LastClears = _clearsThisFrame;
+        LastBoundary = _boundaryThisFrame;
         _clearsThisFrame = 0;
+        _boundaryThisFrame = 0;
     }
-
-    public static int LastClears;
 
     private static nint V(nint obj, int index) => ((nint*)*(nint*)obj)[index];
 
@@ -177,13 +209,12 @@ public static unsafe class WorldPass
         public uint Width, Height, MipLevels, ArraySize, Format, SampleCount, SampleQuality, Usage, BindFlags, CpuAccessFlags, MiscFlags;
     }
 
-    private static void Make(Desc d)
+    private static void Make(int i, Desc d)
     {
-        Release(ref _captureSrv);
-        Release(ref _capture);
+        Release(ref CaptureViews[i]);
+        Release(ref Captures[i]);
         var kernel = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device.Instance();
         nint device = (nint)kernel->D3D11Forwarder;
-        uint format = Typed(d.Format);
         var nd = new Desc
         {
             Width = d.Width, Height = d.Height, MipLevels = 1, ArraySize = 1, Format = d.Format, SampleCount = 1,
@@ -193,35 +224,42 @@ public static unsafe class WorldPass
         int hr = ((delegate* unmanaged[Stdcall]<nint, Desc*, void*, nint*, int>)V(device, 5))(device, &nd, null, &t);
         if(hr < 0 || t == 0)
         {
-            Error = $"couldn't make the capture texture ({hr:X8}, format {d.Format})";
-            return;
+            // typeless depth formats can't always be shader resources: try without
+            nd.BindFlags = 0;
+            hr = ((delegate* unmanaged[Stdcall]<nint, Desc*, void*, nint*, int>)V(device, 5))(device, &nd, null, &t);
+            if(hr < 0 || t == 0)
+            {
+                Error = $"couldn't make capture {i} ({hr:X8}, format {d.Format})";
+                return;
+            }
         }
-        _capture = t;
-        // a shader view in a readable format (typeless sources get their usual typed format)
-        uint* srvDesc = stackalloc uint[6];
-        srvDesc[0] = format;
-        srvDesc[1] = 4; // TEXTURE2D
-        srvDesc[2] = 0; // most detailed mip
-        srvDesc[3] = 1; // mip levels
-        srvDesc[4] = 0;
-        srvDesc[5] = 0;
-        nint v = 0;
-        hr = ((delegate* unmanaged[Stdcall]<nint, nint, void*, nint*, int>)V(device, 7))(device, t, srvDesc, &v);
-        if(hr >= 0)
-            _captureSrv = v;
-        _cw = d.Width;
-        _ch = d.Height;
-        _cf = d.Format;
+        Captures[i] = t;
+        if(nd.BindFlags != 0)
+        {
+            uint* srvDesc = stackalloc uint[6];
+            srvDesc[0] = Typed(d.Format);
+            srvDesc[1] = 4; // TEXTURE2D
+            srvDesc[2] = 0;
+            srvDesc[3] = 1;
+            srvDesc[4] = 0;
+            srvDesc[5] = 0;
+            nint v = 0;
+            hr = ((delegate* unmanaged[Stdcall]<nint, nint, void*, nint*, int>)V(device, 7))(device, t, srvDesc, &v);
+            if(hr >= 0)
+                CaptureViews[i] = v;
+        }
+        CapW[i] = d.Width;
+        CapH[i] = d.Height;
+        CapF[i] = d.Format;
     }
 
     // Typeless formats to a typed one a shader can read.
     private static uint Typed(uint f) => f switch
     {
-        27 => 28, // R8G8B8A8_TYPELESS
-        87 => 87,
-        90 => 87, // B8G8R8A8_TYPELESS
-        9 => 10, // R16G16B16A16_TYPELESS
-        23 => 24, // R10G10B10A2_TYPELESS
+        27 => 28,
+        90 => 87,
+        9 => 10,
+        23 => 24,
         1 => 2,
         _ => f,
     };
@@ -231,7 +269,10 @@ public static unsafe class WorldPass
         On = false;
         try { _renderView?.Dispose(); } catch { }
         _renderView = null;
-        Release(ref _captureSrv);
-        Release(ref _capture);
+        for(int i = 0; i < Captures.Length; i++)
+        {
+            Release(ref CaptureViews[i]);
+            Release(ref Captures[i]);
+        }
     }
 }

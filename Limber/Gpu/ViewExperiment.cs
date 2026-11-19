@@ -561,6 +561,7 @@ public static unsafe class ViewExperiment
         try
         {
             _rtvClears++;
+            WorldPass.OnClear(ctx, rtv, false);
             if(_slotW > 0 && SizeOf(rtv, out var w, out var h) && w == _slotW && h == _slotH)
                 _slotClears++;
             if(_recording)
@@ -581,10 +582,8 @@ public static unsafe class ViewExperiment
                 _slotClears++;
             bool main = IsMainDepth(dsv);
             if(main)
-            {
                 _mainClears++;
-                WorldPass.OnMainDepthClear(ctx);
-            }
+            WorldPass.OnClear(ctx, dsv, main);
             if(_recording)
                 Record.Append($"  clear depth {Describe(dsv)} flags {flags} to {depth}{(main ? " MAIN DEPTH" : "")}\n");
         }
