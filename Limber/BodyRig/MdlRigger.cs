@@ -257,6 +257,28 @@ public static class MdlRigger
                     bool old = names.Any(n => n.StartsWith(side.OldPrefix, StringComparison.Ordinal));
                     if (usedSources.Count == 0 && !old)
                         continue;
+                    // One source (not merged): the one the mesh's vertices are weighted to most, not just the first name
+                    // listed (a mesh's table can list a bone nothing is weighted to: a body with its butt on butt_l had
+                    // iv_shiri_l in its table too, and its butt was never rigged).
+                    if (!side.Merge && usedSources.Count > 1)
+                    {
+                        var carried = new Dictionary<string, float>();
+                        for (int v = 0; v < mesh.VertexCount; v++)
+                        {
+                            int wa = Address(we, v), ia = Address(ie, v);
+                            if (wa + slots > data.Length || ia + slots > data.Length)
+                                break;
+                            foreach (var (cb, cw) in Current(v, wa, ia))
+                                if (cb < names.Count && usedSources.Contains(names[cb]))
+                                    carried[names[cb]] = carried.GetValueOrDefault(names[cb]) + cw;
+                        }
+                        if (carried.Count > 0)
+                        {
+                            var best = carried.OrderByDescending(kv => kv.Value).First().Key;
+                            usedSources.Remove(best);
+                            usedSources.Insert(0, best);
+                        }
+                    }
                     if (!Frame(side.Positions, side.Rows, side.Columns, side.Steps, out var origin, out var inverse))
                     {
                         log.Add($"{side.Bones[0]}: the lattice is flat, skipped");
@@ -342,7 +364,9 @@ public static class MdlRigger
                     var source = new HashSet<int>();
                     foreach (var n in (side.Merge ? usedSources : usedSources.Take(1)).Concat(side.Bones).Append(side.Parent))
                         if (local.TryGetValue(n, out var k)
-                            && (sameFit == null || n == side.Parent || RigParts.IsRigBone(n) || sameFit(n, side.Parent)))
+                            && (sameFit == null || n == side.Parent || RigParts.IsRigBone(n) || sameFit(n, side.Parent)
+                                // (a bone the racial deformers don't know at all, a body mod's own: nothing to compare)
+                                || sameFit(n, "")))
                             source.Add(k);
                     foreach (var (n, k) in local)
                         if (n.StartsWith(side.OldPrefix, StringComparison.Ordinal))

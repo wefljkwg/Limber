@@ -910,6 +910,12 @@ public static unsafe class LiveRig
         {
             float span = marks.NavelY - marks.PubisY, hw = marks.HipWidth;
             float y0 = marks.PubisY - span * 0.45f, y1 = marks.PubisY + span * 2.1f, z0 = marks.PelvisZ - hw * 0.05f;
+            // (up to the chest: a long bulge reaches the breasts, and past the zone the skin wasn't moved, so it stopped
+            // in a sharp edge partway up the stomach; on short bodies, a Lalafell's, that was well below the breasts)
+            if (float.IsFinite(marks.BreastY))
+                y1 = MathF.Max(y1, marks.BreastY + hw * 0.4f);
+            else
+                y1 = MathF.Max(y1, marks.PubisY + span * 3.5f);
             bulgeZone = pt => pt.Y > y0 && pt.Y < y1 && pt.Z > z0 && MathF.Abs(pt.X - marks.MidX) < hw * 0.95f;
         }
         var plans = new List<ModelPlan>();
@@ -1248,12 +1254,13 @@ public static unsafe class LiveRig
                         if (wk <= 0f || bone >= skin.Bones.Length)
                             continue;
                         int sl = slotOf(skin.Bones[bone]);
+                        // (a bone this skeleton doesn't have, a body mod's own: taken as the pelvis. The bulge is
+                        // added where the skin rests, so its bones only steer where it's pressed; left out, the
+                        // vertex wasn't bulged at all and the bulge tore off at it)
                         if (sl < 0)
-                        {
-                            slot.RemoveRange(b0, slot.Count - b0);
-                            weight.RemoveRange(b0, weight.Count - b0);
-                            return;
-                        }
+                            sl = slotOf("j_kosi");
+                        if (sl < 0)
+                            continue;
                         slot.Add(sl);
                         weight.Add(wk);
                     }
