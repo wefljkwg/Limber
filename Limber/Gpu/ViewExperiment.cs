@@ -136,7 +136,7 @@ public static unsafe class ViewExperiment
     private static bool RenderViewFor(CameraProp cam, out Matrix4x4 newRender)
     {
         newRender = default;
-        var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraFFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
+        var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
         if(cm == null || cm->CurrentCamera == null || cm->CurrentCamera->RenderCamera == null)
             return false;
         var sc = cm->CurrentCamera;
@@ -274,7 +274,7 @@ public static unsafe class ViewExperiment
 
     private static bool IsMainDepth(nint view)
     {
-        var rtm = RenderTargetFFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
+        var rtm = FFXIVClientStructs.FFXIV.Client.Graphics.Render.RenderTargetManager.Instance();
         if(rtm == null || rtm->DepthStencil == null || rtm->DepthStencil->D3D11Texture2D == null || view == 0)
             return false;
         nint res = 0;
