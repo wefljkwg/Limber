@@ -438,9 +438,12 @@ public sealed class CameraTab
         Tooltip("The game can draw the world up to 8 extra times a frame into its own preview pictures (the ones Try On and the Character window use). This borrows a spare one, with a camera at the first monitor's camera prop (or the first camera prop), and shows the picture below. Turn \"Monitors on\" off while testing. Save anything first.");
         ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
         var exSlot = Limber.Gpu.ViewExperiment.Slot;
-        if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 0, 7))
-            Limber.Gpu.ViewExperiment.Slot = exSlot;
-        Tooltip("Which preview picture to borrow (0-7). It needs one the game has made and isn't using: press List the preview slots to see which.");
+        using(ImRaii.Disabled(Limber.Gpu.ViewExperiment.On))
+        {
+            if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 0, 7))
+                Limber.Gpu.ViewExperiment.Slot = exSlot;
+        }
+        Tooltip("Which preview picture to borrow (0-7). It needs one the game has made and isn't using: press List the preview slots to see which. Only changeable with the experiment off (changing it while on crashed the game).");
         ImGui.SameLine();
         var exUpd = Limber.Gpu.ViewExperiment.LetGameUpdateCamera;
         if(ImGui.Checkbox("Game updates the camera###cam_rig_ex_upd", ref exUpd))
