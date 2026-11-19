@@ -38,7 +38,8 @@ public sealed class ShadersTab
         var presets = _config.ShaderPresets ??= new();
         ImGui.TextWrapped("Change a character's materials: their colour, brightness and glow (gear and hair). "
                           + "Only that character changes (players, NPCs, actors), and only on your screen. "
-                          + "Each change draws them again once to take it (a moment after you stop dragging).");
+                          + "Each change draws them again once to take it (a moment after you stop dragging). "
+                          + "The drawn effects (light, rim, outline, see through walls) are Limber's own: they work on any part, skin too, and show at once.");
 
         // Add someone.
         var around = _selection.ListCharacters().Where(c => !string.IsNullOrEmpty(c.Name)).ToList();
@@ -154,14 +155,51 @@ public sealed class ShadersTab
         Tooltip("The colour they glow with (gear and hair: the game's skin shader can't glow).");
         ImGui.SameLine();
         changed |= Slider("Glow strength###sh_glow", look.GlowStrength, v => look.GlowStrength = v, 0f, 3f, "How much they glow on their own, even in the dark (0: none).");
+
+        // Limber's own drawn effects (no redraw: they show straight away)
+        ImGui.TextDisabled("Drawn effects (Limber's own: any part, skin too; show straight away)");
+        changed |= Colour("Light###sh_fx_light", look.Light, new Vector3(1f, 0.55f, 0.85f), v => look.Light = v, "The colour the surface lights up with.");
+        ImGui.SameLine();
+        changed |= Slider("Light up###sh_fx_lights", look.LightStrength, v => look.LightStrength = v, 0f, 2f, "Lights the whole surface up with that colour, skin included (0: none).");
+        changed |= Slider("Pulse###sh_fx_pulse", look.Pulse, v => look.Pulse = v, 0f, 4f, "The light and rim breathe in and out, this many times a second (0: steady).");
+        changed |= Colour("Rim###sh_fx_rim", look.Rim, new Vector3(0.55f, 0.8f, 1f), v => look.Rim = v, "The colour of the light round their edges.");
+        ImGui.SameLine();
+        changed |= Slider("Rim light###sh_fx_rims", look.RimStrength, v => look.RimStrength = v, 0f, 3f, "A light round their edges, as if lit from behind (0: none).");
+        changed |= Slider("Rim tightness###sh_fx_rimt", look.RimTightness, v => look.RimTightness = v, 0.5f, 10f, "How close to the edges the rim stays (higher: a thinner line).");
+        changed |= Colour("Outline###sh_fx_out", look.Outline, Vector3.Zero, v => look.Outline = v, "The outline's colour.");
+        ImGui.SameLine();
+        changed |= Slider("Outline width###sh_fx_outw", look.OutlineWidth, v => look.OutlineWidth = v, 0f, 20f, "A cartoon outline round them, this many millimetres thick (0: none).");
+        bool see = look.SeeThrough;
+        if(ImGui.Checkbox("See through walls###sh_fx_see", ref see)) { look.SeeThrough = see; changed = true; }
+        Tooltip("Where something's in front of them, a faint silhouette in the rim's colour still shows.");
+        if(Limber.Gpu.EffectRenderer.Error.Length > 0)
+        {
+            ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Can't draw the effects: " + Limber.Gpu.EffectRenderer.Error);
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Try again###sh_fx_retry"))
+                Limber.Gpu.EffectRenderer.Retry();
+        }
+
         if(ImGui.SmallButton("Reset###sh_reset"))
         {
             var fresh = new ShaderLook { Character = look.Character, Part = look.Part, Enabled = look.Enabled };
             look.Tint = fresh.Tint; look.Brightness = 1f; look.Glow = fresh.Glow; look.GlowStrength = 0f;
             look.Shine = 1f; look.Reflection = 1f; look.Bumps = 1f; look.Shader = "";
+            look.Light = fresh.Light; look.LightStrength = 0f; look.Pulse = 0f; look.Rim = fresh.Rim; look.RimStrength = 0f;
+            look.RimTightness = fresh.RimTightness; look.Outline = fresh.Outline; look.OutlineWidth = 0f; look.SeeThrough = false;
             changed = true;
         }
         return changed;
+    }
+
+    private static bool Colour(string label, float[]? value, Vector3 fallback, Action<float[]> set, string tip)
+    {
+        var c = value is { Length: >= 3 } ? new Vector3(value[0], value[1], value[2]) : fallback;
+        bool moved = ImGui.ColorEdit3(label, ref c, ImGuiColorEditFlags.NoInputs);
+        if(moved)
+            set([c.X, c.Y, c.Z]);
+        Tooltip(tip);
+        return moved;
     }
 
     private static bool Slider(string label, float value, Action<float> set, float min, float max, string tip)
@@ -207,6 +245,9 @@ public sealed class ShadersTab
                     var l = p.Look.Clone();
                     picked.Tint = l.Tint; picked.Brightness = l.Brightness; picked.Glow = l.Glow; picked.GlowStrength = l.GlowStrength;
                     picked.Shine = l.Shine; picked.Reflection = l.Reflection; picked.Bumps = l.Bumps; picked.Shader = l.Shader;
+                    picked.Light = l.Light; picked.LightStrength = l.LightStrength; picked.Pulse = l.Pulse; picked.Rim = l.Rim;
+                    picked.RimStrength = l.RimStrength; picked.RimTightness = l.RimTightness; picked.Outline = l.Outline;
+                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough;
                     _config.Save();
                     _status = $"Loaded \"{p.Name}\" onto {picked.Character}.";
                 }

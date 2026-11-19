@@ -144,7 +144,7 @@ public sealed class MainWindow : Window
         new("effects", "Scene", "Effects", "Every visual effect in the game (spells, auras, markers, tethers, sparkles...), in groups by type, to place around you or put on a character's bone.", () => EffectsTab?.Draw(), () => EffectsTab != null),
         new("climax", "Scene", "Climax", "Invisible emitters that shoot a thick, sticky liquid in spurts, from a character's bone or anywhere: it sticks to bodies, runs, drips and pools (adult characters).", () => ClimaxTab?.Draw(), () => ClimaxTab != null && Cfg.ShowClimaxTab),
         new("skin", "Scene", "Skin effects", "A wet, sweaty sheen (or wet up to a water line), a flush and wet eyes on a character, fading in and out (adult characters).", () => SkinEffectsTab?.Draw(), () => SkinEffectsTab != null),
-        new("shaders", "Scene", "Shaders", "Change a character's materials (colour, brightness, glow): that character only, with presets.", () => ShadersTab?.Draw(), () => ShadersTab != null),
+        new("shaders", "Scene", "Shaders", "Change a character's materials (colour, brightness, glow) and draw effects on them (light, rim, outline, see through walls): that character only, with presets.", () => ShadersTab?.Draw(), () => ShadersTab != null),
         new("renderer", "Scene", "Renderer", "Extra models and bones drawn on the character.", () => _rendererTab.Draw()),
 
         new("link", "Koikatsu", "Koikatsu link", "Pose FFXIV characters live from Koikatsu / KoiPose.", DrawKoikatsuPage),

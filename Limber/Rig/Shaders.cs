@@ -22,11 +22,34 @@ public sealed class ShaderLook
     public float Bumps { get; set; } = 1f;
     public string Shader { get; set; } = "";       // "" keeps the material's own (see Shaders.ShaderChoices)
 
+    // Limber's own drawn effects (Gpu/EffectRenderer: any material, skin included; no redraw)
+    public float[] Light { get; set; } = [1f, 0.55f, 0.85f];
+    public float LightStrength { get; set; }
+    public float Pulse { get; set; }                // per second (0: steady)
+    public float[] Rim { get; set; } = [0.55f, 0.8f, 1f];
+    public float RimStrength { get; set; }
+    public float RimTightness { get; set; } = 3f;
+    public float[] Outline { get; set; } = [0f, 0f, 0f];
+    public float OutlineWidth { get; set; }         // mm
+    public bool SeeThrough { get; set; }
+
+    public bool ChangesMaterial()
+    {
+        var t = Tint ?? [1f, 1f, 1f];
+        return MathF.Abs(t[0] - 1f) > 1e-3f || MathF.Abs(t[1] - 1f) > 1e-3f || MathF.Abs(t[2] - 1f) > 1e-3f
+               || MathF.Abs(Brightness - 1f) > 1e-3f || GlowStrength > 1e-3f;
+    }
+
+    public bool HasEffects() => LightStrength > 0f || RimStrength > 0f || OutlineWidth > 0f || SeeThrough;
+
     public ShaderLook Clone()
     {
         var c = (ShaderLook)MemberwiseClone();
         c.Tint = (float[])(Tint ?? [1f, 1f, 1f]).Clone();
         c.Glow = (float[])(Glow ?? [1f, 1f, 1f]).Clone();
+        c.Light = (float[])(Light ?? [1f, 0.55f, 0.85f]).Clone();
+        c.Rim = (float[])(Rim ?? [0.55f, 0.8f, 1f]).Clone();
+        c.Outline = (float[])(Outline ?? [0f, 0f, 0f]).Clone();
         return c;
     }
 
@@ -85,6 +108,12 @@ public sealed unsafe class Shaders : IDisposable
     // Game object -> (index, name), for draw objects being made (the hook asks before the character points at it).
     private static readonly ConcurrentDictionary<nint, (ushort Index, string Name)> Characters = new();
     // Each character's looks right now (by name), read by the hook.
+    /// <summary>A character with drawn effects on (for the renderer).</summary>
+    public sealed record EffectTarget(nint Address, ushort Index, ShaderLook[] Looks);
+
+    /// <summary>Who has drawn effects on right now (framework thread writes, render thread reads).</summary>
+    public static volatile IReadOnlyList<EffectTarget> EffectTargets = Array.Empty<EffectTarget>();
+
     private static volatile Dictionary<string, ShaderLook[]> _active = new(StringComparer.OrdinalIgnoreCase);
     // (character index, the material asked for, the look's key) -> the private copy's path
     private static readonly ConcurrentDictionary<(ushort Index, string Path, string Key), string> Made = new();
@@ -109,9 +138,15 @@ public sealed unsafe class Shaders : IDisposable
     {
         var looks = _looks() ?? new();
         var byName = new Dictionary<string, ShaderLook[]>(StringComparer.OrdinalIgnoreCase);
+        // (drawn effects only: no material copies, no redraw)
+        var effectsByName = new Dictionary<string, ShaderLook[]>(StringComparer.OrdinalIgnoreCase);
+        if (here)
+            foreach (var g in looks.Where(l => l.Enabled && l.Character.Length > 0 && l.HasEffects()).GroupBy(l => l.Character, StringComparer.OrdinalIgnoreCase))
+                effectsByName[g.Key] = g.Select(l => l.Clone()).ToArray();
         if (here)
             foreach (var g in looks.Where(l => l.Enabled && l.Character.Length > 0).GroupBy(l => l.Character, StringComparer.OrdinalIgnoreCase))
-                byName[g.Key] = g.Select(l => l.Clone()).ToArray();
+                if (g.Any(l => l.ChangesMaterial()))
+                    byName[g.Key] = g.Select(l => l.Clone()).ToArray();
         _active = byName;
 
         // Who's around (and their draw objects), for the hook.
@@ -119,6 +154,7 @@ public sealed unsafe class Shaders : IDisposable
         var chars = new HashSet<nint>();
         long now = Environment.TickCount64;
         var redraw = new HashSet<ushort>();
+        var effects = new List<EffectTarget>();
         foreach (var obj in _objects)
         {
             if (obj is not Dalamud.Game.ClientState.Objects.Types.ICharacter || obj.Address == 0)
@@ -127,6 +163,8 @@ public sealed unsafe class Shaders : IDisposable
             if (name.Length == 0)
                 continue;
             bool mine = byName.ContainsKey(name);
+            if (effectsByName.TryGetValue(name, out var fx))
+                effects.Add(new EffectTarget(obj.Address, obj.ObjectIndex, fx));
             string key = mine ? string.Join(";", byName[name].Select(l => l.Key())) : "";
             bool had = _applied.TryGetValue(name, out var was);
             if (!mine && !had)
@@ -157,6 +195,7 @@ public sealed unsafe class Shaders : IDisposable
                 redraw.Add(obj.ObjectIndex);
             }
         }
+        EffectTargets = effects;
         foreach (var k in Draws.Keys)
             if (!draws.Contains(k))
                 Draws.TryRemove(k, out _);
