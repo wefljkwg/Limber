@@ -181,7 +181,7 @@ public static unsafe class LiveCharacters
         public float X, Y, Width, Height, MinDepth, MaxDepth;
     }
 
-    private const int MaxTargets = 4;
+    private const int MaxTargets = 8;
     private static readonly nint[] Tex = new nint[MaxTargets], Rtv = new nint[MaxTargets], Srv = new nint[MaxTargets];
     private static readonly uint[] TexW = new uint[MaxTargets], TexH = new uint[MaxTargets], TexF = new uint[MaxTargets];
     private static nint _bgDepth, _workDepth, _workDsv;
@@ -206,10 +206,24 @@ public static unsafe class LiveCharacters
     private static readonly float[] CbFloats = new float[1024];
 
     /// <summary>EffectRenderer's draw hook, right after the game drew a chosen character: that draw again from the prop.</summary>
+    /// <summary>Why draws weren't run again (for the console): no camera / no room picture / not the g-buffer pass /
+    /// no camera buffer / targets / camera buffer not ready; and how many came at all.</summary>
+    public static readonly int[] Skips = new int[8];
+    public static int Calls, Backgrounds, LastTargetCount;
+
     public static void Replay(nint c, Action draw)
     {
-        if(LiveCamera < 0 || _prop == null || !_hasBackground || _bgCamera != LiveCamera)
+        Calls++;
+        if(LiveCamera < 0 || _prop == null)
+        {
+            Skips[0]++;
             return;
+        }
+        if(!_hasBackground || _bgCamera != LiveCamera)
+        {
+            Skips[1]++;
+            return;
+        }
         nint* rtvs = stackalloc nint[8];
         nint dsv = 0;
         ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint*, void>)V(c, 89))(c, 8, rtvs, &dsv);
@@ -222,23 +236,36 @@ public static unsafe class LiveCharacters
             while(n < 8 && rtvs[n] != 0)
                 n++;
             // the g-buffer pass only: several targets and the main depth
+            LastTargetCount = n;
             if(n < 2 || n > MaxTargets || dsv == 0 || !IsMainDepth(dsv))
+            {
+                Skips[2]++;
                 return;
+            }
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 72))(c, 0, 14, vsCb);
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 77))(c, 0, 14, psCb);
             gotCbs = true;
             nint camCb = vsCb[0];
             if(camCb == 0)
+            {
+                Skips[3]++;
                 return;
+            }
             if(!EnsureTargets(rtvs, n, dsv))
+            {
+                Skips[4]++;
                 return;
+            }
             if(!_frameStarted)
             {
                 _frameStarted = true;
                 StartFrame(c, camCb);
             }
             if(!_cbReady)
+            {
+                Skips[5]++;
                 return;
+            }
             // the camera swapped wherever the game's camera buffer is bound
             nint* vsNew = stackalloc nint[14];
             nint* psNew = stackalloc nint[14];
@@ -599,6 +626,7 @@ public static unsafe class LiveCharacters
             ((delegate* unmanaged[Stdcall]<nint, nint, nint, void>)V(c, 47))(c, _bgDepth, src);
             _hasBackground = true;
             _bgCamera = camera;
+            Backgrounds++;
         }
         catch(Exception e)
         {

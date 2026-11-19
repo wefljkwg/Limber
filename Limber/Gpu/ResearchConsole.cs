@@ -235,6 +235,7 @@ public static unsafe class ResearchConsole
                 Out($"  per frame: {ViewExperiment.TargetClears:0.0} target clears, {ViewExperiment.DepthClears:0.0} depth clears, {ViewExperiment.SlotClears:0.0} of the slot's size, {ViewExperiment.FrameMs:0.0} ms");
                 Out($"  live characters: camera {LiveCharacters.LiveCamera}, {LiveCharacters.Targets.Count} characters, {LiveCharacters.LastReplays} draws again last frame, albedo {LiveCharacters.AlbedoIndex} normal {LiveCharacters.NormalIndex}; {LiveCharacters.Error}");
                 Out($"  camera buffer patched: {LiveCharacters.LastPatch}");
+                Out($"  live draws: {LiveCharacters.Calls} came, skipped (no camera {LiveCharacters.Skips[0]}, no room {LiveCharacters.Skips[1]}, not the g-buffer pass {LiveCharacters.Skips[2]}, no camera buffer {LiveCharacters.Skips[3]}, targets {LiveCharacters.Skips[4]}, buffer not ready {LiveCharacters.Skips[5]}); targets bound last {LiveCharacters.LastTargetCount}; room pictures taken {LiveCharacters.Backgrounds}; effect views {EffectRenderer.Views}");
                 Out($"  world pass: {(WorldPass.On ? "on" : "off")}, drawn twice {WorldPass.Doubled} times, captured {WorldPass.Captured} times, main depth clears last frame {WorldPass.LastClears}, boundary 0x{WorldPass.Boundary:X} cleared {WorldPass.LastBoundary} times, capture {WorldPass.CaptureWidth}x{WorldPass.CaptureHeight}; {WorldPass.Error}");
                 Out($"  bases: {string.Join(", ", Bases().Select(b => $"{b.Key} 0x{b.Value:X}"))}");
                 return false;
