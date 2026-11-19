@@ -427,6 +427,9 @@ public sealed class CameraTab
             mons.Remove(dropMon);
             save = true;
         }
+        if(ImGui.SmallButton("Research: list the game's views (to the log)###cam_rig_views"))
+            CameraRig.DumpViews();
+        Tooltip("For finding a way to draw the screens live: writes the game's render views (which are drawn, with which cameras) to the Dalamud log.");
         if(Limber.Gpu.MonitorRenderer.Error.Length > 0)
         {
             ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Can't draw the screens: " + Limber.Gpu.MonitorRenderer.Error);

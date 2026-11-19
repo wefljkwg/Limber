@@ -101,7 +101,7 @@ public static unsafe class CameraRig
             return;
         _pending = (Cameras.IndexOf(cam), cam);
         // (the game's HUD, nameplates and markers kept off this frame: it's the one the screens get)
-        if(Config.MonitorHideHud && HudVisible())
+        if(Config!.MonitorHideHud && HudVisible())
         {
             SetHud(false);
             _hudHiddenByUs = true;
@@ -282,6 +282,59 @@ public static unsafe class CameraRig
         float yaw = MathF.Atan2(dir.X, dir.Z);
         float pitch = -MathF.Asin(Math.Clamp(dir.Y, -1f, 1f));
         return Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0f);
+    }
+
+    // ---- Research: the game's render views (Render::Manager+0x8: 87 views of 0x190, each 16 sub-views of 0x18: flags,
+    // ?, Render::Camera*). The game draws every view whose flags have both low bits set, the world's renderers run per
+    // view (RenderView, 0x1402baa50). Listed to the log to find which view is the world, which the character previews.
+
+    public static unsafe void DumpViews()
+    {
+        var log = new System.Text.StringBuilder("Limber: the game's render views:\n");
+        var manager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
+        if(manager == null)
+        {
+            Plugin.Log.Information("Limber: no render manager");
+            return;
+        }
+        nint baseAt = (nint)manager + 0x8;
+        nint mainCamera = 0;
+        var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+        if(cm != null && cm->CurrentCamera != null)
+            mainCamera = (nint)cm->CurrentCamera->RenderCamera;
+        log.Append($"main render camera 0x{mainCamera:X}, slot {SafeMemory.Read<int>((nint)manager + 0x38384, -1)}\n");
+        for(int v = 0; v < 87; v++)
+        {
+            nint view = baseAt + v * 0x190;
+            uint flags = SafeMemory.Read<uint>(view + 0x8, 0);
+            uint unk = SafeMemory.Read<uint>(view + 0xC, 0);
+            var subs = new System.Text.StringBuilder();
+            for(int sv = 0; sv < 16; sv++)
+            {
+                nint sub = view + 0x10 + sv * 0x18;
+                uint sf = SafeMemory.Read<uint>(sub + 0x8, 0);
+                uint su = SafeMemory.Read<uint>(sub + 0xC, 0);
+                nint cam = SafeMemory.ReadPointer(sub + 0x10);
+                if(sf == 0 && su == 0 && cam == 0)
+                    continue;
+                string where = "";
+                if(SafeMemory.Plausible(cam))
+                {
+                    var m = SafeMemory.Read<Matrix4x4>(cam + 0x10, default);
+                    m.M14 = m.M24 = m.M34 = 0;
+                    m.M44 = 1;
+                    if(Matrix4x4.Invert(m, out var w))
+                        where = $" at ({w.M41:0.0},{w.M42:0.0},{w.M43:0.0})";
+                    if(cam == mainCamera)
+                        where += " MAIN";
+                }
+                subs.Append($" [{sv}: flags 0x{sf:X} unk 0x{su:X} cam 0x{cam:X}{where}]");
+            }
+            if(flags == 0 && subs.Length == 0)
+                continue;
+            log.Append($"view {v}: flags 0x{flags:X} unk 0x{unk:X}{((flags & 3) == 3 ? " DRAWN" : "")}{subs}\n");
+        }
+        Plugin.Log.Information(log.ToString());
     }
 
     // ---- The overlay: the cameras drawn as small wireframes with their view, and a gizmo on the chosen camera / monitor
