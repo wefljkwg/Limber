@@ -162,7 +162,7 @@ public static unsafe class ViewExperiment
             {
                 nint views = manager + 0x8;
                 nint sc = *(nint*)SlotCameraAt(views, _usedSlot);
-                DuringDraw = sc == _camera ? "drawn from Limber's camera" : $"after the draw the slot held 0x{sc:X}, not Limber's camera";
+                DuringDraw = sc == _camera && sc != 0 ? "drawn from the slot's own camera, moved by Limber" : $"after the draw the slot held 0x{sc:X}, not Limber's camera";
             }
         }
         catch
@@ -226,28 +226,28 @@ public static unsafe class ViewExperiment
                 State = "no camera prop";
                 return;
             }
-            if(_camera == 0)
-                _camera = (nint)NativeMemory.AllocZeroed(CameraSize);
-            if(!SafeMemory.Copy(mainCamera, (void*)_camera, CameraSize))
+            // The game puts each slot's own camera into the slot right before drawing it (0x14026a200, from a table at a
+            // global's +0xc8 + n*8), so Limber moves that camera instead of swapping in its own.
+            nint slotCam = SlotOwnCamera(_usedSlot);
+            if(!SafeMemory.Plausible(slotCam))
+            {
+                State = $"slot {_usedSlot} has no camera of its own";
                 return;
+            }
+            if(_slotCam != slotCam)
+            {
+                RestoreCamera();
+                _slotCam = slotCam;
+                _savedView = *(Matrix4x4*)(slotCam + 0x10);
+                _savedOrigin = *(Vector3*)(slotCam + 0x90);
+                _saved205 = *(byte*)(slotCam + 0x205);
+            }
+            _camera = slotCam;
             if(!RenderViewFor(cam, out var render))
                 return;
-            var rc = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Camera*)_camera;
-            *(Matrix4x4*)&rc->ViewMatrix = render;
-            if(cam.FoV > 1f && rc->FoV > 0.01f)
-            {
-                float k = MathF.Tan(rc->FoV * 0.5f) / MathF.Tan(cam.FoV * MathF.PI / 360f);
-                var p1 = *(Matrix4x4*)&rc->ProjectionMatrix;
-                var p2 = *(Matrix4x4*)&rc->ProjectionMatrix2;
-                p1.M11 *= k;
-                p1.M22 *= k;
-                p2.M11 *= k;
-                p2.M22 *= k;
-                *(Matrix4x4*)&rc->ProjectionMatrix = p1;
-                *(Matrix4x4*)&rc->ProjectionMatrix2 = p2;
-            }
-            *((byte*)_camera + 0x205) = (byte)(LetGameUpdateCamera ? 0 : 1);
-            *(nint*)SlotCameraAt(views, _usedSlot) = _camera;
+            *(Matrix4x4*)(slotCam + 0x10) = render;
+            *(Vector3*)(slotCam + 0x90) = *(Vector3*)(mainCamera + 0x90);
+            *(byte*)(slotCam + 0x205) = (byte)(LetGameUpdateCamera ? 0 : 1);
             *(int*)CountAt(manager, _usedSlot) = 1;
             Light(_usedSlot);
             _applied++;
@@ -304,6 +304,53 @@ public static unsafe class ViewExperiment
         b[11] = b[12] = b[13] = b[14] = b[15] = 1f;
     }
 
+    private const string SlotCamerasSig = "48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 63 C7 48 8D 0C 40 49 8B 8C CD";
+    private static nint _slotCamerasGlobal = -1;
+    private static nint _slotCam;
+    private static Matrix4x4 _savedView;
+    private static Vector3 _savedOrigin;
+    private static byte _saved205;
+
+    // Slot n's own camera (the one the game puts into view 25's sub-view n before drawing it).
+    private static nint SlotOwnCamera(int n)
+    {
+        if(_slotCamerasGlobal == -1)
+        {
+            _slotCamerasGlobal = 0;
+            try
+            {
+                if(Plugin.SigScanner.TryScanText(SlotCamerasSig, out var at))
+                    _slotCamerasGlobal = at + 7 + *(int*)(at + 3);
+            }
+            catch
+            {
+            }
+        }
+        if(_slotCamerasGlobal == 0)
+            return 0;
+        nint obj = *(nint*)_slotCamerasGlobal;
+        if(!SafeMemory.Plausible(obj))
+            return 0;
+        return SafeMemory.ReadPointer(obj + 0xc8 + n * 8);
+    }
+
+    private static void RestoreCamera()
+    {
+        if(_slotCam == 0)
+            return;
+        try
+        {
+            *(Matrix4x4*)(_slotCam + 0x10) = _savedView;
+            *(Vector3*)(_slotCam + 0x90) = _savedOrigin;
+            *(byte*)(_slotCam + 0x205) = _saved205;
+        }
+        catch
+        {
+        }
+        _slotCam = 0;
+        _camera = 0;
+    }
+
     // The slot as the game had it.
     private static void Restore()
     {
@@ -314,14 +361,13 @@ public static unsafe class ViewExperiment
             nint views = Views(out var manager);
             if(views != 0)
             {
-                if(*(nint*)SlotCameraAt(views, _usedSlot) == _camera)
-                    *(nint*)SlotCameraAt(views, _usedSlot) = _savedCamera;
                 *(int*)CountAt(manager, _usedSlot) = _savedCount;
             }
         }
         catch
         {
         }
+        RestoreCamera();
         _usedSlot = -1;
         State = "";
         DuringDraw = "";
@@ -605,7 +651,7 @@ public static unsafe class ViewExperiment
                     if(Matrix4x4.Invert(m, out var w))
                         where = $" at ({w.M41:0.0}, {w.M42:0.0}, {w.M43:0.0})";
                 }
-                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(sc == _camera && _camera != 0 ? "Limber's" : $"0x{sc:X} (Limber's is 0x{_camera:X})")}{where} (at the present); {DuringDraw}; {LightState}";
+                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(sc == _camera && _camera != 0 ? "the slot's own, moved by Limber" : $"0x{sc:X} (the one Limber moves is 0x{_camera:X})")}{where} (at the present); {DuringDraw}; {LightState}";
             }
         }
         catch
