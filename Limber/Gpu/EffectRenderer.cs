@@ -530,7 +530,52 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
         public Vector3[] Nrm = [];
         public byte[] Bi = [];       // 4 per vertex: the mesh's own bone (its table's index)
         public float[] Bw = [];      // 4 per vertex
-        public ushort[] Tris = [];
+        public ushort[] Raw = [];    // the mesh's own index list, as the file has it
+        public List<(int Start, int Count, uint Attributes)> Subs = new();
+        public List<(int Shape, (int Index, int Vertex)[] Values)> Shapes = new();
+        private ushort[] _tris = [];
+        private uint _attr, _shape;
+        private bool _made;
+
+        /// <summary>The triangles the game draws for these settings of the model: its shape keys on (a face's chosen
+        /// features, gear fitting) and only the parts whose attributes are on (what the character really has).</summary>
+        public ushort[] Tris(uint attributes, uint shapes)
+        {
+            if(_made && attributes == _attr && shapes == _shape)
+                return _tris;
+            var idx = (ushort[])Raw.Clone();
+            foreach(var (shape, values) in Shapes)
+                if(shape < 32 && (shapes & (1u << shape)) != 0)
+                    foreach(var (index, vertex) in values)
+                        if(index < idx.Length)
+                            idx[index] = (ushort)vertex;
+            int n = Pos.Length;
+            var tris = new List<ushort>(idx.Length);
+            void Range(int start, int count)
+            {
+                for(int t = start; t + 2 < start + count && t + 2 < idx.Length; t += 3)
+                {
+                    ushort a = idx[t], b = idx[t + 1], c = idx[t + 2];
+                    if(a < n && b < n && c < n)
+                    {
+                        tris.Add(a);
+                        tris.Add(b);
+                        tris.Add(c);
+                    }
+                }
+            }
+            if(Subs.Count == 0)
+                Range(0, idx.Length);
+            else
+                foreach(var (start, count, needs) in Subs)
+                    if((needs & attributes) == needs)
+                        Range(start, count);
+            _tris = tris.ToArray();
+            _attr = attributes;
+            _shape = shapes;
+            _made = true;
+            return _tris;
+        }
     }
 
     private sealed class ModelData
@@ -630,20 +675,10 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 }
                 if(bad)
                     continue;
-                // (triangles pointing past the mesh's vertices left out)
-                var tris = new List<ushort>(skin.Triangles.Length);
-                for(int t = 0; t + 2 < skin.Triangles.Length; t += 3)
-                {
-                    ushort a = skin.Triangles[t], b = skin.Triangles[t + 1], c = skin.Triangles[t + 2];
-                    if(a < n && b < n && c < n)
-                    {
-                        tris.Add(a);
-                        tris.Add(b);
-                        tris.Add(c);
-                    }
-                }
-                mesh.Tris = tris.ToArray();
-                if(mesh.Tris.Length > 0)
+                mesh.Raw = skin.Triangles;
+                mesh.Subs = MdlRigger.MeshSubmeshes(data, layout.Mesh);
+                mesh.Shapes = MdlRigger.MeshShapesIndexed(data, 0, layout.Mesh);
+                if(mesh.Raw.Length >= 3)
                     result.Meshes.Add(mesh);
             }
             return result.Meshes.Count > 0 ? result : null;
@@ -863,8 +898,15 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 var binds = ReadBinds(model, sk, now);
                 if(binds == null || binds.ByName.Count == 0)
                     continue;
+                // which of its parts and shape keys the game has on for this character
+                var rm = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model*)model;
+                uint attributes = SafeMemory.Read<uint>((nint)(&rm->EnabledAttributeIndexMask), uint.MaxValue);
+                uint shapes = SafeMemory.Read<uint>((nint)(&rm->EnabledShapeKeyIndexMask), 0u);
                 foreach(var mesh in data.Meshes)
                 {
+                    var meshTris = mesh.Tris(attributes, shapes);
+                    if(meshTris.Length == 0)
+                        continue;
                     // the mesh's bones, where they are now (a bone the game doesn't skin it with: the mesh left out)
                     var mats = new Matrix4x4[mesh.Bones.Length];
                     bool ok = true;
@@ -886,7 +928,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                     int look = lookOf.TryGetValue(mesh.Part, out var own) ? own : lookOf.TryGetValue("All", out var all) ? all : -1;
                     int n = mesh.Pos.Length;
                     Grow(ref _verts, nv + n);
-                    Grow(ref _indices, ni + mesh.Tris.Length);
+                    Grow(ref _indices, ni + meshTris.Length);
                     int start = nv;
                     var verts = _verts;
                     var toWorld = sk.ModelToWorld;
@@ -917,10 +959,10 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                     else
                         for(int v = 0; v < n; v++)
                             One(v);
-                    for(int t = 0; t < mesh.Tris.Length; t++)
-                        _indices[ni + t] = (uint)(start + mesh.Tris[t]);
+                    for(int t = 0; t < meshTris.Length; t++)
+                        _indices[ni + t] = (uint)(start + meshTris[t]);
                     nv += n;
-                    ni += mesh.Tris.Length;
+                    ni += meshTris.Length;
                 }
             }
         }
