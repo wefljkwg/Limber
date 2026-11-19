@@ -113,7 +113,8 @@ public static unsafe class WorldPass
     private static uint _cw, _ch, _cf;
     public static nint CaptureTexture => _capture;
     public static nint CaptureView => _captureSrv;
-    public static uint CaptureWidth => _cw, CaptureHeight => _ch;
+    public static uint CaptureWidth => _cw;
+    public static uint CaptureHeight => _ch;
 
     /// <summary>From ViewExperiment's ClearDepthStencilView hook, for the main depth, before it's cleared.</summary>
     public static void OnMainDepthClear(nint ctx)
