@@ -114,7 +114,73 @@ public static unsafe class ViewExperiment
 
     // ---- Every frame, just before the game draws (the bone hook, where the monitors' view is set too)
 
+    // ---- Right before the game draws: Render::Manager.Render (0x1402ba070) hooked, so nothing the game does later in the
+    // frame (the preview windows put their own cameras into the slots) can undo Limber's setup.
+    private delegate void RenderDelegate(nint manager);
+    private const string RenderSig = "40 53 57 41 54 41 55 48 83 EC 58 65 48 8B 04 25 58 00 00 00 4C 8B E9";
+    private static Hook<RenderDelegate>? _render;
+    private static bool _renderTried;
+    /// <summary>Whose camera sat in the slot right after the game drew (Limber's: the slot was drawn from it).</summary>
+    public static string DuringDraw = "";
+
+    private static void EnsureRenderHook()
+    {
+        if(_renderTried)
+            return;
+        _renderTried = true;
+        try
+        {
+            if(!Plugin.SigScanner.TryScanText(RenderSig, out var at))
+            {
+                Error = "couldn't find the game's render function (using the bone update instead)";
+                return;
+            }
+            _render = Plugin.GameInterop.HookFromAddress<RenderDelegate>(at, RenderDetour);
+            _render.Enable();
+        }
+        catch(Exception e)
+        {
+            Error = "couldn't hook the game's render function: " + e.Message;
+            _render = null;
+        }
+    }
+
+    private static void RenderDetour(nint manager)
+    {
+        try
+        {
+            if(On || _usedSlot >= 0)
+                ApplyCore();
+        }
+        catch
+        {
+        }
+        _render!.Original(manager);
+        try
+        {
+            if(On && _usedSlot >= 0)
+            {
+                nint views = manager + 0x8;
+                nint sc = *(nint*)SlotCameraAt(views, _usedSlot);
+                DuringDraw = sc == _camera ? "drawn from Limber's camera" : $"after the draw the slot held 0x{sc:X}, not Limber's camera";
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>From the bone update: only when the render function couldn't be hooked.</summary>
     public static void Apply()
+    {
+        if(On)
+            EnsureRenderHook();
+        if(_render != null)
+            return;
+        ApplyCore();
+    }
+
+    private static void ApplyCore()
     {
         if(!On)
         {
@@ -258,6 +324,7 @@ public static unsafe class ViewExperiment
         }
         _usedSlot = -1;
         State = "";
+        DuringDraw = "";
         LightState = "";
     }
 
@@ -538,7 +605,7 @@ public static unsafe class ViewExperiment
                     if(Matrix4x4.Invert(m, out var w))
                         where = $" at ({w.M41:0.0}, {w.M42:0.0}, {w.M43:0.0})";
                 }
-                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(sc == _camera && _camera != 0 ? "Limber's" : $"0x{sc:X} (Limber's is 0x{_camera:X})")}{where}; {LightState}";
+                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(sc == _camera && _camera != 0 ? "Limber's" : $"0x{sc:X} (Limber's is 0x{_camera:X})")}{where} (at the present); {DuringDraw}; {LightState}";
             }
         }
         catch
@@ -553,6 +620,8 @@ public static unsafe class ViewExperiment
     {
         On = false;
         Restore();
+        try { _render?.Dispose(); } catch { }
+        _render = null;
         try { _clearRtv?.Dispose(); } catch { }
         try { _clearDsv?.Dispose(); } catch { }
         _clearRtv = null;
