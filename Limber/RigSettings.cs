@@ -226,6 +226,8 @@ public sealed class RigSettings
     public float MonitorRefresh { get; set; } = 6f;      // pictures a second, per camera
     public int MonitorDelay { get; set; } = 1;
     public bool MonitorHideHud { get; set; } = true;     // the game's HUD kept off the screens' pictures           // frames between the camera being moved and that picture on screen
+    public bool MonitorLiveCharacters { get; set; } = true;  // the room taken once, the characters drawn live over it
+    public float MonitorRoomEvery { get; set; }              // seconds between room pictures (0: only when needed)
     public bool ShowCameraProps { get; set; } = true;
     public bool ShowCameraPropsAlways { get; set; }
 

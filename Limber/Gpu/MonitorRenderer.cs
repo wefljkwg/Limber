@@ -109,6 +109,7 @@ public static unsafe class MonitorRenderer
     private static uint _w, _h, _format;
     private static readonly Dictionary<int, (nint Tex, nint Srv)> Feeds = new();
     private static bool _haveLast;
+    private static bool _liveNow;
 
     public static string Error => _error;
 
@@ -140,6 +141,7 @@ cbuffer C : register(b0)
 };
 Texture2D<float4> Feed : register(t0);
 Texture2D<float> SceneDepth : register(t1);
+Texture2D<float4> Live : register(t2);
 SamplerState Lin : register(s0);
 SamplerState Pt : register(s1);
 
@@ -175,6 +177,12 @@ float4 PsQuad(VOut i) : SV_Target0
         return float4(n.xxx * 0.35, 1);
     }
     float3 c = Feed.SampleLevel(Lin, uv * UvRect.xy + UvRect.zw, 0).rgb * Look.x;
+    if (Time.y > 0.5)
+    {
+        // the characters, live, over the room
+        float4 l = Live.SampleLevel(Lin, uv * UvRect.xy + UvRect.zw, 0);
+        c = lerp(c, l.rgb * Look.x, l.a);
+    }
     return float4(c, 1);
 }
 ";
@@ -443,6 +451,7 @@ float4 PsQuad(VOut i) : SV_Target0
                     Feeds[grabbed] = feed;
                 }
                 Copy(c, feed.Tex, backTex);
+                LiveCharacters.TakeBackground(c, grabbed);
                 Copy(c, backTex, _last);
                 return;
             }
@@ -452,6 +461,7 @@ float4 PsQuad(VOut i) : SV_Target0
             if(((delegate* unmanaged[Stdcall]<nint, nint, void*, nint*, int>)V(device, 9))(device, backTex, null, &r) >= 0 && r != 0)
             {
                 backRtv = r;
+                _liveNow = LiveCharacters.Compose(c);
                 DrawMonitors(c, backRtv, bd);
             }
             ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint, void>)V(c, 33))(c, 0, null, 0);
@@ -508,7 +518,7 @@ float4 PsQuad(VOut i) : SV_Target0
         nint* samplers = stackalloc nint[2] { _sampler, _samplerPoint };
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 10))(c, 0, 2, samplers);
         float screenAspect = (float)bd.Width / bd.Height;
-        nint* inputs = stackalloc nint[2];
+        nint* inputs = stackalloc nint[3];
 
         foreach(var m in CameraRig.Monitors)
         {
@@ -554,7 +564,7 @@ float4 PsQuad(VOut i) : SV_Target0
                 DepthUv = new Vector4(depthUv, reversed ? 1f : 0f, has ? 1f : 0f),
                 Look = new Vector4(Math.Max(0f, m.Brightness), Math.Clamp(m.Bezel, 0f, 0.3f), aspect, back && m.BackPanel ? 1f : 0f),
                 BezelColour = new Vector4(MaterialFx.Colour(m.BezelColour), 1f),
-                Time = new Vector4((float)(Environment.TickCount64 % 3_600_000) / 1000f, 0, 0, 0),
+                Time = new Vector4((float)(Environment.TickCount64 % 3_600_000) / 1000f, _liveNow && has && camIndex == LiveCharacters.LiveCamera ? 1f : 0f, 0, 0),
             };
             Mapped mp;
             if(((delegate* unmanaged[Stdcall]<nint, nint, uint, uint, uint, Mapped*, int>)V(c, 14))(c, _cb, 0, 4, 0, &mp) < 0)
@@ -563,10 +573,11 @@ float4 PsQuad(VOut i) : SV_Target0
             ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 15))(c, _cb, 0);
             inputs[0] = has ? Feeds[camIndex].Srv : 0;
             inputs[1] = (nint)ds->D3D11ShaderResourceView;
-            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 2, inputs);
+            inputs[2] = LiveCharacters.LiveView;
+            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 3, inputs);
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 6, 0);
         }
-        nint* none = stackalloc nint[2];
-        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 2, none);
+        nint* none = stackalloc nint[3];
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 3, none);
     }
 }

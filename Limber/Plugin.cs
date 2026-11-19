@@ -109,6 +109,7 @@ public sealed class Plugin : IDalamudPlugin
         _config.Ik.StopLimberAnimations(); // (Limber Animations never start by themselves)
         HandleCatalog.ShowRigBones = _config.Ik.ShowRigBones;
         Limber.Rig.CameraRig.Config = _config.Ik;
+        Limber.Gpu.LiveCharacters.Config = _config.Ik;
         // Hotkeys saved by 0.36 (ImGui key numbers): back to the defaults.
         if(_config.Ik.UndoKey is { } uk && uk.Key >= 256) { uk.Key = 0x5A; uk.Ctrl = true; uk.Shift = false; uk.Alt = false; }
         if(_config.Ik.RedoKey is { } rk && rk.Key >= 256) { rk.Key = 0x59; rk.Ctrl = true; rk.Shift = false; rk.Alt = false; }
@@ -1373,6 +1374,7 @@ public sealed class Plugin : IDalamudPlugin
         try { Limber.Gpu.SteamRenderer.Dispose(); } catch { }
         try { Limber.Gpu.EffectRenderer.Dispose(); } catch { }
         try { Limber.Gpu.WorldPass.Dispose(); } catch { }
+        try { Limber.Gpu.LiveCharacters.Dispose(); } catch { }
         try { Limber.Gpu.ViewExperiment.Dispose(); } catch { }
         try { Limber.Gpu.MonitorRenderer.Dispose(); Limber.Rig.CameraControl.SetGrab(null, 0f); } catch { }
         Limber.Gpu.GameLiquid.Stop();

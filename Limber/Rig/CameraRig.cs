@@ -75,6 +75,7 @@ public static unsafe class CameraRig
         _framesSinceGrab++;
         CameraControl.GrabFrame = false;
         PutBack();
+        Limber.Gpu.LiveCharacters.Update();
         if(_hudHiddenByUs)
         {
             SetHud(true);
@@ -83,11 +84,17 @@ public static unsafe class CameraRig
         if(!here || !Live)
         {
             _pending = null;
+            RoomPose.Clear();
             return;
         }
         var wanted = Monitors.Where(m => m.On).Select(CameraOf).Where(c => c != null).Distinct().ToList();
         if(wanted.Count == 0)
             return;
+        if(Config!.MonitorLiveCharacters)
+        {
+            PlanRoom(wanted!);
+            return;
+        }
         float rate = Math.Clamp(Config!.MonitorRefresh, 0.5f, 30f) * wanted.Count;
         _wait -= seconds;
         // (never two in a row: the screen would show the same old frame twice running)
@@ -102,6 +109,57 @@ public static unsafe class CameraRig
         _pending = (Cameras.IndexOf(cam), cam);
         // (the game's HUD, nameplates and markers kept off this frame: it's the one the screens get)
         if(Config!.MonitorHideHud && HudVisible())
+        {
+            SetHud(false);
+            _hudHiddenByUs = true;
+        }
+    }
+
+    // ---- Live characters: each camera's room picture taken only when needed (none yet, the camera moved, asked for, or
+    // older than the chosen time); the characters are drawn live over it (Gpu/LiveCharacters).
+
+    private static readonly Dictionary<Guid, ((Vector3, Quaternion, float) Pose, double Time)> RoomPose = new();
+    private static readonly HashSet<Guid> RetakeAsked = new();
+
+    /// <summary>Every screen's room picture taken again (one camera a frame or two apart).</summary>
+    public static void RetakeRoom()
+    {
+        foreach(var c in Cameras)
+            RetakeAsked.Add(c.Id);
+    }
+
+    private static void PlanRoom(List<CameraProp> wanted)
+    {
+        if(_framesSinceGrab < 2)
+            return;
+        double now = Environment.TickCount64 / 1000.0;
+        double minGap = 1.0 / Math.Clamp(Config!.MonitorRefresh, 0.5f, 30f);
+        CameraProp? need = null;
+        foreach(var cam in wanted)
+        {
+            var pose = (cam.Position, cam.Rotation, cam.FoV);
+            bool have = RoomPose.TryGetValue(cam.Id, out var last);
+            bool moved = !have || last.Pose != pose;
+            bool old = have && Config.MonitorRoomEvery > 0 && now - last.Time > Config.MonitorRoomEvery;
+            bool asked = RetakeAsked.Contains(cam.Id);
+            if(!moved && !old && !asked)
+                continue;
+            // (while it's being moved: no faster than the refresh)
+            if(have && now - last.Time < minGap)
+                continue;
+            need = cam;
+            break;
+        }
+        if(need == null)
+            return;
+        var fwd = Forward(need.Rotation);
+        if(!MathUtil.IsFinite(fwd) || fwd.LengthSquared() < 1e-6f)
+            return;
+        RoomPose[need.Id] = ((need.Position, need.Rotation, need.FoV), now);
+        RetakeAsked.Remove(need.Id);
+        _framesSinceGrab = 0;
+        _pending = (Cameras.IndexOf(need), need);
+        if(Config.MonitorHideHud && HudVisible())
         {
             SetHud(false);
             _hudHiddenByUs = true;
@@ -207,6 +265,9 @@ public static unsafe class CameraRig
                 _wroteProj = true;
             }
             _wrote = true;
+            // (the characters drawn live kept out of the room picture)
+            if(pending.Index == Limber.Gpu.LiveCharacters.LiveCamera)
+                Limber.Gpu.LiveCharacters.HideForGrab();
             CameraControl.Grabbed = pending.Index;
             CameraControl.GrabFrame = true;
         }

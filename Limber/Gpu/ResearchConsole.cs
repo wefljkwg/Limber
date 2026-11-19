@@ -233,6 +233,8 @@ public static unsafe class ResearchConsole
                 Out($"  experiment {(ViewExperiment.On ? "on" : "off")}, slot {ViewExperiment.Slot}, update {(ViewExperiment.LetGameUpdateCamera ? 1 : 0)}, preview seen {ViewExperiment.PreviewSeen}; {ViewExperiment.State}");
                 Out($"  {ViewExperiment.LoopSaw}");
                 Out($"  per frame: {ViewExperiment.TargetClears:0.0} target clears, {ViewExperiment.DepthClears:0.0} depth clears, {ViewExperiment.SlotClears:0.0} of the slot's size, {ViewExperiment.FrameMs:0.0} ms");
+                Out($"  live characters: camera {LiveCharacters.LiveCamera}, {LiveCharacters.Targets.Count} characters, {LiveCharacters.LastReplays} draws again last frame, albedo {LiveCharacters.AlbedoIndex} normal {LiveCharacters.NormalIndex}; {LiveCharacters.Error}");
+                Out($"  camera buffer patched: {LiveCharacters.LastPatch}");
                 Out($"  world pass: {(WorldPass.On ? "on" : "off")}, drawn twice {WorldPass.Doubled} times, captured {WorldPass.Captured} times, main depth clears last frame {WorldPass.LastClears}, boundary 0x{WorldPass.Boundary:X} cleared {WorldPass.LastBoundary} times, capture {WorldPass.CaptureWidth}x{WorldPass.CaptureHeight}; {WorldPass.Error}");
                 Out($"  bases: {string.Join(", ", Bases().Select(b => $"{b.Key} 0x{b.Value:X}"))}");
                 return false;
@@ -268,6 +270,21 @@ public static unsafe class ResearchConsole
                 break;
             case "worldsrc":
                 WorldPass.SourceOffset = (int)Number(value);
+                break;
+            case "albedo":
+                LiveCharacters.AlbedoIndex = (int)Number(value);
+                break;
+            case "normal":
+                LiveCharacters.NormalIndex = (int)Number(value);
+                break;
+            case "brightness":
+                LiveCharacters.Brightness = float.Parse(value, CultureInfo.InvariantCulture);
+                break;
+            case "ambient":
+                LiveCharacters.Ambient = float.Parse(value, CultureInfo.InvariantCulture);
+                break;
+            case "retake":
+                Limber.Rig.CameraRig.RetakeRoom();
                 break;
             case "boundary":
                 WorldPass.Boundary = value == "0" ? 0 : Eval(value);
@@ -339,6 +356,10 @@ public static unsafe class ResearchConsole
         b["d3d"] = d == null ? 0 : (nint)d->D3D11Forwarder;
         b["ctx"] = d == null ? 0 : (nint)d->D3D11DeviceContext;
         b["cap"] = WorldPass.Captures[0];
+        for(int i = 0; i < 4; i++)
+            b[$"mrt{i}"] = LiveCharacters.TargetTexture(i);
+        b["wdepth"] = LiveCharacters.WorkDepth;
+        b["livetex"] = LiveCharacters.LiveTexture;
         b["cap0"] = WorldPass.Captures[0];
         b["cap1"] = WorldPass.Captures[1];
         b["cap2"] = WorldPass.Captures[2];

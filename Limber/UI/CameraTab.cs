@@ -277,6 +277,24 @@ public sealed class CameraTab
         if(ImGui.SliderInt("Timing###cam_rig_delay", ref delay, 0, 3)) { _config.MonitorDelay = delay; save = true; }
         Tooltip("How many frames after the camera is moved its picture reaches the screen. Right: the screens show the camera's view and your view doesn't flash.\n"
             + "If the screens show your own view and your view flashes to the camera's, raise it; if the screens go black or stutter, lower it.");
+        bool liveChars = _config.MonitorLiveCharacters;
+        if(ImGui.Checkbox("Live characters###cam_rig_live", ref liveChars)) { _config.MonitorLiveCharacters = liveChars; save = true; CameraRig.RetakeRoom(); }
+        Tooltip("On: each screen's room is taken once (again when its camera moves), and the characters near you are drawn on the first screen's camera live every frame, over it: no flashing.\n"
+            + "Off: the screens are refreshed by taking whole frames, as often as Refresh says.");
+        if(_config.MonitorLiveCharacters)
+        {
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Retake the room###cam_rig_retake"))
+                CameraRig.RetakeRoom();
+            Tooltip("Takes each screen's room picture again (one quick flash), e.g. after moving furniture or changing the lights.");
+            ImGui.SameLine();
+            float every = _config.MonitorRoomEvery;
+            ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(140f * ImGuiHelpers.GlobalScale));
+            if(ImGui.SliderFloat("Room every###cam_rig_every", ref every, 0f, 600f, every <= 0f ? "only when needed" : "%.0f s")) { _config.MonitorRoomEvery = every; save = true; }
+            Tooltip("Retake the room this often (0: only when a camera moves or you ask).");
+            if(Limber.Gpu.LiveCharacters.Error.Length > 0)
+                ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Live characters: " + Limber.Gpu.LiveCharacters.Error);
+        }
         bool hud = _config.MonitorHideHud;
         if(ImGui.Checkbox("No HUD on the screens###cam_rig_hud", ref hud)) { _config.MonitorHideHud = hud; save = true; }
         Tooltip("The game's HUD, nameplates and markers are hidden on the frames the screens get (you keep seeing them as usual).");

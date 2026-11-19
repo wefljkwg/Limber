@@ -1015,6 +1015,8 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         public int Fallback = -1;
         public bool SeeThrough;
         public string File = "";
+        /// <summary>A character the monitors draw live (LiveCharacters): its draws are run again from the camera prop.</summary>
+        public bool Live;
     }
 
     // Draws of a chosen character that matched none of the model's meshes (for the log: which file, where its indices start).
@@ -1272,6 +1274,47 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     Plugin.Log.Information($"Limber: effects on {file}: {tables} bone tables, {views} of the game's views found for them");
             }
         }
+        // the characters the monitors draw live: their bone tables' views marked (added if no effect chose them)
+        var liveSeen = new HashSet<nint>();
+        foreach(var (address, index) in LiveCharacters.Targets)
+        {
+            var go = ActorSkeleton.GetObject(index);
+            if(go == null || (nint)go != address || go->DrawObject == null)
+                continue;
+            var lcb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)go->DrawObject;
+            int lslots = SafeMemory.Read<int>((nint)(&lcb->SlotCount), 0);
+            nint lmodels = SafeMemory.ReadPointer((nint)(&lcb->Models));
+            if(lslots <= 0 || lslots > 64 || lmodels == 0)
+                continue;
+            foreach(var (slot, file) in LiveMesh.ModelFiles((nint)lcb))
+            {
+                if(slot >= lslots || !file.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                nint model = SafeMemory.ReadPointer(lmodels + slot * 8);
+                if(!SafeMemory.Plausible(model))
+                    continue;
+                nint list = SafeMemory.ReadPointer(model + 0x58);
+                int tables = SafeMemory.Read<int>(model + 0x60, 0);
+                if(!SafeMemory.Plausible(list) || tables <= 0 || tables > 16)
+                    continue;
+                for(int t = 0; t < tables; t++)
+                {
+                    Entry? fresh = null;
+                    foreach(var view in TableViews(list + t * 0xE0))
+                    {
+                        if(!liveSeen.Add(view))
+                        {
+                            shared.Add(view);
+                            continue;
+                        }
+                        if(map.TryGetValue(view, out var have))
+                            have.Live = true;
+                        else
+                            map[view] = fresh ??= new Entry { Fallback = -1, File = file, Live = true };
+                    }
+                }
+            }
+        }
         foreach(var view in shared)
             map.Remove(view);
         Views = map.Count;
@@ -1344,10 +1387,10 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     private static void DrawIndexedDetour(nint ctx, uint count, uint start, int baseVertex)
     {
         int look = -1;
-        bool seeThrough = false, ours = false;
+        bool seeThrough = false, ours = false, live = false;
         try
         {
-            ours = Which(ctx, start, out look, out seeThrough);
+            ours = Which(ctx, start, out look, out seeThrough, out live);
             // a hidden body: not drawn into the picture, only into Limber's depth and mask
             if(ours && Hidden(look) && MarkHidden(ctx, look, seeThrough, () => _drawIndexed!.Original(ctx, count, start, baseVertex)))
                 return;
@@ -1357,6 +1400,14 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             // never stop the game drawing
         }
         _drawIndexed!.Original(ctx, count, start, baseVertex);
+        if(live)
+            try
+            {
+                LiveCharacters.Replay(ctx, () => _drawIndexed!.Original(ctx, count, start, baseVertex));
+            }
+            catch
+            {
+            }
         if(!ours)
             return;
         try
@@ -1377,10 +1428,10 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     private static void DrawIndexedInstancedDetour(nint ctx, uint count, uint instances, uint start, int baseVertex, uint startInstance)
     {
         int look = -1;
-        bool seeThrough = false, ours = false;
+        bool seeThrough = false, ours = false, live = false;
         try
         {
-            ours = Which(ctx, start, out look, out seeThrough);
+            ours = Which(ctx, start, out look, out seeThrough, out live);
             if(ours && Hidden(look) && MarkHidden(ctx, look, seeThrough, () => _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance)))
                 return;
         }
@@ -1388,6 +1439,14 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         {
         }
         _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance);
+        if(live)
+            try
+            {
+                LiveCharacters.Replay(ctx, () => _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance));
+            }
+            catch
+            {
+            }
         if(!ours)
             return;
         try
@@ -1482,10 +1541,13 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     }
 
     // Is this draw one of the chosen characters' meshes? Which look then.
-    private static bool Which(nint ctx, uint start, out int look, out bool seeThrough)
+    private static bool Which(nint ctx, uint start, out int look, out bool seeThrough) => Which(ctx, start, out look, out seeThrough, out _);
+
+    private static bool Which(nint ctx, uint start, out int look, out bool seeThrough, out bool live)
     {
         look = -1;
         seeThrough = false;
+        live = false;
         var map = _map;
         if(map.Count == 0 || _maskARtv == 0)
             return false;
@@ -1502,6 +1564,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         }
         if(entry == null)
             return false;
+        live = entry.Live;
         look = entry.Fallback;
         bool matched = false;
         foreach(var (s, c, l) in entry.Ranges)
@@ -1511,7 +1574,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                 matched = true;
                 break;
             }
-        if(!matched && Unmatched.Count < 64)
+        if(!matched && Unmatched.Count < 64 && entry.Ranges.Length > 0)
             Unmatched.TryAdd((entry.File, start), 0);
         seeThrough = entry.SeeThrough;
         return look >= 0;
@@ -1676,7 +1739,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             }
             return;
         }
-        if(targets.Count == 0)
+        if(targets.Count == 0 && LiveCharacters.Targets.Count == 0)
         {
             if(_map.Count > 0)
             {
