@@ -35,6 +35,16 @@ public sealed class ShaderLook
     public float Pixelate { get; set; }             // mosaic block size, pixels (0: off)
     public bool GameBoy { get; set; }               // the mosaic in the Game Boy's four greens
     public List<MaterialFx> Fx { get; set; } = new(); // material effects, applied in order
+    // Where each half applies: the material changes (colour, brightness, glow) and the drawn effects, each on the body
+    // (skin, face, hair) and / or the outfit (gear).
+    public bool MaterialBody { get; set; } = true;
+    public bool MaterialOutfit { get; set; } = true;
+    public bool EffectBody { get; set; } = true;
+    public bool EffectOutfit { get; set; } = true;
+
+    public bool MaterialOn(string part) => part.Equals("Gear", StringComparison.OrdinalIgnoreCase) ? MaterialOutfit : MaterialBody;
+    public bool EffectOn(string part) => part.Equals("Gear", StringComparison.OrdinalIgnoreCase) ? EffectOutfit : EffectBody;
+
     public bool HideBody { get; set; }              // their body not drawn, only the effects (glass, slime... show what's behind)
 
     public bool ChangesMaterial()
@@ -65,7 +75,7 @@ public sealed class ShaderLook
         var t = Tint ?? [1f, 1f, 1f];
         var g = Glow ?? [1f, 1f, 1f];
         return FormattableString.Invariant(
-            $"{Part}|{t[0]:0.###},{t[1]:0.###},{t[2]:0.###}|{Brightness:0.###}|{g[0]:0.###},{g[1]:0.###},{g[2]:0.###}|{GlowStrength:0.###}|{Shine:0.###}|{Reflection:0.###}|{Bumps:0.###}");
+            $"{Part}|{(MaterialBody ? "b" : "")}{(MaterialOutfit ? "o" : "")}|{t[0]:0.###},{t[1]:0.###},{t[2]:0.###}|{Brightness:0.###}|{g[0]:0.###},{g[1]:0.###},{g[2]:0.###}|{GlowStrength:0.###}|{Shine:0.###}|{Reflection:0.###}|{Bumps:0.###}");
     }
 }
 
@@ -398,7 +408,7 @@ public sealed unsafe class Shaders : IDisposable
             // (the most specific look: one for this part, else one for everything)
             var look = looks.FirstOrDefault(l => l.Part.Equals(part, StringComparison.OrdinalIgnoreCase))
                        ?? looks.FirstOrDefault(l => l.Part.Equals("All", StringComparison.OrdinalIgnoreCase));
-            if (look == null)
+            if (look == null || !look.MaterialOn(part))
                 return path;
             string key = look.Key();
             if (Made.TryGetValue((who.Index, got, key), out var mine))
