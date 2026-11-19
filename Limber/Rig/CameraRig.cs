@@ -288,12 +288,29 @@ public static unsafe class CameraRig
     // ?, Render::Camera*). The game draws every view whose flags have both low bits set, the world's renderers run per
     // view (RenderView, 0x1402baa50). Listed to the log to find which view is the world, which the character previews.
 
+    /// <summary>The last list (shown on the page too).</summary>
+    public static string LastViews = "";
+
     public static unsafe void DumpViews()
+    {
+        try
+        {
+            DumpViewsCore();
+        }
+        catch(Exception e)
+        {
+            LastViews = "Couldn't list the views: " + e.Message;
+            Plugin.Log.Warning(e, "Limber: couldn't list the render views");
+        }
+    }
+
+    private static unsafe void DumpViewsCore()
     {
         var log = new System.Text.StringBuilder("Limber: the game's render views:\n");
         var manager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
         if(manager == null)
         {
+            LastViews = "No render manager.";
             Plugin.Log.Information("Limber: no render manager");
             return;
         }
@@ -334,7 +351,10 @@ public static unsafe class CameraRig
                 continue;
             log.Append($"view {v}: flags 0x{flags:X} unk 0x{unk:X}{((flags & 3) == 3 ? " DRAWN" : "")}{subs}\n");
         }
-        Plugin.Log.Information(log.ToString());
+        LastViews = log.ToString();
+        foreach(var line in LastViews.Split('\n'))
+            if(line.Length > 0)
+                Plugin.Log.Information(line);
     }
 
     // ---- The overlay: the cameras drawn as small wireframes with their view, and a gizmo on the chosen camera / monitor
