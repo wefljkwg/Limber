@@ -36,7 +36,7 @@ public sealed class ShadersTab
     {
         var looks = _config.ShaderLooks ??= new();
         var presets = _config.ShaderPresets ??= new();
-        ImGui.TextWrapped("Draw a character's materials with another of the game's shaders, or change their colour, brightness, glow, "
+        ImGui.TextWrapped("Change a character's materials: their colour, brightness, glow, "
                           + "shine, reflections and bumps. Only that character changes (players, NPCs, actors), and only on your screen. "
                           + "Each change draws them again once to take it (a moment after you stop dragging).");
 
@@ -143,18 +143,6 @@ public sealed class ShadersTab
         if(ImGui.SmallButton("Remove###sh_rm"))
             remove = look;
 
-        var choice = Shaders.ShaderChoices.FirstOrDefault(c => c.File.Equals(look.Shader ?? "", StringComparison.OrdinalIgnoreCase));
-        ImGui.SetNextItemWidth(Fit.Label(160f * ImGuiHelpers.GlobalScale));
-        using(var combo = ImRaii.Combo("Shader###sh_shader", choice.Label ?? "Its own"))
-        {
-            if(combo.Success)
-                foreach(var c in Shaders.ShaderChoices)
-                {
-                    if(ImGui.Selectable(c.Label, c.File == (look.Shader ?? ""))) { look.Shader = c.File; changed = true; }
-                    Tooltip(c.Tip);
-                }
-        }
-        Tooltip("Another of the game's shaders for these materials. Not every material suits every shader: if one comes out wrong, go back to Its own.");
 
         var tint = new Vector3(look.Tint?[0] ?? 1f, look.Tint?[1] ?? 1f, look.Tint?[2] ?? 1f);
         if(ImGui.ColorEdit3("Colour###sh_tint", ref tint, ImGuiColorEditFlags.NoInputs)) { look.Tint = [tint.X, tint.Y, tint.Z]; changed = true; }

@@ -36,7 +36,7 @@ public sealed class ShaderLook
         var t = Tint ?? [1f, 1f, 1f];
         var g = Glow ?? [1f, 1f, 1f];
         return FormattableString.Invariant(
-            $"{Part}|{t[0]:0.###},{t[1]:0.###},{t[2]:0.###}|{Brightness:0.###}|{g[0]:0.###},{g[1]:0.###},{g[2]:0.###}|{GlowStrength:0.###}|{Shine:0.###}|{Reflection:0.###}|{Bumps:0.###}|{Shader}");
+            $"{Part}|{t[0]:0.###},{t[1]:0.###},{t[2]:0.###}|{Brightness:0.###}|{g[0]:0.###},{g[1]:0.###},{g[2]:0.###}|{GlowStrength:0.###}|{Shine:0.###}|{Reflection:0.###}|{Bumps:0.###}");
     }
 }
 
@@ -222,12 +222,13 @@ public sealed unsafe class Shaders : IDisposable
             Limber.Koi.Props.KoiProps.Register();
     }
 
-    /// <summary>The material with the look on it: the shader switched (if chosen) and its settings changed.</summary>
+    /// <summary>The material with the look on it: its settings changed.</summary>
     public static byte[] Apply(byte[] mtrl, ShaderLook look)
     {
         var b = mtrl;
-        if (!string.IsNullOrEmpty(look.Shader) && !look.Shader.Equals(Limber.Koi.Props.MtrlBuilder.Shader(b), StringComparison.OrdinalIgnoreCase))
-            b = SetShader(b, look.Shader);
+        // (No switching to another of the game's shaders: each wants its own textures, keys and colour table, so a
+        // material made for one came out black under the others, and skin's crashed the game. Glass, see-through and
+        // the like come as Limber's own effects instead.)
         var t = look.Tint ?? [1f, 1f, 1f];
         float bright = Math.Clamp(look.Brightness, 0f, 10f);
         var colour = new[] { t[0] * bright, t[1] * bright, t[2] * bright };
