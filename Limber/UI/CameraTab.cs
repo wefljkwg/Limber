@@ -464,86 +464,90 @@ public sealed class CameraTab
             mons.Remove(dropMon);
             save = true;
         }
-        ImGui.Separator();
-        ImGui.TextUnformatted("Live screens research (experiment)");
-        var console = Limber.Gpu.ResearchConsole.Enabled;
-        if(ImGui.Checkbox("Let Claude run the experiments (through files in Limber's settings folder)###cam_rig_console", ref console))
-            Limber.Gpu.ResearchConsole.Enabled = console;
-        Tooltip("While ticked, Limber reads experiment commands from pluginConfigs/Limber/research/cmd.txt and writes the results (and pictures) next to it, so Claude can run the tests itself. Off again whenever Limber reloads.");
-        if(Limber.Gpu.ResearchConsole.Enabled && Limber.Gpu.ResearchConsole.Last.Length > 0)
+        // (the live screens research: hidden, kept for later digging)
+        if(ShowResearch)
         {
-            ImGui.SameLine();
-            ImGui.TextUnformatted(Limber.Gpu.ResearchConsole.Last);
-        }
-        var worldOn = Limber.Gpu.WorldPass.On;
-        if(ImGui.Checkbox("Draw the whole world a second time from a camera prop (may crash the game)###cam_rig_world", ref worldOn))
-        {
-            Limber.Gpu.WorldPass.Ensure();
-            Limber.Gpu.WorldPass.On = worldOn;
-        }
-        Tooltip("Has the game draw its world twice a frame: first from the first monitor's camera prop (or the first camera prop), then as usual, and copies the first picture out for the screens. Heavy: about twice the drawing work.");
-        if(Limber.Gpu.WorldPass.On)
-        {
-            ImGui.TextWrapped($"World pass: drawn twice {Limber.Gpu.WorldPass.Doubled} times, copied {Limber.Gpu.WorldPass.Captured} times, main depth cleared {Limber.Gpu.WorldPass.LastClears} times last frame. {Limber.Gpu.WorldPass.Error}");
-            if(Limber.Gpu.WorldPass.CaptureView != 0 && Limber.Gpu.WorldPass.CaptureWidth > 0)
+            ImGui.Separator();
+            ImGui.TextUnformatted("Live screens research (experiment)");
+            var console = Limber.Gpu.ResearchConsole.Enabled;
+            if(ImGui.Checkbox("Let Claude run the experiments (through files in Limber's settings folder)###cam_rig_console", ref console))
+                Limber.Gpu.ResearchConsole.Enabled = console;
+            Tooltip("While ticked, Limber reads experiment commands from pluginConfigs/Limber/research/cmd.txt and writes the results (and pictures) next to it, so Claude can run the tests itself. Off again whenever Limber reloads.");
+            if(Limber.Gpu.ResearchConsole.Enabled && Limber.Gpu.ResearchConsole.Last.Length > 0)
             {
-                float iw = 480 * ImGuiHelpers.GlobalScale;
-                ImGui.Image(new ImTextureID(Limber.Gpu.WorldPass.CaptureView), new Vector2(iw, iw * Limber.Gpu.WorldPass.CaptureHeight / Limber.Gpu.WorldPass.CaptureWidth));
+                ImGui.SameLine();
+                ImGui.TextUnformatted(Limber.Gpu.ResearchConsole.Last);
             }
-        }
-        var exOn = Limber.Gpu.ViewExperiment.On;
-        if(ImGui.Checkbox("Draw the world from a camera prop into a spare preview picture (may crash the game)###cam_rig_ex", ref exOn))
-        {
-            Limber.Gpu.ViewExperiment.On = exOn;
-            Limber.Gpu.ViewExperiment.StartCounting();
-        }
-        Tooltip("The game can draw the world up to 8 extra times a frame into its own preview pictures (the ones Try On and the Character window use). This borrows a spare one, with a camera at the first monitor's camera prop (or the first camera prop), and shows the picture below. Turn \"Monitors on\" off while testing. Save anything first.");
-        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
-        var exSlot = Limber.Gpu.ViewExperiment.Slot;
-        using(ImRaii.Disabled(Limber.Gpu.ViewExperiment.On))
-        {
-            if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 0, 7))
-                Limber.Gpu.ViewExperiment.Slot = exSlot;
-        }
-        Tooltip("Which preview picture to borrow (0-7). It needs one the game has made and isn't using: press List the preview slots to see which. Only changeable with the experiment off (changing it while on crashed the game).");
-        ImGui.SameLine();
-        var exUpd = Limber.Gpu.ViewExperiment.LetGameUpdateCamera;
-        if(ImGui.Checkbox("Game updates the camera###cam_rig_ex_upd", ref exUpd))
-            Limber.Gpu.ViewExperiment.LetGameUpdateCamera = exUpd;
-        Tooltip("If the picture shows your own view instead of the camera prop's, untick this.");
-        if(ImGui.SmallButton("List the preview slots###cam_rig_ex_list"))
-            Limber.Gpu.ViewExperiment.Inspect();
-        ImGui.SameLine();
-        if(ImGui.SmallButton("Record one frame's clears###cam_rig_ex_rec"))
-            Limber.Gpu.ViewExperiment.RecordOneFrame();
-        Tooltip("Lists every render target and depth buffer the game clears in one frame into the box below (try it with the experiment off, then on).");
-        if(Limber.Gpu.ViewExperiment.State.Length > 0)
-            ImGui.TextUnformatted("Experiment: " + Limber.Gpu.ViewExperiment.State);
-        if(Limber.Gpu.ViewExperiment.On && Limber.Gpu.ViewExperiment.LoopSaw.Length > 0)
-            ImGui.TextWrapped($"{Limber.Gpu.ViewExperiment.LoopSaw}; {Limber.Gpu.ViewExperiment.SlotClears:0.0} clears a frame of a picture that size");
-        if(Limber.Gpu.ViewExperiment.On)
-        {
-            var srv = Limber.Gpu.ViewExperiment.SlotPicture(Limber.Gpu.ViewExperiment.Slot, out var pw, out var ph);
-            if(srv != 0 && pw > 0 && ph > 0)
+            var worldOn = Limber.Gpu.WorldPass.On;
+            if(ImGui.Checkbox("Draw the whole world a second time from a camera prop (may crash the game)###cam_rig_world", ref worldOn))
             {
-                float iw = 320 * ImGuiHelpers.GlobalScale;
-                ImGui.Image(new ImTextureID(srv), new Vector2(iw, iw * ph / pw));
+                Limber.Gpu.WorldPass.Ensure();
+                Limber.Gpu.WorldPass.On = worldOn;
             }
-        }
-        if(Limber.Gpu.ViewExperiment.Counting)
-            ImGui.TextUnformatted($"Per frame: {Limber.Gpu.ViewExperiment.TargetClears:0.0} target clears, {Limber.Gpu.ViewExperiment.DepthClears:0.0} depth clears ({Limber.Gpu.ViewExperiment.MainDepthClears:0.0} of the main depth), {Limber.Gpu.ViewExperiment.FrameMs:0.0} ms a frame; set up {Limber.Gpu.ViewExperiment.Applied} times");
-        if(Limber.Gpu.ViewExperiment.Error.Length > 0)
-            ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Experiment: " + Limber.Gpu.ViewExperiment.Error);
-        if(ImGui.SmallButton("Research: list the game's views (to the log)###cam_rig_views"))
-            CameraRig.DumpViews();
-        Tooltip("For finding a way to draw the screens live: writes the game's render views (which are drawn, with which cameras) to the Dalamud log.");
-        if(CameraRig.LastViews.Length > 0)
-        {
+            Tooltip("Has the game draw its world twice a frame: first from the first monitor's camera prop (or the first camera prop), then as usual, and copies the first picture out for the screens. Heavy: about twice the drawing work.");
+            if(Limber.Gpu.WorldPass.On)
+            {
+                ImGui.TextWrapped($"World pass: drawn twice {Limber.Gpu.WorldPass.Doubled} times, copied {Limber.Gpu.WorldPass.Captured} times, main depth cleared {Limber.Gpu.WorldPass.LastClears} times last frame. {Limber.Gpu.WorldPass.Error}");
+                if(Limber.Gpu.WorldPass.CaptureView != 0 && Limber.Gpu.WorldPass.CaptureWidth > 0)
+                {
+                    float iw = 480 * ImGuiHelpers.GlobalScale;
+                    ImGui.Image(new ImTextureID(Limber.Gpu.WorldPass.CaptureView), new Vector2(iw, iw * Limber.Gpu.WorldPass.CaptureHeight / Limber.Gpu.WorldPass.CaptureWidth));
+                }
+            }
+            var exOn = Limber.Gpu.ViewExperiment.On;
+            if(ImGui.Checkbox("Draw the world from a camera prop into a spare preview picture (may crash the game)###cam_rig_ex", ref exOn))
+            {
+                Limber.Gpu.ViewExperiment.On = exOn;
+                Limber.Gpu.ViewExperiment.StartCounting();
+            }
+            Tooltip("The game can draw the world up to 8 extra times a frame into its own preview pictures (the ones Try On and the Character window use). This borrows a spare one, with a camera at the first monitor's camera prop (or the first camera prop), and shows the picture below. Turn \"Monitors on\" off while testing. Save anything first.");
+            ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+            var exSlot = Limber.Gpu.ViewExperiment.Slot;
+            using(ImRaii.Disabled(Limber.Gpu.ViewExperiment.On))
+            {
+                if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 0, 7))
+                    Limber.Gpu.ViewExperiment.Slot = exSlot;
+            }
+            Tooltip("Which preview picture to borrow (0-7). It needs one the game has made and isn't using: press List the preview slots to see which. Only changeable with the experiment off (changing it while on crashed the game).");
             ImGui.SameLine();
-            if(ImGui.SmallButton("Copy###cam_rig_views_copy"))
-                ImGui.SetClipboardText(CameraRig.LastViews);
-            var text = CameraRig.LastViews;
-            ImGui.InputTextMultiline("###cam_rig_views_text", ref text, 65536, new Vector2(-1, 160 * ImGuiHelpers.GlobalScale), ImGuiInputTextFlags.ReadOnly);
+            var exUpd = Limber.Gpu.ViewExperiment.LetGameUpdateCamera;
+            if(ImGui.Checkbox("Game updates the camera###cam_rig_ex_upd", ref exUpd))
+                Limber.Gpu.ViewExperiment.LetGameUpdateCamera = exUpd;
+            Tooltip("If the picture shows your own view instead of the camera prop's, untick this.");
+            if(ImGui.SmallButton("List the preview slots###cam_rig_ex_list"))
+                Limber.Gpu.ViewExperiment.Inspect();
+            ImGui.SameLine();
+            if(ImGui.SmallButton("Record one frame's clears###cam_rig_ex_rec"))
+                Limber.Gpu.ViewExperiment.RecordOneFrame();
+            Tooltip("Lists every render target and depth buffer the game clears in one frame into the box below (try it with the experiment off, then on).");
+            if(Limber.Gpu.ViewExperiment.State.Length > 0)
+                ImGui.TextUnformatted("Experiment: " + Limber.Gpu.ViewExperiment.State);
+            if(Limber.Gpu.ViewExperiment.On && Limber.Gpu.ViewExperiment.LoopSaw.Length > 0)
+                ImGui.TextWrapped($"{Limber.Gpu.ViewExperiment.LoopSaw}; {Limber.Gpu.ViewExperiment.SlotClears:0.0} clears a frame of a picture that size");
+            if(Limber.Gpu.ViewExperiment.On)
+            {
+                var srv = Limber.Gpu.ViewExperiment.SlotPicture(Limber.Gpu.ViewExperiment.Slot, out var pw, out var ph);
+                if(srv != 0 && pw > 0 && ph > 0)
+                {
+                    float iw = 320 * ImGuiHelpers.GlobalScale;
+                    ImGui.Image(new ImTextureID(srv), new Vector2(iw, iw * ph / pw));
+                }
+            }
+            if(Limber.Gpu.ViewExperiment.Counting)
+                ImGui.TextUnformatted($"Per frame: {Limber.Gpu.ViewExperiment.TargetClears:0.0} target clears, {Limber.Gpu.ViewExperiment.DepthClears:0.0} depth clears ({Limber.Gpu.ViewExperiment.MainDepthClears:0.0} of the main depth), {Limber.Gpu.ViewExperiment.FrameMs:0.0} ms a frame; set up {Limber.Gpu.ViewExperiment.Applied} times");
+            if(Limber.Gpu.ViewExperiment.Error.Length > 0)
+                ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Experiment: " + Limber.Gpu.ViewExperiment.Error);
+            if(ImGui.SmallButton("Research: list the game's views (to the log)###cam_rig_views"))
+                CameraRig.DumpViews();
+            Tooltip("For finding a way to draw the screens live: writes the game's render views (which are drawn, with which cameras) to the Dalamud log.");
+            if(CameraRig.LastViews.Length > 0)
+            {
+                ImGui.SameLine();
+                if(ImGui.SmallButton("Copy###cam_rig_views_copy"))
+                    ImGui.SetClipboardText(CameraRig.LastViews);
+                var text = CameraRig.LastViews;
+                ImGui.InputTextMultiline("###cam_rig_views_text", ref text, 65536, new Vector2(-1, 160 * ImGuiHelpers.GlobalScale), ImGuiInputTextFlags.ReadOnly);
+            }
         }
         if(Limber.Gpu.MonitorRenderer.Error.Length > 0)
         {
@@ -555,6 +559,8 @@ public sealed class CameraTab
         if(save)
             _config.Save();
     }
+
+    private static readonly bool ShowResearch = false;
 
     private static void Tooltip(string text)
     {

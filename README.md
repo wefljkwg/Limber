@@ -31,7 +31,15 @@ Koikatsu needs BepInEx and KKAPI, which any HF Patch or BetterRepack install alr
 
 Pose, shape and animate characters in group pose. Everything happens on your screen only. Open it with `/limber1` (or `/lmb`).
 
-### New in 0.70.0
+### New in 0.71.0
+
+- **Camera props and monitors** (Camera): place cameras in the world and screens that show what they see, like Koikatsu's studio cameras. Move and turn them with handles, give each its own field of view or zoom, and set each screen's size, shape, bezel, brightness and mirroring.
+- **Live characters** on the screens: each screen's room is taken once (again when its camera moves, on request, or on a timer), and the characters near you are drawn on it live every frame from the camera's view, with their own shading, brightness and shadow light. No more flashing while the screens are on.
+- **Shaders**: Hide their body (keep only the material, so glass and slime look right), and Materials / Effects on Body (skin, hair, face) or Outfit (worn gear) separately. Gloves and boots now count as outfit.
+- **Slime**: rounded into a blob, with Body detail, Inner lines and Opacity sliders.
+- **Colours**: every colour picker has an opacity.
+
+### 0.70.0
 
 - **Shaders** (Scene): give any character (player, NPC or actor) their own look, on them only: colour, brightness and glow on their materials, per part (skin, hair, face, gear), with presets.
 - **Drawn effects** (Shaders): Limber draws effects onto the character's real model as the game draws it (exact shape, same frame): light up, pulse, rim light, cartoon outline, see through walls, and Pixelate (the censor mosaic, with Game Boy colours). Glow now lights the skin too.
