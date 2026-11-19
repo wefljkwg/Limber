@@ -32,6 +32,8 @@ public sealed class ShaderLook
     public float[] Outline { get; set; } = [0f, 0f, 0f];
     public float OutlineWidth { get; set; }         // mm
     public bool SeeThrough { get; set; }
+    public float Pixelate { get; set; }             // mosaic block size, pixels (0: off)
+    public bool GameBoy { get; set; }               // the mosaic in the Game Boy's four greens
 
     public bool ChangesMaterial()
     {
@@ -40,7 +42,8 @@ public sealed class ShaderLook
                || MathF.Abs(Brightness - 1f) > 1e-3f || GlowStrength > 1e-3f;
     }
 
-    public bool HasEffects() => LightStrength > 0f || RimStrength > 0f || OutlineWidth > 0f || SeeThrough;
+    public bool HasEffects() => LightStrength > 0f || RimStrength > 0f || OutlineWidth > 0f || SeeThrough || Pixelate >= 1f
+                                || GlowStrength > 0f; // (the skin's glow is drawn: its shader can't glow)
 
     public ShaderLook Clone()
     {

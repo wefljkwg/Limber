@@ -152,7 +152,7 @@ public sealed class ShadersTab
         changed |= Slider("Brightness###sh_bright", look.Brightness, v => look.Brightness = v, 0f, 3f, "Darker (below 1) or brighter (above).");
         var glow = new Vector3(look.Glow?[0] ?? 1f, look.Glow?[1] ?? 1f, look.Glow?[2] ?? 1f);
         if(ImGui.ColorEdit3("Glow###sh_glowc", ref glow, ImGuiColorEditFlags.NoInputs)) { look.Glow = [glow.X, glow.Y, glow.Z]; changed = true; }
-        Tooltip("The colour they glow with (gear and hair: the game's skin shader can't glow).");
+        Tooltip("The colour they glow with. Gear and hair glow through their material; skin can't (the game's skin shader has no glow), so Limber draws the skin's glow itself.");
         ImGui.SameLine();
         changed |= Slider("Glow strength###sh_glow", look.GlowStrength, v => look.GlowStrength = v, 0f, 3f, "How much they glow on their own, even in the dark (0: none).");
 
@@ -169,6 +169,11 @@ public sealed class ShadersTab
         changed |= Colour("Outline###sh_fx_out", look.Outline, Vector3.Zero, v => look.Outline = v, "The outline's colour.");
         ImGui.SameLine();
         changed |= Slider("Outline width###sh_fx_outw", look.OutlineWidth, v => look.OutlineWidth = v, 0f, 20f, "A cartoon outline round them, this many pixels thick (0: none).");
+        changed |= Slider("Pixelate###sh_fx_pix", look.Pixelate, v => look.Pixelate = v, 0f, 40f, "The censor mosaic: they're drawn in square blocks this many pixels wide (0: off).");
+        ImGui.SameLine();
+        bool gb = look.GameBoy;
+        if(ImGui.Checkbox("Game Boy colours###sh_fx_gb", ref gb)) { look.GameBoy = gb; changed = true; }
+        Tooltip("The mosaic in the Game Boy's four shades of green.");
         bool see = look.SeeThrough;
         if(ImGui.Checkbox("See through walls###sh_fx_see", ref see)) { look.SeeThrough = see; changed = true; }
         Tooltip("Where something's in front of them, a faint silhouette in the rim's colour still shows.");
@@ -189,6 +194,7 @@ public sealed class ShadersTab
             look.Shine = 1f; look.Reflection = 1f; look.Bumps = 1f; look.Shader = "";
             look.Light = fresh.Light; look.LightStrength = 0f; look.Pulse = 0f; look.Rim = fresh.Rim; look.RimStrength = 0f;
             look.RimTightness = fresh.RimTightness; look.Outline = fresh.Outline; look.OutlineWidth = 0f; look.SeeThrough = false;
+            look.Pixelate = 0f; look.GameBoy = false;
             changed = true;
         }
         return changed;
@@ -249,7 +255,7 @@ public sealed class ShadersTab
                     picked.Shine = l.Shine; picked.Reflection = l.Reflection; picked.Bumps = l.Bumps; picked.Shader = l.Shader;
                     picked.Light = l.Light; picked.LightStrength = l.LightStrength; picked.Pulse = l.Pulse; picked.Rim = l.Rim;
                     picked.RimStrength = l.RimStrength; picked.RimTightness = l.RimTightness; picked.Outline = l.Outline;
-                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough;
+                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough; picked.Pixelate = l.Pixelate; picked.GameBoy = l.GameBoy;
                     _config.Save();
                     _status = $"Loaded \"{p.Name}\" onto {picked.Character}.";
                 }

@@ -114,7 +114,9 @@ public static unsafe class EffectRenderer
 
     private static bool _failed;
     private static string _error = "";
-    private static nint _vsFull, _psMask, _psXray, _psLight, _psOutline, _cb, _maskCb;
+    private static nint _vsFull, _psMask, _psXray, _psLight, _psOutline, _psPixel, _cb, _maskCb;
+    private static nint _sceneCopy, _sceneCopySrv;
+    private static uint _sceneW, _sceneH, _sceneFormat;
     private static nint _blendAdd, _blendSolid, _blendWrite, _depthOff, _depthEqual, _rasterNone;
     private static nint _looksBuf, _looksSrv;
     private static int _looksCap;
@@ -144,6 +146,11 @@ public static unsafe class EffectRenderer
         _drawIndexedInstanced?.Dispose();
         _drawIndexed = null;
         _drawIndexedInstanced = null;
+        Release(_psPixel);
+        Release(_sceneCopySrv);
+        Release(_sceneCopy);
+        _psPixel = _sceneCopySrv = _sceneCopy = 0;
+        _sceneW = _sceneH = _sceneFormat = 0;
         foreach(var o in new[] { _vsFull, _psMask, _psXray, _psLight, _psOutline, _cb, _maskCb, _blendAdd, _blendSolid, _blendWrite, _depthOff, _depthEqual, _rasterNone,
                      _looksSrv, _looksBuf, _maskARtv, _maskASrv, _maskA, _maskBRtv, _maskBSrv, _maskB })
             Release(o);
@@ -162,6 +169,7 @@ public static unsafe class EffectRenderer
         public Vector4 Rim;      // rgb, strength
         public Vector4 Outline;  // rgb, width (pixels)
         public Vector4 Misc;     // rim tightness, pulse (per second), see through walls, 0
+        public Vector4 Extra;    // pixelate (block size, pixels), Game Boy colours, 0, 0
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -170,7 +178,7 @@ public static unsafe class EffectRenderer
         public Matrix4x4 ViewProj, InvViewProj;
         public Vector4 Cam;      // camera position, time
         public Vector4 Screen;   // w, h, 1/w, 1/h (the picture)
-        public Vector4 Mask;     // the depth's drawn size (w, h), widest outline (pixels), how many looks
+        public Vector4 Mask;     // the depth's drawn size (w, h), widest outline (pixels), pixelate block (pixels)
     }
 
     private const string Hlsl = @"
@@ -180,11 +188,12 @@ cbuffer C : register(b0)
     float4 Cam; float4 Screen; float4 Mask;
 };
 cbuffer M : register(b1) { float4 Id; };
-struct Look { float4 Light; float4 Rim; float4 Outline; float4 Misc; };
+struct Look { float4 Light; float4 Rim; float4 Outline; float4 Misc; float4 Extra; };
 Texture2D<float2> MaskA : register(t0);
 Texture2D<float> MaskB : register(t1);
 Texture2D<float> SceneDepth : register(t2);
 StructuredBuffer<Look> Looks : register(t3);
+Texture2D<float4> SceneColor : register(t4);
 
 // ---- Marking (drawn with the game's own vertex shader, straight after its own draw)
 float4 PsMask(float4 pos : SV_Position) : SV_Target0 { return float4(Id.x, pos.z, 0, 0); }
@@ -268,6 +277,34 @@ float4 PsLight(float4 pos : SV_Position) : SV_Target0
     }
     if (max(c.r, max(c.g, c.b)) < 0.002) discard;
     return float4(c, 0);
+}
+
+// Pixelate (the censor mosaic): the picture in big blocks wherever most of a block is a pixelated look; each block the
+// average of its character pixels (so the background doesn't bleed in), optionally in the Game Boy's four greens.
+float4 PsPixel(float4 pos : SV_Position) : SV_Target0
+{
+    float size = max(Mask.w, 2);
+    float2 block = floor(pos.xy / size) * size;
+    float3 sum = 0;
+    int hits = 0, gb = 0;
+    [unroll] for (int y = 0; y < 4; y++)
+        [unroll] for (int x = 0; x < 4; x++)
+        {
+            float2 at = min(block + (float2(x, y) + 0.5) * (size / 4), Screen.xy - 1);
+            int look = VisibleLook(MaskPixel(at * Screen.zw));
+            if (look < 0 || Looks[look].Extra.x < 1) continue;
+            sum += SceneColor.Load(int3(at, 0)).rgb;
+            hits++;
+            gb += Looks[look].Extra.y > 0.5 ? 1 : 0;
+        }
+    if (hits < 8) discard;
+    float3 c = sum / hits;
+    if (gb * 2 >= hits)
+    {
+        float l = dot(c, float3(0.299, 0.587, 0.114));
+        c = l < 0.25 ? float3(0.06, 0.22, 0.06) : l < 0.5 ? float3(0.19, 0.38, 0.19) : l < 0.75 ? float3(0.55, 0.67, 0.06) : float3(0.61, 0.74, 0.06);
+    }
+    return float4(c, 1);
 }
 
 float4 PsOutline(float4 pos : SV_Position) : SV_Target0
@@ -363,6 +400,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         _psXray = Compile("PsXray", "ps_5_0");
         _psLight = Compile("PsLight", "ps_5_0");
         _psOutline = Compile("PsOutline", "ps_5_0");
+        _psPixel = Compile("PsPixel", "ps_5_0");
 
         nint o = 0;
         var cbDesc = new BufferDesc { ByteWidth = (uint)((sizeof(Constants) + 15) / 16 * 16), Usage = UsageDynamic, BindFlags = BindConstant, CpuAccessFlags = CpuWrite };
@@ -563,7 +601,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     }
 
     private static readonly List<LookGpu> _looks = new();
-    private static float _widest;
+    private static float _widest, _block;
 
     private static LookGpu ToGpu(ShaderLook l)
     {
@@ -574,6 +612,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             Rim = new Vector4(C(l.Rim, new(0.55f, 0.8f, 1f)), Math.Max(0f, l.RimStrength)),
             Outline = new Vector4(C(l.Outline, Vector3.Zero), Math.Clamp(l.OutlineWidth, 0f, 20f)),
             Misc = new Vector4(Math.Clamp(l.RimTightness, 0.5f, 12f), Math.Max(0f, l.Pulse), l.SeeThrough ? 1f : 0f, 0f),
+            Extra = new Vector4(Math.Clamp(l.Pixelate, 0f, 64f), l.GameBoy ? 1f : 0f, 0f, 0f),
         };
     }
 
@@ -584,24 +623,45 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         var shared = new HashSet<nint>();
         _looks.Clear();
         _widest = 0f;
+        _block = 0f;
         foreach(var target in targets)
         {
             var gameObject = ActorSkeleton.GetObject(target.Index);
             if(gameObject == null || (nint)gameObject != target.Address || gameObject->DrawObject == null)
                 continue;
             var lookOf = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // (the material Glow can't light skin, the game's skin shader has no glow: for skin, that look's drawn light
+            // takes it instead)
+            var skinOf = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             bool seeThrough = false;
             foreach(var l in target.Looks.Where(l => l.Enabled && l.HasEffects()).OrderBy(l => l.Part == "All" ? 0 : 1))
             {
                 lookOf[l.Part] = _looks.Count;
                 var g = ToGpu(l);
                 _looks.Add(g);
+                if(l.GlowStrength > 0f)
+                {
+                    var glow = l.Glow is { Length: >= 3 } gc ? new Vector3(gc[0], gc[1], gc[2]) : Vector3.One;
+                    var sg = g;
+                    var mixed = sg.Light.W > 0f ? (new Vector3(sg.Light.X, sg.Light.Y, sg.Light.Z) * sg.Light.W + glow * l.GlowStrength) / (sg.Light.W + l.GlowStrength) : glow;
+                    sg.Light = new Vector4(mixed, sg.Light.W + l.GlowStrength);
+                    skinOf[l.Part] = _looks.Count;
+                    _looks.Add(sg);
+                }
                 _widest = MathF.Max(_widest, g.Outline.W);
+                _block = MathF.Max(_block, g.Extra.X);
                 seeThrough |= l.SeeThrough;
             }
             if(lookOf.Count == 0)
                 continue;
             int all = lookOf.TryGetValue("All", out var a) ? a : -1;
+            int LookFor(string part)
+            {
+                string from = lookOf.ContainsKey(part) ? part : "All";
+                if(part == "Skin" && skinOf.TryGetValue(from, out var glowing))
+                    return glowing;
+                return lookOf.TryGetValue(from, out var own) ? own : -1;
+            }
             var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObject->DrawObject;
             int slots = SafeMemory.Read<int>((nint)(&cb->SlotCount), 0);
             nint models = SafeMemory.ReadPointer((nint)(&cb->Models));
@@ -627,7 +687,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     {
                         int table = t;
                         entry.Ranges = data.Meshes.Where(m => m.Table == table)
-                            .Select(m => (m.Start, m.Count, lookOf.TryGetValue(m.Part, out var own) ? own : all)).ToArray();
+                            .Select(m => (m.Start, m.Count, LookFor(m.Part))).ToArray();
                     }
                     foreach(var view in TableViews(list + t * 0xE0))
                     {
@@ -845,7 +905,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     {
         public fixed long Rtv[8];
         public nint Dsv, Blend, Depth, Raster, Vs, Ps, Layout, PsCb;
-        public fixed long PsSrv[4];
+        public fixed long PsSrv[5];
         public fixed float BlendFactor[4];
         public uint SampleMask, StencilRef, Topology, ViewportCount, VsInstances, PsInstances;
         public Viewport Vp0;
@@ -873,7 +933,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         ((delegate* unmanaged[Stdcall]<nint, nint*, void>)V(c, 78))(c, &s->Layout);
         ((delegate* unmanaged[Stdcall]<nint, uint*, void>)V(c, 83))(c, &s->Topology);
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 77))(c, 0, 1, &s->PsCb);
-        ((delegate* unmanaged[Stdcall]<nint, uint, uint, long*, void>)V(c, 73))(c, 0, 4, s->PsSrv);
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, long*, void>)V(c, 73))(c, 0, 5, s->PsSrv);
     }
 
     private static void Restore(nint c)
@@ -890,10 +950,10 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         ((delegate* unmanaged[Stdcall]<nint, nint, void>)V(c, 17))(c, s->Layout);
         ((delegate* unmanaged[Stdcall]<nint, uint, void>)V(c, 24))(c, s->Topology);
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 16))(c, 0, 1, &s->PsCb);
-        ((delegate* unmanaged[Stdcall]<nint, uint, uint, long*, void>)V(c, 8))(c, 0, 4, s->PsSrv);
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, long*, void>)V(c, 8))(c, 0, 5, s->PsSrv);
         for(int i = 0; i < 8; i++)
             Release((nint)s->Rtv[i]);
-        for(int i = 0; i < 4; i++)
+        for(int i = 0; i < 5; i++)
             Release((nint)s->PsSrv[i]);
         for(uint i = 0; i < s->VsInstances; i++)
             Release((nint)s->VsClass[i]);
@@ -985,7 +1045,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                         {
                             Save(c);
                             saved = true;
-                            Composite(c, backRtv, bd, constants.Value, looks, (nint)ds->D3D11ShaderResourceView);
+                            Composite(c, backRtv, backTex, bd, constants.Value, looks, (nint)ds->D3D11ShaderResourceView);
                             Restore(c);
                             saved = false;
                         }
@@ -1015,8 +1075,38 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         }
     }
 
-    private static void Composite(nint c, nint backRtv, Texture2DDesc bd, Constants constants, LookGpu[] looks, nint sceneSrv)
+    // A copy of the picture (what the pixelate reads from), the picture's size and format.
+    private static bool CopyPicture(nint c, nint backTex, Texture2DDesc bd)
     {
+        if(_sceneCopy == 0 || _sceneW != bd.Width || _sceneH != bd.Height || _sceneFormat != bd.Format)
+        {
+            Release(_sceneCopySrv);
+            Release(_sceneCopy);
+            _sceneCopySrv = _sceneCopy = 0;
+            var device = Device();
+            var desc = new Texture2DDesc { Width = bd.Width, Height = bd.Height, MipLevels = 1, ArraySize = 1, Format = bd.Format, SampleCount = 1, Usage = UsageDefault, BindFlags = BindSrv };
+            nint t = 0;
+            if(((delegate* unmanaged[Stdcall]<nint, Texture2DDesc*, void*, nint*, int>)V(device, 5))(device, &desc, null, &t) < 0 || t == 0)
+                return false;
+            nint v = 0;
+            if(((delegate* unmanaged[Stdcall]<nint, nint, void*, nint*, int>)V(device, 7))(device, t, null, &v) < 0 || v == 0)
+            {
+                Release(t);
+                return false;
+            }
+            _sceneCopy = t;
+            _sceneCopySrv = v;
+            _sceneW = bd.Width;
+            _sceneH = bd.Height;
+            _sceneFormat = bd.Format;
+        }
+        ((delegate* unmanaged[Stdcall]<nint, nint, nint, void>)V(c, 47))(c, _sceneCopy, backTex);
+        return true;
+    }
+
+    private static void Composite(nint c, nint backRtv, nint backTex, Texture2DDesc bd, Constants constants, LookGpu[] looks, nint sceneSrv)
+    {
+        bool pixelate = _block >= 1f && CopyPicture(c, backTex, bd);
         EnsureLooks(looks.Length);
         Mapped m;
         if(((delegate* unmanaged[Stdcall]<nint, nint, uint, uint, uint, Mapped*, int>)V(c, 14))(c, _looksBuf, 0, 4, 0, &m) < 0)
@@ -1029,8 +1119,8 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         *(Constants*)m.Data = constants;
         ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 15))(c, _cb, 0);
 
-        nint* none = stackalloc nint[4];
-        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 4, none);
+        nint* none = stackalloc nint[5];
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 5, none);
         nint rtv = backRtv;
         ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint, void>)V(c, 33))(c, 1, &rtv, 0);
         var vp = new Viewport { Width = bd.Width, Height = bd.Height, MinDepth = 0, MaxDepth = 1 };
@@ -1041,10 +1131,18 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 36))(c, _depthOff, 0);
         nint cb = _cb;
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 16))(c, 0, 1, &cb);
-        nint* inputs = stackalloc nint[4] { _maskASrv, _maskBSrv, sceneSrv, _looksSrv };
-        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 4, inputs);
+        nint* inputs = stackalloc nint[5] { _maskASrv, _maskBSrv, sceneSrv, _looksSrv, pixelate ? _sceneCopySrv : 0 };
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 5, inputs);
         ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 11))(c, _vsFull, null, 0);
         float* zero = stackalloc float[4];
+
+        // the mosaic first (it replaces the picture there), then the rest over it
+        if(pixelate)
+        {
+            ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendSolid, zero, 0xFFFFFFFF);
+            ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psPixel, null, 0);
+            ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 3, 0);
+        }
 
         // the outline (drawn over), then the light, rim and see-through silhouette (added on)
         if(_widest > 0f)
@@ -1057,7 +1155,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psLight, null, 0);
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 3, 0);
 
-        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 4, none);
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 5, none);
     }
 
     private static Constants? MakeConstants(uint w, uint h, uint maskW, uint maskH, int looks)
@@ -1080,7 +1178,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             InvViewProj = ivp,
             Cam = new Vector4(cam, (float)(Environment.TickCount64 % 3_600_000) / 1000f),
             Screen = new Vector4(w, h, 1f / w, 1f / h),
-            Mask = new Vector4(maskW, maskH, _widest, looks),
+            Mask = new Vector4(maskW, maskH, _widest, _block),
         };
     }
 }
