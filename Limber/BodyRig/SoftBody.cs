@@ -691,16 +691,16 @@ public sealed unsafe class SoftBody
         // The bone a part hangs from as the body holds it: with the body mod's own jiggle ignored, where it sits at rest
         // under its own parent (the chest, the pelvis) as posed now; else where it is (its physics included).
         bool still = s.IgnoreModJiggle && !_part.Region;
-        Frame HeldFrame(int bone)
+        static Frame HeldFrame(in RigSkeleton sk, int bone, bool still)
         {
-            var f = skeleton.GetModelFrame(bone);
+            var f = sk.GetModelFrame(bone);
             if (!still)
                 return f;
-            int up = skeleton.ParentOf(bone);
-            if (up < 0 || !skeleton.TryGetReferenceLocal(bone, out var lp, out var lr))
+            int up = sk.ParentOf(bone);
+            if (up < 0 || !sk.TryGetReferenceLocal(bone, out var lp, out var lr))
                 return f;
-            var pf = skeleton.GetModelFrame(up);
-            var ps = skeleton.GetModelScale(up);
+            var pf = sk.GetModelFrame(up);
+            var ps = sk.GetModelScale(up);
             var at = pf.Position + Vector3.Transform(ps * lp, pf.Rotation);
             var turn = Quaternion.Normalize(pf.Rotation * lr);
             return MathUtil.IsFinite(at) && float.IsFinite(turn.W) ? new Frame(at, turn) : f;
@@ -710,7 +710,7 @@ public sealed unsafe class SoftBody
         {
             for (int i = 0; i < Side; i++)
             {
-                var parent = HeldFrame(b.Parents[i]);
+                var parent = HeldFrame(skeleton, b.Parents[i], still);
                 var scale = skeleton.GetModelScale(b.Parents[i]);
                 var model = parent.Position + Vector3.Transform(scale * b.RestLocal[i], parent.Rotation);
                 if (spineRatio != Vector3.One)
@@ -725,10 +725,10 @@ public sealed unsafe class SoftBody
                 b.Target[i] = skeleton.ModelToWorldPoint(model);
                 b.RestTarget[i] = b.Target[i];
             }
-            b.Origin = skeleton.ModelToWorldPoint(HeldFrame(b.Parents[0]).Position);
+            b.Origin = skeleton.ModelToWorldPoint(HeldFrame(skeleton, b.Parents[0], still).Position);
             if (b.NippleBone >= 0)
             {
-                var parent = HeldFrame(b.NippleParent);
+                var parent = HeldFrame(skeleton, b.NippleParent, still);
                 var scale = skeleton.GetModelScale(b.NippleParent);
                 b.NippleRest = skeleton.ModelToWorldPoint(parent.Position + Vector3.Transform(scale * b.NippleRestLocal, parent.Rotation));
             }
