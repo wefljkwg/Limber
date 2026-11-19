@@ -145,6 +145,15 @@ public sealed class ShadersTab
             remove = look;
 
 
+        // where the material changes go
+        ImGui.TextDisabled("Materials on:");
+        ImGui.SameLine();
+        bool mb = look.MaterialBody, mo = look.MaterialOutfit;
+        if(ImGui.Checkbox("Body###sh_mat_body", ref mb)) { look.MaterialBody = mb; changed = true; }
+        Tooltip("The colour, brightness and glow below go on their body: skin, face, eyes, hair, ears and tail.");
+        ImGui.SameLine();
+        if(ImGui.Checkbox("Outfit###sh_mat_outfit", ref mo)) { look.MaterialOutfit = mo; changed = true; }
+        Tooltip("The colour, brightness and glow below go on what they wear: clothes, accessories, weapons.");
         var tint = new Vector3(look.Tint?[0] ?? 1f, look.Tint?[1] ?? 1f, look.Tint?[2] ?? 1f);
         if(ImGui.ColorEdit3("Colour###sh_tint", ref tint, ImGuiColorEditFlags.NoInputs)) { look.Tint = [tint.X, tint.Y, tint.Z]; changed = true; }
         Tooltip("Multiplies their colour (white: as it is).");
@@ -158,6 +167,14 @@ public sealed class ShadersTab
 
         // Limber's own drawn effects (no redraw: they show straight away)
         ImGui.TextDisabled("Drawn effects (Limber's own: any part, skin too; show straight away)");
+        ImGui.TextDisabled("Effects on:");
+        ImGui.SameLine();
+        bool eb = look.EffectBody, eo = look.EffectOutfit;
+        if(ImGui.Checkbox("Body###sh_fx_body", ref eb)) { look.EffectBody = eb; changed = true; }
+        Tooltip("The drawn and material effects below go on their body: skin, face, eyes, hair, ears and tail.");
+        ImGui.SameLine();
+        if(ImGui.Checkbox("Outfit###sh_fx_outfit", ref eo)) { look.EffectOutfit = eo; changed = true; }
+        Tooltip("The drawn and material effects below go on what they wear: clothes, accessories, weapons.");
         changed |= Colour("Light###sh_fx_light", look.Light, new Vector3(1f, 0.55f, 0.85f), v => look.Light = v, "The colour the surface lights up with.");
         ImGui.SameLine();
         changed |= Slider("Light up###sh_fx_lights", look.LightStrength, v => look.LightStrength = v, 0f, 2f, "Lights the whole surface up with that colour, skin included (0: none).");
@@ -199,6 +216,7 @@ public sealed class ShadersTab
             look.Light = fresh.Light; look.LightStrength = 0f; look.Pulse = 0f; look.Rim = fresh.Rim; look.RimStrength = 0f;
             look.RimTightness = fresh.RimTightness; look.Outline = fresh.Outline; look.OutlineWidth = 0f; look.SeeThrough = false;
             look.Pixelate = 0f; look.GameBoy = false; look.Fx = new(); look.HideBody = false;
+            look.MaterialBody = look.MaterialOutfit = look.EffectBody = look.EffectOutfit = true;
             changed = true;
         }
         return changed;
@@ -344,6 +362,7 @@ public sealed class ShadersTab
                     picked.Light = l.Light; picked.LightStrength = l.LightStrength; picked.Pulse = l.Pulse; picked.Rim = l.Rim;
                     picked.RimStrength = l.RimStrength; picked.RimTightness = l.RimTightness; picked.Outline = l.Outline;
                     picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough; picked.Pixelate = l.Pixelate; picked.GameBoy = l.GameBoy; picked.Fx = l.Fx; picked.HideBody = l.HideBody;
+                    picked.MaterialBody = l.MaterialBody; picked.MaterialOutfit = l.MaterialOutfit; picked.EffectBody = l.EffectBody; picked.EffectOutfit = l.EffectOutfit;
                     _config.Save();
                     _status = $"Loaded \"{p.Name}\" onto {picked.Character}.";
                 }

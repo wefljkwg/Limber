@@ -1035,10 +1035,13 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             // (the material Glow can't light skin, the game's skin shader has no glow: for skin, that look's drawn light
             // takes it instead)
             var skinOf = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var glowOnlyOf = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var defOf = new Dictionary<string, ShaderLook>(StringComparer.OrdinalIgnoreCase);
             bool seeThrough = false;
             foreach(var l in target.Looks.Where(l => l.Enabled && l.HasEffects()).OrderBy(l => l.Part == "All" ? 0 : 1))
             {
                 lookOf[l.Part] = _looks.Count;
+                defOf[l.Part] = l;
                 var g = ToGpu(l);
                 int fxFirst = _fx.Count;
                 foreach(var f in (l.Fx ?? new()).Where(f => f.On).Take(8))
@@ -1068,6 +1071,11 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     skinOf[l.Part] = _looks.Count;
                     _looks.Add(sg);
                     _hide.Add(l.HideBody);
+                    // (the glow alone, for a look whose effects are kept off the body but whose material isn't)
+                    var go = new LookGpu { Light = new Vector4(glow, l.GlowStrength), Rim = default, Outline = default, Misc = new Vector4(3f, 0f, 0f, 0f), Extra = default, Origin = g.Origin };
+                    glowOnlyOf[l.Part] = _looks.Count;
+                    _looks.Add(go);
+                    _hide.Add(false);
                 }
                 _widest = MathF.Max(_widest, g.Outline.W);
                 _block = MathF.Max(_block, g.Extra.X);
@@ -1075,14 +1083,24 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             }
             if(lookOf.Count == 0)
                 continue;
-            int all = lookOf.TryGetValue("All", out var a) ? a : -1;
+            // A part's look: its own, else the one for everything; the effects only where that look lets them (body: skin,
+            // face, hair; outfit: gear), and the skin's drawn glow only where its material changes are let on the body.
             int LookFor(string part)
             {
                 string from = lookOf.ContainsKey(part) ? part : "All";
-                if(part == "Skin" && skinOf.TryGetValue(from, out var glowing))
-                    return glowing;
-                return lookOf.TryGetValue(from, out var own) ? own : -1;
+                if(!defOf.TryGetValue(from, out var def))
+                    return -1;
+                bool effects = def.EffectOn(part);
+                bool glow = part == "Skin" && def.MaterialOn(part) && skinOf.ContainsKey(from);
+                if(effects && glow)
+                    return skinOf[from];
+                if(effects)
+                    return lookOf[from];
+                if(glow)
+                    return glowOnlyOf[from];
+                return -1;
             }
+            int all = defOf.TryGetValue("All", out var allDef) && allDef.EffectBody && allDef.EffectOutfit ? lookOf["All"] : -1;
             var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObject->DrawObject;
             int slots = SafeMemory.Read<int>((nint)(&cb->SlotCount), 0);
             nint models = SafeMemory.ReadPointer((nint)(&cb->Models));
