@@ -236,7 +236,7 @@ public sealed unsafe class Shaders : IDisposable
             b = Scale(b, DiffuseColor, colour, 1f);
         var glowColour = look.Glow ?? [1f, 1f, 1f];
         float glow = Math.Clamp(look.GlowStrength, 0f, 20f);
-        float shine = Math.Clamp(look.Shine, 0f, 20f);
+        float shine = 1f; // (Shine, Reflections and Bumps: none of the character shaders took them this way; off)
         // Gear (the character shaders) takes its shine and glow from its colour table, row by row, not from the
         // material's settings: changed there. The others (hair, skin, eyes...) from their settings.
         bool table = ColourTable(b, out int at, out int rows, out int stride);
@@ -261,10 +261,6 @@ public sealed unsafe class Shaders : IDisposable
             if (MathF.Abs(shine - 1f) > 1e-4f)
                 b = Scale(b, SpecularColor, [shine, shine, shine], 1f);
         }
-        if (MathF.Abs(look.Reflection - 1f) > 1e-4f)
-            b = Scale(b, EnvMapPower, [look.Reflection], 1f);
-        if (MathF.Abs(look.Bumps - 1f) > 1e-4f)
-            b = Scale(b, NormalScale, [look.Bumps], 1f);
         return b;
     }
 

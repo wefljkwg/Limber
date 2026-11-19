@@ -36,8 +36,8 @@ public sealed class ShadersTab
     {
         var looks = _config.ShaderLooks ??= new();
         var presets = _config.ShaderPresets ??= new();
-        ImGui.TextWrapped("Change a character's materials: their colour, brightness, glow, "
-                          + "shine, reflections and bumps. Only that character changes (players, NPCs, actors), and only on your screen. "
+        ImGui.TextWrapped("Change a character's materials: their colour, brightness and glow (gear and hair). "
+                          + "Only that character changes (players, NPCs, actors), and only on your screen. "
                           + "Each change draws them again once to take it (a moment after you stop dragging).");
 
         // Add someone.
@@ -151,12 +151,9 @@ public sealed class ShadersTab
         changed |= Slider("Brightness###sh_bright", look.Brightness, v => look.Brightness = v, 0f, 3f, "Darker (below 1) or brighter (above).");
         var glow = new Vector3(look.Glow?[0] ?? 1f, look.Glow?[1] ?? 1f, look.Glow?[2] ?? 1f);
         if(ImGui.ColorEdit3("Glow###sh_glowc", ref glow, ImGuiColorEditFlags.NoInputs)) { look.Glow = [glow.X, glow.Y, glow.Z]; changed = true; }
-        Tooltip("The colour they glow with.");
+        Tooltip("The colour they glow with (gear and hair: the game's skin shader can't glow).");
         ImGui.SameLine();
         changed |= Slider("Glow strength###sh_glow", look.GlowStrength, v => look.GlowStrength = v, 0f, 3f, "How much they glow on their own, even in the dark (0: none).");
-        changed |= Slider("Shine###sh_shine", look.Shine, v => look.Shine = v, 0f, 5f, "How strong their highlights are (1: as they are).");
-        changed |= Slider("Reflections###sh_refl", look.Reflection, v => look.Reflection = v, 0f, 5f, "How much they mirror their surroundings (1: as they are; not every shader reflects).");
-        changed |= Slider("Bumps###sh_bump", look.Bumps, v => look.Bumps = v, 0f, 3f, "How strongly their bump maps shade the surface (0: smooth, 1: as they are).");
         if(ImGui.SmallButton("Reset###sh_reset"))
         {
             var fresh = new ShaderLook { Character = look.Character, Part = look.Part, Enabled = look.Enabled };
