@@ -10,31 +10,107 @@ using Limber.Rig;
 namespace Limber.Gpu;
 
 /// <summary>
-/// Research for live monitors: the game's own second-view rendering. Render::Manager keeps 87 views (0x190 each, at +0x8);
-/// views 24-31 are world views (every render pass on), drawn when their flags have both low bits set, in the order
-/// 24, 25 ... 29, 30 (30 is the main world view: sub-views 0-4 the shadow cascades, 12 the main camera). The experiment
-/// copies view 30 into an idle world slot drawn before it, with a camera of Limber's own (a copy of the main render camera
-/// moved to a camera prop), and counts what the GPU clears per frame, so it shows whether that extra view is drawn and
-/// which targets it uses.
+/// Research for live monitors: the game's own second-view rendering. Render::Manager keeps 87 views (0x190 each, at +0x8).
+/// Which picture a view draws into is fixed by its number (RendererUtility, 0x14027a060): 30 the main world picture,
+/// 0-19 the character windows, 85 one other, and 25 the "chara view" slots: up to 8 extra world drawings a frame, slot n
+/// drawn when Manager+0x3835c+n*4 is above 0, from view 25's sub-view n camera, into RenderTargetManager's
+/// _charaViewTextures[n] (+0x2c8). Every other number has no picture (drawing one crashes the game). The experiment puts
+/// a camera of Limber's own (the main render camera copied, moved to a camera prop) into an idle chara-view slot that has
+/// a picture, and shows that picture on the page.
 /// </summary>
 public static unsafe class ViewExperiment
 {
-    private const int ViewCount = 87;
     private const int ViewSize = 0x190;
     private const int MainView = 30;
     private const int MainSub = 12;
+    private const int CharaView = 25;
     private const int CameraSize = 0x400;
 
-    /// <summary>On: the extra view is set up every frame (before the game draws).</summary>
+    /// <summary>On: the chara-view slot is set up every frame (before the game draws).</summary>
     public static bool On;
-    /// <summary>Which idle world view slot gets the copy (24-29 are drawn before the main one; 25 is the game's own).</summary>
-    public static int Slot = 27;
+    /// <summary>Which chara-view slot (0-7).</summary>
+    public static int Slot = 7;
+    /// <summary>Off: Limber's camera is marked as already updated, so the game doesn't work its view out again.</summary>
+    public static bool LetGameUpdateCamera = true;
     public static string Error = "";
+    public static string State = "";
 
-    private static byte[]? _saved;
-    private static int _savedSlot = -1;
+    private static int _usedSlot = -1;
+    private static nint _savedCamera;
+    private static int _savedCount;
     private static nint _camera;
     private static int _applied;
+
+    private static nint Views(out nint manager)
+    {
+        var m = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
+        manager = (nint)m;
+        return m == null ? 0 : (nint)m + 0x8;
+    }
+
+    private static nint SlotCameraAt(nint views, int n) => views + CharaView * ViewSize + 0x10 + n * 0x18 + 0x10;
+    private static nint CountAt(nint manager, int n) => manager + 0x3835c + n * 4;
+
+    /// <summary>Chara-view slot n's picture (a Kernel::Texture*), or 0.</summary>
+    public static nint SlotTexture(int n)
+    {
+        var rtm = FFXIVClientStructs.FFXIV.Client.Graphics.Render.RenderTargetManager.Instance();
+        if(rtm == null || n < 0 || n > 7)
+            return 0;
+        return SafeMemory.ReadPointer((nint)rtm + 0x2c8 + n * 8);
+    }
+
+    /// <summary>Its shader view (for showing it on the page), or 0.</summary>
+    public static nint SlotPicture(int n, out int width, out int height)
+    {
+        width = height = 0;
+        nint t = SlotTexture(n);
+        if(!SafeMemory.Plausible(t))
+            return 0;
+        var tex = (FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Texture*)t;
+        width = (int)tex->ActualWidth;
+        height = (int)tex->ActualHeight;
+        return (nint)tex->D3D11ShaderResourceView;
+    }
+
+    /// <summary>What the chara-view slots hold now (into the views box).</summary>
+    public static void Inspect()
+    {
+        var log = new StringBuilder("Limber: chara-view slots (view 25):\n");
+        try
+        {
+            nint views = Views(out var manager);
+            var rtm = FFXIVClientStructs.FFXIV.Client.Graphics.Render.RenderTargetManager.Instance();
+            if(views == 0 || rtm == null)
+            {
+                CameraRig.LastViews = "No render manager.";
+                return;
+            }
+            for(int n = 0; n < 8; n++)
+            {
+                int count = SafeMemory.Read<int>(CountAt(manager, n), -1);
+                nint cam = SafeMemory.ReadPointer(SlotCameraAt(views, n));
+                nint t = SlotTexture(n);
+                string tex = "no picture";
+                if(SafeMemory.Plausible(t))
+                {
+                    var k = (FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Texture*)t;
+                    tex = $"picture {k->ActualWidth}x{k->ActualHeight} (allocated {k->AllocatedWidth}x{k->AllocatedHeight}) format 0x{(uint)k->TextureFormat:X}";
+                }
+                log.Append($"slot {n}: count {count}, camera 0x{cam:X}, {tex}{(n == _usedSlot ? " (Limber's)" : "")}\n");
+            }
+            for(int g = 0; g < 5; g++)
+                log.Append($"chara-view g-buffer {g}: 0x{SafeMemory.ReadPointer((nint)rtm + 0x308 + g * 8):X}\n");
+        }
+        catch(Exception e)
+        {
+            log.Append("failed: " + e.Message + "\n");
+        }
+        CameraRig.LastViews = log.ToString();
+        foreach(var line in CameraRig.LastViews.Split('\n'))
+            if(line.Length > 0)
+                Plugin.Log.Information(line);
+    }
 
     // ---- Every frame, just before the game draws (the bone hook, where the monitors' view is set too)
 
@@ -47,16 +123,32 @@ public static unsafe class ViewExperiment
         }
         try
         {
-            var manager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
-            if(manager == null)
+            nint views = Views(out var manager);
+            if(views == 0)
                 return;
-            nint views = (nint)manager + 0x8;
-            if(_savedSlot != Slot)
+            if(_usedSlot != Slot)
             {
                 Restore();
-                _saved = new byte[ViewSize];
-                Marshal.Copy(views + Slot * ViewSize, _saved, 0, ViewSize);
-                _savedSlot = Slot;
+                if(!SafeMemory.Plausible(SlotTexture(Slot)))
+                {
+                    State = $"slot {Slot} has no picture (try another slot, or open Try On / the Character window first)";
+                    return;
+                }
+                int count = *(int*)CountAt(manager, Slot);
+                if(count > 0)
+                {
+                    State = $"slot {Slot} is in use by the game";
+                    return;
+                }
+                _savedCamera = *(nint*)SlotCameraAt(views, Slot);
+                _savedCount = count;
+                _usedSlot = Slot;
+            }
+            if(!SafeMemory.Plausible(SlotTexture(_usedSlot)))
+            {
+                Restore();
+                State = $"slot {Slot} lost its picture";
+                return;
             }
             nint main = views + MainView * ViewSize;
             nint mainCamera = *(nint*)(main + 0x10 + MainSub * 0x18 + 0x10);
@@ -64,7 +156,10 @@ public static unsafe class ViewExperiment
                 return;
             var cam = Pick();
             if(cam == null)
+            {
+                State = "no camera prop";
                 return;
+            }
             if(_camera == 0)
                 _camera = (nint)NativeMemory.AllocZeroed(CameraSize);
             if(!SafeMemory.Copy(mainCamera, (void*)_camera, CameraSize))
@@ -85,16 +180,11 @@ public static unsafe class ViewExperiment
                 *(Matrix4x4*)&rc->ProjectionMatrix = p1;
                 *(Matrix4x4*)&rc->ProjectionMatrix2 = p2;
             }
-            nint slot = views + Slot * ViewSize;
-            System.Buffer.MemoryCopy((void*)main, (void*)slot, ViewSize, ViewSize);
-            for(int sv = 0; sv < 16; sv++)
-            {
-                nint at = slot + 0x10 + sv * 0x18 + 0x10;
-                if(*(nint*)at == mainCamera)
-                    *(nint*)at = _camera;
-            }
-            *(uint*)(slot + 0x8) |= 3;
+            *((byte*)_camera + 0x205) = (byte)(LetGameUpdateCamera ? 0 : 1);
+            *(nint*)SlotCameraAt(views, _usedSlot) = _camera;
+            *(int*)CountAt(manager, _usedSlot) = 1;
             _applied++;
+            State = $"drawing into slot {_usedSlot}";
         }
         catch(Exception e)
         {
@@ -108,19 +198,23 @@ public static unsafe class ViewExperiment
     // The slot as the game had it.
     private static void Restore()
     {
-        if(_saved == null || _savedSlot < 0)
+        if(_usedSlot < 0)
             return;
         try
         {
-            var manager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
-            if(manager != null)
-                Marshal.Copy(_saved, 0, (nint)manager + 0x8 + _savedSlot * ViewSize, ViewSize);
+            nint views = Views(out var manager);
+            if(views != 0)
+            {
+                if(*(nint*)SlotCameraAt(views, _usedSlot) == _camera)
+                    *(nint*)SlotCameraAt(views, _usedSlot) = _savedCamera;
+                *(int*)CountAt(manager, _usedSlot) = _savedCount;
+            }
         }
         catch
         {
         }
-        _saved = null;
-        _savedSlot = -1;
+        _usedSlot = -1;
+        State = "";
     }
 
     // The camera of the first monitor that's on, or the first camera prop.
