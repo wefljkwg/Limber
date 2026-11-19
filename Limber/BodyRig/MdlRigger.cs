@@ -82,7 +82,7 @@ public static class MdlRigger
 
     private sealed class Mesh
     {
-        public int VertexCount, BoneTable, Material;
+        public int VertexCount, BoneTable, Material, SubmeshIndex, SubmeshCount;
         public uint IndexCount, StartIndex;
         public uint[] BufferOffset = new uint[3];
         public byte[] Stride = new byte[3];
@@ -109,6 +109,8 @@ public static class MdlRigger
         // values (where in the indices, the vertex that replaces the one there).
         public List<(string Name, ushort[] Start, ushort[] Count)> Shapes = new();
         public List<(uint IndexStart, uint ValueCount, uint ValueStart)> ShapeMeshes = new();
+        // Submeshes: where in the LoD's indices, how many, which attributes they need (bits of the model's attribute list).
+        public List<(uint IndexOffset, uint IndexCount, uint Attributes)> Submeshes = new();
         public List<(ushort Index, ushort Vertex)> ShapeValues = new();
     }
 
@@ -1343,6 +1345,60 @@ public static class MdlRigger
         return result;
     }
 
+    /// <summary>
+    /// One mesh's parts as the game shows or hides them: each submesh's stretch of the mesh's own index list (start, count)
+    /// and the attributes it needs (bits of the model's attribute list: hidden unless the model has all of them on).
+    /// </summary>
+    public static List<(int Start, int Count, uint Attributes)> MeshSubmeshes(byte[] file, int mesh)
+    {
+        var result = new List<(int, int, uint)>();
+        var m = Parse(file);
+        if (mesh >= m.Meshes.Count)
+            return result;
+        var me = m.Meshes[mesh];
+        for (int i = me.SubmeshIndex; i < me.SubmeshIndex + me.SubmeshCount && i < m.Submeshes.Count; i++)
+        {
+            var (offset, count, attributes) = m.Submeshes[i];
+            int start = (int)offset - (int)me.StartIndex;
+            if (start < 0 || start + count > me.IndexCount)
+                continue;
+            result.Add((start, (int)count, attributes));
+        }
+        return result;
+    }
+
+    /// <summary>As <see cref="MeshShapes"/>, with each shape's place in the model's shape list (its bit in the model's
+    /// enabled shape mask).</summary>
+    public static List<(int Shape, (int Index, int Vertex)[] Values)> MeshShapesIndexed(byte[] file, int lod, int mesh)
+    {
+        var result = new List<(int, (int, int)[])>();
+        var m = Parse(file);
+        if (lod >= m.LodCount || mesh >= m.Meshes.Count)
+            return result;
+        var me = m.Meshes[mesh];
+        for (int s = 0; s < m.Shapes.Count; s++)
+        {
+            var (_, start, count) = m.Shapes[s];
+            var values = new List<(int, int)>();
+            for (int k = start[lod]; k < start[lod] + count[lod] && k < m.ShapeMeshes.Count; k++)
+            {
+                var (indexStart, valueCount, valueStart) = m.ShapeMeshes[k];
+                if (indexStart != me.StartIndex)
+                    continue;
+                for (long v = valueStart; v < valueStart + valueCount && v < m.ShapeValues.Count; v++)
+                {
+                    var (index, vertex) = m.ShapeValues[(int)v];
+                    int local = index >= me.IndexCount ? index - (int)me.StartIndex : index;
+                    if (local >= 0 && local < me.IndexCount && vertex < me.VertexCount)
+                        values.Add((local, vertex));
+                }
+            }
+            if (values.Count > 0)
+                result.Add((s, values.ToArray()));
+        }
+        return result;
+    }
+
     /// <summary>One mesh's skinning (bone names, each vertex's 8 bone slots and weights) and triangles, for one LoD.</summary>
     /// <summary>(<paramref name="Stride"/>: entries per vertex in Indices / Weights; 8, except the live rig's full weights.)</summary>
     public sealed record MeshSkin(int Mesh, string[] Bones, byte[] Indices, float[] Weights, int Slots, ushort[] Triangles, int Stride = 8);
@@ -2044,8 +2100,8 @@ public static class MdlRigger
             r.ReadUInt16();
             mesh.IndexCount = r.ReadUInt32();
             mesh.Material = r.ReadUInt16();
-            r.ReadUInt16(); // submesh index
-            r.ReadUInt16(); // submesh count
+            mesh.SubmeshIndex = r.ReadUInt16();
+            mesh.SubmeshCount = r.ReadUInt16();
             mesh.BoneTable = r.ReadUInt16();
             mesh.StartIndex = r.ReadUInt32();
             for (int k = 0; k < 3; k++)
@@ -2057,8 +2113,15 @@ public static class MdlRigger
             m.Meshes.Add(mesh);
         }
 
-        r.BaseStream.Position += attributeCount * 4 + terrainShadowMeshCount * 20 + submeshCount * 16
-                                 + terrainShadowSubmeshCount * 12;
+        r.BaseStream.Position += attributeCount * 4 + terrainShadowMeshCount * 20;
+        for (int i = 0; i < submeshCount; i++)
+        {
+            long at = r.BaseStream.Position;
+            uint indexOffset = r.ReadUInt32(), indexCount = r.ReadUInt32(), attributes = r.ReadUInt32();
+            m.Submeshes.Add((indexOffset, indexCount, attributes));
+            r.BaseStream.Position = at + 16;
+        }
+        r.BaseStream.Position += terrainShadowSubmeshCount * 12;
         for (int i = 0; i < materialCount; i++)
             m.MaterialNames.Add(m.Strings.TryGetValue(r.ReadUInt32(), out var mat) ? mat : "");
         m.BoneNamesPos = (int)r.BaseStream.Position;
