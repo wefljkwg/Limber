@@ -970,8 +970,12 @@ public sealed unsafe class SoftBody
             // Turn (and stretch) the rest shape about the pivot to follow the swing: the ripple layer's goal.
             var restArm = restTip - pivot;
             float restLength = restArm.Length();
+            float keepPlace = Math.Clamp(s.KeepPosition, 0f, 1f), keepAngle = Math.Clamp(s.KeepRotation, 0f, 1f);
             void Goals(Vector3 swungTip)
             {
+                // Keep position: less of the swing; Keep rotation: what's left moves the part along instead of turning it.
+                swungTip = restTip + (swungTip - restTip) * (1f - keepPlace);
+                var slide = swungTip - restTip;
                 var nowArm = swungTip - pivot;
                 var turn = MathUtil.FromTo(restArm, nowArm);
                 float lengthen = restLength > 1e-5f ? Math.Clamp(nowArm.Length() / restLength, 1f - maxSquash, 1f + maxSquash) : 1f;
@@ -984,6 +988,8 @@ public sealed unsafe class SoftBody
                     float along = Vector3.Dot(q, axis);
                     q = axis * (along * lengthen) + (q - axis * along) * across;
                     var goal = pivot + q;
+                    if (keepAngle > 0f)
+                        goal = Vector3.Lerp(goal, breast.Target[i] + slide, keepAngle);
                     breast.Goal[i] = breast.Target[i] + (goal - breast.Target[i]) * Mobility[i];
                 }
             }

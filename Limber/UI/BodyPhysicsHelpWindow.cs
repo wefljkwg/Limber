@@ -52,7 +52,8 @@ public sealed class BodyPhysicsHelpWindow : Window
             "Physics: Firmness (how quickly it springs back), Bounce (how long it keeps bouncing), Weight (heavier swings " +
             "further and slower), Keep shape (1 keeps the model's own shape at rest), Jiggle (exaggerates the movement), " +
             "Cohesion (one piece, or more liquid), Max stretch (how far it can swing) and While moving (how much walking and " +
-            "running swing it: lower stops the flailing). Testicles also have Hang (fall with " +
+            "running swing it: lower stops the flailing), Keep position (how much it stays put instead of swinging) and Keep " +
+            "rotation (how much it keeps its angle, sliding instead of turning). Testicles also have Hang (fall with " +
             "real gravity in any pose) and One sac (both sides moving together).",
             "Shape: Size, Width, Height, Projection, Lift and Spacing on top of the model's own shape; Tilt out / in and " +
             "up / down; and five sections from the base to the tip, each with its own size and X / Y / Z position (breasts, " +

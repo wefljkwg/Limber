@@ -2171,6 +2171,10 @@ public sealed partial class LimberTab
         Slider("While moving##lmb_soft", soft.Moving, v => soft.Moving = v,
             "How much walking and running swing it (by how fast the character goes; standing still isn't changed). "
             + "0 = held still to the body, 1 = as simulated, 2 = more.", 0f, 2f);
+        Slider("Keep position##lmb_soft", soft.KeepPosition, v => soft.KeepPosition = v,
+            "How much it stays where it is instead of swinging (0 = swings as simulated, 1 = stays put; it still ripples).", 0f, 1f);
+        Slider("Keep rotation##lmb_soft", soft.KeepRotation, v => soft.KeepRotation = v,
+            "How much it keeps its angle (0 = turns with the swing, 1 = moves along with it without turning).", 0f, 1f);
         if(part == Limber.BodyRig.RigParts.Testicles)
         {
             Slider("Hang##lmb_soft", soft.Hang, v => soft.Hang = v,

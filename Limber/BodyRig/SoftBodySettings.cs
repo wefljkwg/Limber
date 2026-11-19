@@ -21,6 +21,10 @@ public sealed class SoftBodySettings
     // While walking or running (by how fast the character goes): how much the movement swings it. 0 = held still to
     // the body, 1 = as simulated, up to 2 = more. Standing still is never changed.
     public float Moving { get; set; } = 1f;
+    // How much the swing keeps the part where it is (0 = swings as simulated, 1 = stays put; it still ripples), and
+    // how much it keeps its angle (0 = turns with the swing, 1 = slides with it without turning).
+    public float KeepPosition { get; set; }
+    public float KeepRotation { get; set; }
     public bool Collisions { get; set; } = true;   // arms, hands, thighs, the floor, and other characters' hands
     // What it collides with and how (the Physics collisions page).
     public CollisionSettings Collide { get; set; } = new();
