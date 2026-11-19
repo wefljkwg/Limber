@@ -122,6 +122,9 @@ public static unsafe class EffectRenderer
     private static nint _looksBuf, _looksSrv;
     private static int _looksCap;
     private static nint _maskA, _maskARtv, _maskASrv, _maskB, _maskBRtv, _maskBSrv;
+    private static nint _ownDepth, _ownDsv, _depthOwn, _depthOwnR, _blendNoColour;
+    private static bool _reversed;
+    private static volatile bool[] _hidden = [];
     private static uint _maskW, _maskH;
     private static nint _srvClass;
 
@@ -157,6 +160,12 @@ public static unsafe class EffectRenderer
         Release(_sceneCopy);
         _psPixel = _sceneCopySrv = _sceneCopy = 0;
         _sceneW = _sceneH = _sceneFormat = 0;
+        Release(_ownDsv);
+        Release(_ownDepth);
+        Release(_depthOwn);
+        Release(_depthOwnR);
+        Release(_blendNoColour);
+        _ownDsv = _ownDepth = _depthOwn = _depthOwnR = _blendNoColour = 0;
         foreach(var o in new[] { _vsFull, _psMask, _psXray, _psLight, _psOutline, _cb, _maskCb, _blendAdd, _blendSolid, _blendWrite, _depthOff, _depthEqual, _rasterNone,
                      _looksSrv, _looksBuf, _maskARtv, _maskASrv, _maskA, _maskBRtv, _maskBSrv, _maskB })
             Release(o);
@@ -193,7 +202,7 @@ public static unsafe class EffectRenderer
         public Vector4 Cam;      // camera position, time
         public Vector4 Screen;   // w, h, 1/w, 1/h (the picture)
         public Vector4 Mask;     // the depth's drawn size (w, h), widest outline (pixels), pixelate block (pixels)
-        public Vector4 Right, Up; // the camera's
+        public Vector4 Right, Up; // the camera's (Up.w: 1 when depth runs far to near, 0 to 1 is far to near)
     }
 
     private const string Hlsl = @"
@@ -230,14 +239,24 @@ int VisibleLook(int2 p)
     int look = (int)round(a.x) - 1;
     if (look < 0) return -1;
     float d = SceneDepth.Load(int3(p, 0));
-    return abs(d - a.y) <= 2e-6 + abs(a.y) * 2e-4 ? look : -1;
+    // (hidden only where the game drew something nearer: with the body hidden, the scene behind it doesn't count)
+    float tol = 2e-6 + abs(a.y) * 2e-4;
+    bool covered = Up.w > 0.5 ? d > a.y + tol : d < a.y - tol;
+    return covered ? -1 : look;
+}
+
+// The character's own depth where it's marked (exact, and there even with its body hidden), else the scene's.
+float DepthAt(int2 p)
+{
+    float2 a = MaskA.Load(int3(p, 0));
+    return a.x > 0.5 ? a.y : SceneDepth.Load(int3(p, 0));
 }
 
 float3 WorldAt(int2 p)
 {
     p = clamp(p, 0, (int2)Mask.xy - 1);
     float2 uv = (p + 0.5) / Mask.xy;
-    float d = SceneDepth.Load(int3(p, 0));
+    float d = DepthAt(p);
     float4 w = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, d, 1), IVP);
     return w.xyz / w.w;
 }
@@ -761,6 +780,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         _blendAdd = MakeBlend(new RtBlend { BlendEnable = 1, Src = 2, Dest = 2, Op = 1, SrcAlpha = 1, DestAlpha = 2, OpAlpha = 1, WriteMask = 0x7 });
         _blendSolid = MakeBlend(new RtBlend { BlendEnable = 0, Src = 2, Dest = 1, Op = 1, SrcAlpha = 2, DestAlpha = 1, OpAlpha = 1, WriteMask = 0x7 });
         _blendWrite = MakeBlend(new RtBlend { BlendEnable = 0, Src = 2, Dest = 1, Op = 1, SrcAlpha = 2, DestAlpha = 1, OpAlpha = 1, WriteMask = 0xF });
+        _blendNoColour = MakeBlend(new RtBlend { BlendEnable = 0, Src = 2, Dest = 1, Op = 1, SrcAlpha = 2, DestAlpha = 1, OpAlpha = 1, WriteMask = 0 });
 
         nint MakeDepth(bool on, int func)
         {
@@ -774,6 +794,17 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         }
         _depthOff = MakeDepth(false, 8);
         _depthEqual = MakeDepth(true, 3);
+        // (Limber's own depth for a hidden body: nearest wins; 4 less or equal, 7 greater or equal for depth that runs backwards)
+        var dw = new DepthDesc
+        {
+            DepthEnable = 1, WriteMask = 1, Func = 4, StencilEnable = 0, StencilMasks = 0xFFFF,
+            Front = new StencilOp { Fail = 1, DepthFail = 1, Pass = 1, Func = 8 }, Back = new StencilOp { Fail = 1, DepthFail = 1, Pass = 1, Func = 8 },
+        };
+        nint dws = 0;
+        _depthOwn = Check(((delegate* unmanaged[Stdcall]<nint, DepthDesc*, nint*, int>)V(device, 21))(device, &dw, &dws), dws, "depth state");
+        dw.Func = 7;
+        nint dwr = 0;
+        _depthOwnR = Check(((delegate* unmanaged[Stdcall]<nint, DepthDesc*, nint*, int>)V(device, 21))(device, &dw, &dwr), dwr, "depth state");
 
         var r = new RasterDesc { Fill = 3, Cull = 1, DepthClip = 1 };
         nint rs = 0;
@@ -823,9 +854,9 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     {
         if(_maskARtv != 0 && _maskW == w && _maskH == h)
             return;
-        foreach(var o in new[] { _maskARtv, _maskASrv, _maskA, _maskBRtv, _maskBSrv, _maskB })
+        foreach(var o in new[] { _maskARtv, _maskASrv, _maskA, _maskBRtv, _maskBSrv, _maskB, _ownDsv, _ownDepth })
             Release(o);
-        _maskA = _maskARtv = _maskASrv = _maskB = _maskBRtv = _maskBSrv = 0;
+        _maskA = _maskARtv = _maskASrv = _maskB = _maskBRtv = _maskBSrv = _ownDsv = _ownDepth = 0;
         var device = Device();
         (nint Tex, nint Rtv, nint Srv) Make(uint format, string what)
         {
@@ -840,6 +871,11 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         }
         (_maskA, _maskARtv, _maskASrv) = Make(FormatR32G32F, "mask");
         (_maskB, _maskBRtv, _maskBSrv) = Make(FormatR8, "see-through mask");
+        var dd = new Texture2DDesc { Width = w, Height = h, MipLevels = 1, ArraySize = 1, Format = 40, SampleCount = 1, Usage = UsageDefault, BindFlags = 0x40 };
+        nint dt = 0;
+        _ownDepth = Check(((delegate* unmanaged[Stdcall]<nint, Texture2DDesc*, void*, nint*, int>)V(device, 5))(device, &dd, null, &dt), dt, "depth");
+        nint dv = 0;
+        _ownDsv = Check(((delegate* unmanaged[Stdcall]<nint, nint, void*, nint*, int>)V(device, 10))(device, _ownDepth, null, &dv), dv, "depth view");
         _maskW = w;
         _maskH = h;
         ClearMasks(Context());
@@ -854,6 +890,8 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             ((delegate* unmanaged[Stdcall]<nint, nint, float*, void>)V(c, 50))(c, _maskARtv, zero);
         if(_maskBRtv != 0)
             ((delegate* unmanaged[Stdcall]<nint, nint, float*, void>)V(c, 50))(c, _maskBRtv, zero);
+        if(_ownDsv != 0)
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, float, byte, void>)V(c, 53))(c, _ownDsv, 1, _reversed ? 0f : 1f, 0);
     }
 
     // ---- Which of the game's draws are the chosen characters' (by their own bone matrices) and which look each gets
@@ -963,6 +1001,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     private static readonly List<LookGpu> _looks = new();
     private static float _widest, _block;
     private static readonly List<FxGpu> _fx = new();
+    private static readonly List<bool> _hide = new();
 
     private static LookGpu ToGpu(ShaderLook l)
     {
@@ -983,6 +1022,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         var map = new Dictionary<nint, Entry>();
         var shared = new HashSet<nint>();
         _looks.Clear();
+        _hide.Clear();
         _fx.Clear();
         _widest = 0f;
         _block = 0f;
@@ -1018,6 +1058,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                 g.Extra.W = _fx.Count - fxFirst;
                 g.Origin = new Vector4(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z, 0f);
                 _looks.Add(g);
+                _hide.Add(l.HideBody);
                 if(l.GlowStrength > 0f)
                 {
                     var glow = l.Glow is { Length: >= 3 } gc ? new Vector3(gc[0], gc[1], gc[2]) : Vector3.One;
@@ -1026,6 +1067,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     sg.Light = new Vector4(mixed, sg.Light.W + l.GlowStrength);
                     skinOf[l.Part] = _looks.Count;
                     _looks.Add(sg);
+                    _hide.Add(l.HideBody);
                 }
                 _widest = MathF.Max(_widest, g.Outline.W);
                 _block = MathF.Max(_block, g.Extra.X);
@@ -1083,6 +1125,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         foreach(var view in shared)
             map.Remove(view);
         Views = map.Count;
+        _hidden = _hide.ToArray();
         _map = map;
         if(map.Count > 0)
             EnsureHooks();
@@ -1147,28 +1190,141 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
 
     private static void DrawIndexedDetour(nint ctx, uint count, uint start, int baseVertex)
     {
-        _drawIndexed!.Original(ctx, count, start, baseVertex);
+        int look = -1;
+        bool seeThrough = false, ours = false;
         try
         {
-            if(Which(ctx, start, out var look, out bool seeThrough))
-                Mark(ctx, look, seeThrough, () => _drawIndexed!.Original(ctx, count, start, baseVertex));
+            ours = Which(ctx, start, out look, out seeThrough);
+            // a hidden body: not drawn into the picture, only into Limber's depth and mask
+            if(ours && Hidden(look) && MarkHidden(ctx, look, seeThrough, () => _drawIndexed!.Original(ctx, count, start, baseVertex)))
+                return;
         }
         catch
         {
             // never stop the game drawing
         }
+        _drawIndexed!.Original(ctx, count, start, baseVertex);
+        if(!ours)
+            return;
+        try
+        {
+            Mark(ctx, look, seeThrough, () => _drawIndexed!.Original(ctx, count, start, baseVertex));
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool Hidden(int look)
+    {
+        var hidden = _hidden;
+        return look >= 0 && look < hidden.Length && hidden[look];
     }
 
     private static void DrawIndexedInstancedDetour(nint ctx, uint count, uint instances, uint start, int baseVertex, uint startInstance)
     {
-        _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance);
+        int look = -1;
+        bool seeThrough = false, ours = false;
         try
         {
-            if(Which(ctx, start, out var look, out bool seeThrough))
-                Mark(ctx, look, seeThrough, () => _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance));
+            ours = Which(ctx, start, out look, out seeThrough);
+            if(ours && Hidden(look) && MarkHidden(ctx, look, seeThrough, () => _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance)))
+                return;
         }
         catch
         {
+        }
+        _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance);
+        if(!ours)
+            return;
+        try
+        {
+            Mark(ctx, look, seeThrough, () => _drawIndexedInstanced!.Original(ctx, count, instances, start, baseVertex, startInstance));
+        }
+        catch
+        {
+        }
+    }
+
+    // A hidden body's draw (into the main picture only; false: not that, so the game draws it as usual): the game's own
+    // draw with no colour into Limber's depth (its own shader still cuts out see-through hair), then the mask against it.
+    private static bool MarkHidden(nint c, int look, bool seeThrough, Action draw)
+    {
+        if(_ownDsv == 0)
+            return false;
+        nint* rtvs = stackalloc nint[8];
+        nint dsv = 0;
+        ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint*, void>)V(c, 89))(c, 8, rtvs, &dsv);
+        bool main = false;
+        if(dsv != 0)
+        {
+            nint res = 0;
+            ((delegate* unmanaged[Stdcall]<nint, nint*, void>)V(dsv, 7))(dsv, &res);
+            main = res != 0 && res == _mainDepth;
+            Release(res);
+        }
+        if(!main)
+        {
+            for(int i = 0; i < 8; i++)
+                Release(rtvs[i]);
+            Release(dsv);
+            return false;
+        }
+        nint blend = 0, depth = 0, ps = 0, psCb = 0;
+        float* factor = stackalloc float[4];
+        uint sampleMask = 0, stencilRef = 0, classes = 0;
+        ((delegate* unmanaged[Stdcall]<nint, nint*, float*, uint*, void>)V(c, 91))(c, &blend, factor, &sampleMask);
+        ((delegate* unmanaged[Stdcall]<nint, nint*, uint*, void>)V(c, 92))(c, &depth, &stencilRef);
+        ((delegate* unmanaged[Stdcall]<nint, nint*, nint*, uint*, void>)V(c, 74))(c, &ps, null, &classes);
+        ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 77))(c, 1, 1, &psCb);
+        try
+        {
+            float* none = stackalloc float[4];
+            // 1. its depth, with the game's own shaders (no colour anywhere)
+            ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint, void>)V(c, 33))(c, 0, null, _ownDsv);
+            ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendNoColour, none, 0xFFFFFFFF);
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 36))(c, _reversed ? _depthOwnR : _depthOwn, 0);
+            draw();
+
+            // 2. the mask where that depth is this draw
+            Mapped m;
+            if(((delegate* unmanaged[Stdcall]<nint, nint, uint, uint, uint, Mapped*, int>)V(c, 14))(c, _maskCb, 0, 4, 0, &m) < 0)
+                return true;
+            *(Vector4*)m.Data = new Vector4(look + 1, 0, 0, 0);
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 15))(c, _maskCb, 0);
+            nint mcb = _maskCb;
+            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 16))(c, 1, 1, &mcb);
+            ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendWrite, none, 0xFFFFFFFF);
+            nint rt = _maskARtv;
+            ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint, void>)V(c, 33))(c, 1, &rt, _ownDsv);
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 36))(c, _depthEqual, 0);
+            ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psMask, null, 0);
+            draw();
+            if(seeThrough)
+            {
+                rt = _maskBRtv;
+                ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint, void>)V(c, 33))(c, 1, &rt, 0);
+                ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 36))(c, _depthOff, 0);
+                ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psXray, null, 0);
+                draw();
+            }
+            _marked++;
+            return true;
+        }
+        finally
+        {
+            ((delegate* unmanaged[Stdcall]<nint, uint, nint*, nint, void>)V(c, 33))(c, 8, rtvs, dsv);
+            ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, blend, factor, sampleMask);
+            ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 36))(c, depth, stencilRef);
+            ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, ps, null, 0);
+            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 16))(c, 1, 1, &psCb);
+            for(int i = 0; i < 8; i++)
+                Release(rtvs[i]);
+            Release(dsv);
+            Release(blend);
+            Release(depth);
+            Release(ps);
+            Release(psCb);
         }
     }
 
@@ -1397,6 +1553,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                 _error = "the game's depth can't be read (multisampled)";
                 return;
             }
+            _reversed = DepthRunsBackwards();
             bool sameSize = _maskW == dd.Width && _maskH == dd.Height;
             EnsureMasks(dd.Width, dd.Height);
             var looks = _looks.ToArray();
@@ -1569,6 +1726,32 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 6, none);
     }
 
+    // Whether the game's depth goes from 1 near to 0 far (most modern games), from its camera.
+    private static bool DepthRunsBackwards()
+    {
+        var control = FFXIVClientStructs.FFXIV.Client.Game.Control.Control.Instance();
+        if(control == null)
+            return _reversed;
+        var vp = control->ViewProjectionMatrix;
+        if(!Matrix4x4.Invert(vp, out var ivp))
+            return _reversed;
+        var ch = Vector4.Transform(new Vector4(0, 0, 1, 0), ivp);
+        var mid = Vector4.Transform(new Vector4(0, 0, 0.5f, 1), ivp);
+        if(MathF.Abs(ch.W) < 1e-12f || MathF.Abs(mid.W) < 1e-12f)
+            return _reversed;
+        var cam = new Vector3(ch.X, ch.Y, ch.Z) / ch.W;
+        var fwd = new Vector3(mid.X, mid.Y, mid.Z) / mid.W - cam;
+        if(fwd.LengthSquared() < 1e-12f)
+            return _reversed;
+        fwd = Vector3.Normalize(fwd);
+        float Z(Vector3 at)
+        {
+            var c = Vector4.Transform(new Vector4(at, 1), vp);
+            return MathF.Abs(c.W) < 1e-8f ? 0f : c.Z / c.W;
+        }
+        return Z(cam + fwd * 50f) < Z(cam + fwd * 1f);
+    }
+
     private static Constants? MakeConstants(uint w, uint h, uint maskW, uint maskH, int looks)
     {
         var control = FFXIVClientStructs.FFXIV.Client.Game.Control.Control.Instance();
@@ -1600,7 +1783,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             Screen = new Vector4(w, h, 1f / w, 1f / h),
             Mask = new Vector4(maskW, maskH, _widest, _block),
             Right = new Vector4(right, 0f),
-            Up = new Vector4(up, 0f),
+            Up = new Vector4(up, _reversed ? 1f : 0f),
         };
     }
 }

@@ -177,6 +177,9 @@ public sealed class ShadersTab
         bool see = look.SeeThrough;
         if(ImGui.Checkbox("See through walls###sh_fx_see", ref see)) { look.SeeThrough = see; changed = true; }
         Tooltip("Where something's in front of them, a faint silhouette in the rim's colour still shows.");
+        bool hide = look.HideBody;
+        if(ImGui.Checkbox("Hide their body (effects only)###sh_fx_hide", ref hide)) { look.HideBody = hide; changed = true; }
+        Tooltip("Their body (this part) isn't drawn, only the effects on it: the material effects then work on what's behind them, so Glass and Slime show the room through them, Heat haze bends it, and so on. Their shadow stays.");
         changed |= DrawFx(look);
         if(look.HasEffects() && look.Enabled)
             ImGui.TextDisabled($"Marking {Limber.Gpu.EffectRenderer.Drawn} of the game's draws ({Limber.Gpu.EffectRenderer.Views} bone buffers found)");
@@ -195,7 +198,7 @@ public sealed class ShadersTab
             look.Shine = 1f; look.Reflection = 1f; look.Bumps = 1f; look.Shader = "";
             look.Light = fresh.Light; look.LightStrength = 0f; look.Pulse = 0f; look.Rim = fresh.Rim; look.RimStrength = 0f;
             look.RimTightness = fresh.RimTightness; look.Outline = fresh.Outline; look.OutlineWidth = 0f; look.SeeThrough = false;
-            look.Pixelate = 0f; look.GameBoy = false; look.Fx = new();
+            look.Pixelate = 0f; look.GameBoy = false; look.Fx = new(); look.HideBody = false;
             changed = true;
         }
         return changed;
@@ -340,7 +343,7 @@ public sealed class ShadersTab
                     picked.Shine = l.Shine; picked.Reflection = l.Reflection; picked.Bumps = l.Bumps; picked.Shader = l.Shader;
                     picked.Light = l.Light; picked.LightStrength = l.LightStrength; picked.Pulse = l.Pulse; picked.Rim = l.Rim;
                     picked.RimStrength = l.RimStrength; picked.RimTightness = l.RimTightness; picked.Outline = l.Outline;
-                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough; picked.Pixelate = l.Pixelate; picked.GameBoy = l.GameBoy; picked.Fx = l.Fx;
+                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough; picked.Pixelate = l.Pixelate; picked.GameBoy = l.GameBoy; picked.Fx = l.Fx; picked.HideBody = l.HideBody;
                     _config.Save();
                     _status = $"Loaded \"{p.Name}\" onto {picked.Character}.";
                 }
