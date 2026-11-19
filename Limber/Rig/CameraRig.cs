@@ -140,6 +140,7 @@ public static unsafe class CameraRig
     /// </summary>
     public static unsafe void ApplyView()
     {
+        Limber.Gpu.ViewExperiment.Apply();
         if(_pending is not { } pending)
             return;
         _pending = null;

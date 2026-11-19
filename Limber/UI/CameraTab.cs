@@ -427,6 +427,28 @@ public sealed class CameraTab
             mons.Remove(dropMon);
             save = true;
         }
+        ImGui.Separator();
+        ImGui.TextUnformatted("Live screens research (experiment)");
+        var exOn = Limber.Gpu.ViewExperiment.On;
+        if(ImGui.Checkbox("Draw the world a second time from a camera prop (may crash the game)###cam_rig_ex", ref exOn))
+        {
+            Limber.Gpu.ViewExperiment.On = exOn;
+            Limber.Gpu.ViewExperiment.StartCounting();
+        }
+        Tooltip("Copies the game's own world view into an unused view slot that the game draws just before it, with a camera at the first monitor's camera prop (or the first camera prop). Turn \"Monitors on\" off while testing. Save anything first: a wrong setup can crash the game.");
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        var exSlot = Limber.Gpu.ViewExperiment.Slot;
+        if(ImGui.SliderInt("Slot###cam_rig_ex_slot", ref exSlot, 26, 29))
+            Limber.Gpu.ViewExperiment.Slot = exSlot;
+        Tooltip("Which unused view slot gets the copy (26 to 29 are drawn just before the game's own, 30).");
+        ImGui.SameLine();
+        if(ImGui.SmallButton("Record one frame's clears###cam_rig_ex_rec"))
+            Limber.Gpu.ViewExperiment.RecordOneFrame();
+        Tooltip("Lists every render target and depth buffer the game clears in one frame into the box below (try it with the experiment off, then on).");
+        if(Limber.Gpu.ViewExperiment.Counting)
+            ImGui.TextUnformatted($"Per frame: {Limber.Gpu.ViewExperiment.TargetClears:0.0} target clears, {Limber.Gpu.ViewExperiment.DepthClears:0.0} depth clears ({Limber.Gpu.ViewExperiment.MainDepthClears:0.0} of the main depth), {Limber.Gpu.ViewExperiment.FrameMs:0.0} ms a frame; set up {Limber.Gpu.ViewExperiment.Applied} times");
+        if(Limber.Gpu.ViewExperiment.Error.Length > 0)
+            ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Experiment: " + Limber.Gpu.ViewExperiment.Error);
         if(ImGui.SmallButton("Research: list the game's views (to the log)###cam_rig_views"))
             CameraRig.DumpViews();
         Tooltip("For finding a way to draw the screens live: writes the game's render views (which are drawn, with which cameras) to the Dalamud log.");
