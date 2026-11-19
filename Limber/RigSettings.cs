@@ -211,6 +211,9 @@ public sealed class RigSettings
     /// <summary>Global presets (everything for one character) and the rules that put them on characters by themselves.</summary>
     public List<Limber.Rig.GlobalPreset> GlobalPresets { get; set; } = new();
     public List<Limber.Rig.GlobalPresetRule> GlobalPresetRules { get; set; } = new();
+    /// <summary>Scene > Shaders: each character's shader looks, and saved ones.</summary>
+    public List<Limber.Rig.ShaderLook> ShaderLooks { get; set; } = new();
+    public List<Limber.Rig.ShaderPreset> ShaderPresets { get; set; } = new();
     /// <summary>Favourites: list (housing, world, animations) -> the items' keys.</summary>
     public Dictionary<string, HashSet<string>> Favorites { get; set; } = new();
     /// <summary>The camera moved off its place: sideways (+ right), up, forward (metres, the way it looks).</summary>

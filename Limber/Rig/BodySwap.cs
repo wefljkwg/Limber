@@ -477,6 +477,20 @@ public static unsafe class BodySwap
     private static string _hookProblem = "";
     private static object? _creating, _created;
 
+    /// <summary>The character the draw object being made right now is for (the mod manager says so), or 0.</summary>
+    internal static nint CreatingFor => _creatingFor;
+
+    /// <summary>The material / model lookups hooked (from a human's draw object), for Scene > Shaders too.</summary>
+    internal static void EnsureHooks(nint drawObject)
+    {
+        if(_hooked || drawObject == 0)
+            return;
+        var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)drawObject;
+        if(cb->GetModelType() != FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase.ModelType.Human)
+            return;
+        Hook(drawObject);
+    }
+
     private static bool Hook(nint drawObject)
     {
         if(_hooked)
@@ -504,9 +518,10 @@ public static unsafe class BodySwap
             // body decals aren't asked as the other race; the gear's own materials are)
             // (a body of the other gender takes its own skin material: only its own fits it - another race's or gender's
             // skin comes out glitched. The skin's colour is the character's own either way: see KeepColours.)
-            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) =>
-                TintSkin(h, b, n, i, IsSkin(m), BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m))));
-            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => TintSkin(h, b, n, i, true, _skinMtrl!.Original(h, b, n, i)));
+            // (Scene > Shaders answers a character's material lookups with its own copies too)
+            _mtrl = gi.HookFromAddress<PathByIndexName>(F(90), (h, b, n, i, m) => Shaders.Redirect(h, b, n, i, IsSkin(m),
+                TintSkin(h, b, n, i, IsSkin(m), BodySlotCall(h, i, !IsSkin(m) || OtherSex(h), () => _mtrl!.Original(h, b, n, i, m)))));
+            _skinMtrl = gi.HookFromAddress<PathByIndex>(F(91), (h, b, n, i) => Shaders.Redirect(h, b, n, i, true, TintSkin(h, b, n, i, true, _skinMtrl!.Original(h, b, n, i))));
             _decal = gi.HookFromAddress<PathByIndex>(F(92), (h, b, n, i) => _decal!.Original(h, b, n, i));
             _deformer = gi.HookFromAddress<CreateDeformerDelegate>(F(101), (h, s) => BodySlotCall(h, s, true, () => _deformer!.Original(h, s)));
             _race = gi.HookFromAddress<RaceDelegate>(F(88), RaceDetour);

@@ -70,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Limber.Rig.HideMounts _hideMounts = new();
     private readonly Limber.Rig.ClimaxService _climax;
     private readonly Limber.Rig.SkinEffectsService _skinEffects;
+    private readonly Limber.Rig.Shaders _shaders;
     private readonly Limber.Rig.SteamService _steam;
     private readonly Limber.Rig.EngineLayerService _engineLayer;
     private readonly Limber.Rig.LimberPoses _limberPoses = new();
@@ -144,6 +145,7 @@ public sealed class Plugin : IDalamudPlugin
             foreach(var s in (_config.Ik.SkinEffects ??= new()).Values) s.Enabled = false;
             (_config.Ik.EngineLayer ??= new()).Enabled = false;
             _skinEffects = new Limber.Rig.SkinEffectsService(ObjectTable, () => _config.Ik.SkinEffects ??= new(), () => _config.PluginEnabled && _config.Ik.SkinEffectsHook);
+            _shaders = new Limber.Rig.Shaders(ObjectTable, () => _config.Ik.ShaderLooks ??= new());
             _steam = new Limber.Rig.SteamService(ObjectTable, () => _config.Ik.SkinEffects ??= new());
             _engineLayer = new Limber.Rig.EngineLayerService(() => _config.Ik.EngineLayer ??= new());
             Limber.Rig.WorldCollision.Settings = () => _config.Ik.WorldCollision ??= new();
@@ -431,6 +433,7 @@ public sealed class Plugin : IDalamudPlugin
             _mainWindow.EffectsTab = new EffectsTab(_effects, _selection);
             _mainWindow.ClimaxTab = new ClimaxTab(_climax, _selection, _config.Ik) { Housing = _housing };
             _mainWindow.SkinEffectsTab = new SkinEffectsTab(_selection, _config.Ik, _skinEffects);
+            _mainWindow.ShadersTab = new ShadersTab(_selection, _config.Ik, _shaders);
             _mainWindow.EngineLayerTab = new EngineLayerTab(_selection, _config.Ik, _engineLayer);
             _mainWindow.LimberAnimationsTab.BallThrob = _ballThrob;
             _mainWindow.LookAtTab = new LookAtTab(_selection, _config.Ik, _lookAt);
@@ -767,6 +770,7 @@ public sealed class Plugin : IDalamudPlugin
             try
             {
                 _skinEffects.Update(here, framework.UpdateDelta.TotalSeconds);
+                _shaders.Update(here && _config.PluginEnabled);
                 _steam.Update(here && _config.PluginEnabled, framework.UpdateDelta.TotalSeconds);
                 _engineLayer.Update(here && _config.ShowEngineLayerTab, framework.UpdateDelta.TotalSeconds, _selection.Actor.IsSet ? _selection.Actor.Address : 0);
             }
@@ -1317,6 +1321,7 @@ public sealed class Plugin : IDalamudPlugin
         CameraControl.Dispose();
         try { VoiceSwitcher.ResetAll(); } catch { }
         try { _engineLayer.Detach(); } catch { } // (off the character's animation list before Limber goes)
+        try { _shaders.Dispose(); } catch { } // (everyone with a shader look drawn again without it)
         try { _skinEffects.Dispose(); } catch { } // (skin colour and eyes put back; the wetness hook removed)
         try { ActorVisibility.ShowAll(); } catch { } // (nobody stays invisible after Limber goes)
         try { BodySwap.ClearBodySwaps(); } catch { } // (the body-only swaps taken out of the mod manager)
