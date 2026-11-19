@@ -293,7 +293,11 @@ public static class MdlRigger
                                     used.Add((gridBack ? layer : layer - 1) * side.Rows * side.Columns + row * side.Columns + col);
                         }
                         if (used.Count == 0)
+                        {
+                            if (lod == 0 && !side.Optional)
+                                log.Add($"mesh {mi}: {side.Bones[0][..^3]}: no vertex on {string.Join("/", (side.Merge ? usedSources : usedSources.Take(1)))} near its box");
                             continue;
+                        }
                         needed = used.Where(i => i < side.Bones.Length).Select(i => side.Bones[i]).ToList();
                     }
 
@@ -558,6 +562,8 @@ public static class MdlRigger
                     }
                     if (changed > 0)
                         log.Add($"mesh {mi}: {changed} vertices on {side.Bones[0][..^3]}");
+                    else if (lod == 0 && !side.Optional)
+                        log.Add($"mesh {mi}: {side.Bones[0][..^3]}: nothing weighted (its source bones: {string.Join("/", source.Select(k => k < table.Count && table[k] < bones.Count ? bones[table[k]] : "?").Where(n => !RigParts.IsRigBone(n)))}; parent {side.Parent})");
                     total += changed;
                 }
 
