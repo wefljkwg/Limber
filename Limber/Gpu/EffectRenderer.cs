@@ -715,6 +715,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
     }
 
     private static readonly Dictionary<nint, Binds> BindsOf = new();
+    private static readonly HashSet<(string, uint, uint)> Reported = new();
     private static readonly SkeletonInfoCache Cache = new();
 
     private static Binds? ReadBinds(nint model, in ActorSkeleton sk, long now)
@@ -902,6 +903,9 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 var rm = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model*)model;
                 uint attributes = SafeMemory.Read<uint>((nint)(&rm->EnabledAttributeIndexMask), uint.MaxValue);
                 uint shapes = SafeMemory.Read<uint>((nint)(&rm->EnabledShapeKeyIndexMask), 0u);
+                if(Reported.Add((file, attributes, shapes)))
+                    Plugin.Log.Information($"Limber: effects on {file}: attributes {attributes:X8}, shape keys {shapes:X8}; "
+                        + string.Join(", ", data.Meshes.Select((m, i) => $"mesh {i}: {m.Subs.Count} parts ({string.Join("/", m.Subs.Select(x => $"{x.Attributes:X}"))}), {m.Shapes.Count} shapes, {m.Tris(attributes, shapes).Length / 3} of {m.Raw.Length / 3} triangles")));
                 foreach(var mesh in data.Meshes)
                 {
                     var meshTris = mesh.Tris(attributes, shapes);
