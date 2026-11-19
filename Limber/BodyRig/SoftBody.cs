@@ -92,6 +92,7 @@ public sealed unsafe class SoftBody
         public long LastTicks;
         public Vector3 LastRoot;
         public float MoveSpeed; // how fast the character goes (eased), m/s
+        public readonly Dictionary<int, (Vector3 P, Quaternion R)> HeldLocal = new(); // the mod's bones under their parents, smoothed
         public int SeenFrame;
         public Vector3 SacShift; // testicles: how far the whole sac is moved out of the way of props (eased)
     }
@@ -691,26 +692,51 @@ public sealed unsafe class SoftBody
         // The bone a part hangs from as the body holds it: with the body mod's own jiggle ignored, where it sits at rest
         // under its own parent (the chest, the pelvis) as posed now; else where it is (its physics included).
         bool still = s.IgnoreModJiggle && !_part.Region;
-        static Frame HeldFrame(in RigSkeleton sk, int bone, bool still)
+        // (the bone's place under its parent, smoothed over about half a second: the game's quick jiggle taken out, but
+        // where the pose and Body Shape put it (lifted, apart, turned) kept; the bone itself is put there too, so the
+        // skin still on it, where the part fades into the body and under the butt's crease, stays with the part)
+        if (still)
         {
-            var f = sk.GetModelFrame(bone);
-            if (!still)
-                return f;
-            int up = sk.ParentOf(bone);
-            if (up < 0 || !sk.TryGetReferenceLocal(bone, out var lp, out var lr))
-                return f;
-            var pf = sk.GetModelFrame(up);
-            var ps = sk.GetModelScale(up);
-            var at = pf.Position + Vector3.Transform(ps * lp, pf.Rotation);
-            var turn = Quaternion.Normalize(pf.Rotation * lr);
-            return MathUtil.IsFinite(at) && float.IsFinite(turn.W) ? new Frame(at, turn) : f;
+            var held = new HashSet<int>();
+            foreach (var b in new[] { state.Left, state.Right })
+            {
+                held.Add(b.Parents[0]);
+                if (b.NippleBone >= 0)
+                    held.Add(b.NippleParent);
+            }
+            bool fresh = dt <= 0f || dt > 0.25f;
+            float ease = dt > 1e-4f ? 1f - MathF.Exp(-dt / 0.45f) : 0f;
+            foreach (int bone in held)
+            {
+                int up = bone >= 0 ? skeleton.ParentOf(bone) : -1;
+                if (up < 0)
+                    continue;
+                var pf = skeleton.GetModelFrame(up);
+                var ps = skeleton.GetModelScale(up);
+                var f = skeleton.GetModelFrame(bone);
+                var inv = Quaternion.Inverse(pf.Rotation);
+                var safe = new Vector3(MathF.Abs(ps.X) > 1e-4f ? ps.X : 1f, MathF.Abs(ps.Y) > 1e-4f ? ps.Y : 1f, MathF.Abs(ps.Z) > 1e-4f ? ps.Z : 1f);
+                var lp = Vector3.Transform(f.Position - pf.Position, inv) / safe;
+                var lr = Quaternion.Normalize(inv * f.Rotation);
+                if (!MathUtil.IsFinite(lp) || !float.IsFinite(lr.W))
+                    continue;
+                if (fresh || !state.HeldLocal.TryGetValue(bone, out var was))
+                    was = (lp, lr);
+                else
+                    was = (Vector3.Lerp(was.P, lp, ease), Quaternion.Normalize(Quaternion.Slerp(was.R, lr, ease)));
+                state.HeldLocal[bone] = was;
+                skeleton.SetModelPosition(bone, pf.Position + Vector3.Transform(was.P * ps, pf.Rotation));
+                skeleton.SetModelRotation(bone, Quaternion.Normalize(pf.Rotation * was.R));
+            }
         }
-        // Where the body puts every grid point this frame: its rest spot under the breast bone as posed now.
+        else
+            state.HeldLocal.Clear();
+                // Where the body puts every grid point this frame: its rest spot under the breast bone as posed now.
         foreach (var b in new[] { state.Left, state.Right })
         {
             for (int i = 0; i < Side; i++)
             {
-                var parent = HeldFrame(skeleton, b.Parents[i], still);
+                var parent = skeleton.GetModelFrame(b.Parents[i]);
                 var scale = skeleton.GetModelScale(b.Parents[i]);
                 var model = parent.Position + Vector3.Transform(scale * b.RestLocal[i], parent.Rotation);
                 if (spineRatio != Vector3.One)
@@ -725,10 +751,10 @@ public sealed unsafe class SoftBody
                 b.Target[i] = skeleton.ModelToWorldPoint(model);
                 b.RestTarget[i] = b.Target[i];
             }
-            b.Origin = skeleton.ModelToWorldPoint(HeldFrame(skeleton, b.Parents[0], still).Position);
+            b.Origin = skeleton.ModelToWorldPoint(skeleton.GetModelFrame(b.Parents[0]).Position);
             if (b.NippleBone >= 0)
             {
-                var parent = HeldFrame(skeleton, b.NippleParent, still);
+                var parent = skeleton.GetModelFrame(b.NippleParent);
                 var scale = skeleton.GetModelScale(b.NippleParent);
                 b.NippleRest = skeleton.ModelToWorldPoint(parent.Position + Vector3.Transform(scale * b.NippleRestLocal, parent.Rotation));
             }
