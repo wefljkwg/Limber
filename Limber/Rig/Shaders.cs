@@ -234,19 +234,65 @@ public sealed unsafe class Shaders : IDisposable
         var colour = new[] { t[0] * bright, t[1] * bright, t[2] * bright };
         if (colour.Any(c => MathF.Abs(c - 1f) > 1e-4f))
             b = Scale(b, DiffuseColor, colour, 1f);
-        if (look.GlowStrength > 1e-4f)
+        var glowColour = look.Glow ?? [1f, 1f, 1f];
+        float glow = Math.Clamp(look.GlowStrength, 0f, 20f);
+        float shine = Math.Clamp(look.Shine, 0f, 20f);
+        // Gear (the character shaders) takes its shine and glow from its colour table, row by row, not from the
+        // material's settings: changed there. The others (hair, skin, eyes...) from their settings.
+        bool table = ColourTable(b, out int at, out int rows, out int stride);
+        if (table)
         {
-            var g = look.Glow ?? [1f, 1f, 1f];
-            float s = Math.Clamp(look.GlowStrength, 0f, 20f);
-            b = Limber.Koi.Props.MtrlBuilder.SetConstant(b, EmissiveColor, [g[0] * s, g[1] * s, g[2] * s]);
+            b = (byte[])b.Clone();
+            for (int r = 0; r < rows; r++)
+            {
+                int row = at + r * stride * 2;
+                if (MathF.Abs(shine - 1f) > 1e-4f)
+                    for (int k = 4; k < 7; k++)
+                        PutHalf(b, row + k * 2, GetHalf(b, row + k * 2) * shine);
+                if (glow > 1e-4f)
+                    for (int k = 8; k < 11; k++)
+                        PutHalf(b, row + k * 2, GetHalf(b, row + k * 2) + glowColour[k - 8] * glow);
+            }
         }
-        if (MathF.Abs(look.Shine - 1f) > 1e-4f)
-            b = Scale(b, SpecularColor, [look.Shine, look.Shine, look.Shine], 1f);
+        else
+        {
+            if (glow > 1e-4f)
+                b = Limber.Koi.Props.MtrlBuilder.SetConstant(b, EmissiveColor, [glowColour[0] * glow, glowColour[1] * glow, glowColour[2] * glow]);
+            if (MathF.Abs(shine - 1f) > 1e-4f)
+                b = Scale(b, SpecularColor, [shine, shine, shine], 1f);
+        }
         if (MathF.Abs(look.Reflection - 1f) > 1e-4f)
             b = Scale(b, EnvMapPower, [look.Reflection], 1f);
         if (MathF.Abs(look.Bumps - 1f) > 1e-4f)
             b = Scale(b, NormalScale, [look.Bumps], 1f);
         return b;
+    }
+
+    // The material's colour table: where it starts, how many rows, how many half floats a row (Dawntrail's 32 rows of 32,
+    // the older 16 of 16). False if it has none.
+    private static bool ColourTable(byte[] b, out int at, out int rows, out int stride)
+    {
+        at = rows = stride = 0;
+        if (b.Length < 16)
+            return false;
+        int texCount = b[12], uv = b[13], cs = b[14], additional = b[15];
+        int dataSet = BitConverter.ToUInt16(b, 6), stringSize = BitConverter.ToUInt16(b, 8);
+        at = 16 + 4 * (texCount + uv + cs) + stringSize + additional;
+        if (dataSet >= 2048)
+            (rows, stride) = (32, 32);
+        else if (dataSet >= 512)
+            (rows, stride) = (16, 16);
+        else
+            return false;
+        return at + rows * stride * 2 <= b.Length;
+    }
+
+    private static float GetHalf(byte[] b, int at) => (float)BitConverter.ToHalf(b, at);
+
+    private static void PutHalf(byte[] b, int at, float value)
+    {
+        if (float.IsFinite(value))
+            BitConverter.TryWriteBytes(b.AsSpan(at, 2), (Half)Math.Clamp(value, -60000f, 60000f));
     }
 
     // A constant multiplied by the factors (set to them times the default when the material hasn't got it).
