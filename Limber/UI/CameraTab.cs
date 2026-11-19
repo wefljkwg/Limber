@@ -270,8 +270,7 @@ public sealed class CameraTab
         float refresh = _config.MonitorRefresh;
         ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(160f * ImGuiHelpers.GlobalScale));
         if(ImGui.SliderFloat("Refresh###cam_rig_hz", ref refresh, 0.5f, 30f, "%.1f / s", ImGuiSliderFlags.Logarithmic)) { _config.MonitorRefresh = refresh; save = true; }
-        Tooltip("How many new pictures a second each camera's screens get. Each one is a frame the game shows twice, so keep it low (3-8) for smooth play.
-"
+        Tooltip("How many new pictures a second each camera's screens get. Each one is a frame the game shows twice, so keep it low (3-8) for smooth play.\n"
             + "With DLSS / FSR the frame after a picture can smear a little: plain anti-aliasing avoids that.");
         bool show = _config.ShowCameraProps, always = _config.ShowCameraPropsAlways;
         if(ImGui.Checkbox("Show the cameras###cam_rig_show", ref show)) { _config.ShowCameraProps = show; save = true; }
