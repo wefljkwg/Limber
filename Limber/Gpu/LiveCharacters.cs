@@ -36,6 +36,19 @@ public static unsafe class LiveCharacters
         public Matrix4x4 View;
         public float Zoom = 1f;
         public int Camera;
+        public Matrix4x4 Proj;
+        public bool HasProj;
+    }
+
+    // The projection the live camera's room picture was taken with (set on that frame, CameraRig.ApplyView): the
+    // characters use the same, so the game camera's zoom / field of view doesn't change them.
+    private static Matrix4x4 _roomProj;
+    private static int _roomProjCamera = -1;
+
+    public static void NoteRoomProjection(int camera, Matrix4x4 proj)
+    {
+        _roomProj = proj;
+        _roomProjCamera = camera;
     }
 
     private static volatile Prop? _prop;
@@ -76,7 +89,7 @@ public static unsafe class LiveCharacters
             var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
             if(cam.FoV > 1f && cm != null && cm->CurrentCamera != null && cm->CurrentCamera->RenderCamera != null && cm->CurrentCamera->RenderCamera->FoV > 0.01f)
                 zoom = MathF.Tan(cm->CurrentCamera->RenderCamera->FoV * 0.5f) / MathF.Tan(cam.FoV * MathF.PI / 360f);
-            _prop = new Prop { View = view, Zoom = zoom, Camera = index };
+            _prop = new Prop { View = view, Zoom = zoom, Camera = index, Proj = _roomProj, HasProj = _roomProjCamera == index };
         }
         // the characters: the player and the ones close by
         var list = new List<(nint, ushort)>();
@@ -185,7 +198,8 @@ public static unsafe class LiveCharacters
     private const int MaxTargets = 8;
     private static readonly nint[] Tex = new nint[MaxTargets], Rtv = new nint[MaxTargets], Srv = new nint[MaxTargets];
     private static readonly uint[] TexW = new uint[MaxTargets], TexH = new uint[MaxTargets], TexF = new uint[MaxTargets];
-    private static nint _bgDepth, _workDepth, _workDsv;
+    private static nint _bgDepth, _workDepth, _workDsv, _workSrv;
+    private static Matrix4x4 _shadeProj;
     private static uint _depthW, _depthH, _depthF;
     private static bool _hasBackground;
     private static int _bgCamera = -1;
@@ -385,9 +399,10 @@ public static unsafe class LiveCharacters
         Release(dres);
         if(_workDepth != 0 && _depthW == dd.Width && _depthH == dd.Height && _depthF == dd.Format)
             return true;
+        Release(_workSrv);
         Release(_workDsv);
         Release(_workDepth);
-        _workDsv = _workDepth = 0;
+        _workSrv = _workDsv = _workDepth = 0;
         var wd = dd;
         wd.MipLevels = 1;
         wd.ArraySize = 1;
@@ -411,6 +426,15 @@ public static unsafe class LiveCharacters
             return false;
         }
         _workDsv = dv;
+        // (a view of it to shade from: the depth as a number)
+        uint readable = dd.Format switch { 44 or 45 => 46, 39 or 40 => 41, 19 or 20 => 21, 53 or 55 => 56, _ => 0 };
+        if(readable != 0 && (wd.BindFlags & 0x8) != 0)
+        {
+            uint* sd = stackalloc uint[6] { readable, 4, 0, 1, 0, 0 };
+            nint sv = 0;
+            if(((delegate* unmanaged[Stdcall]<nint, nint, void*, nint*, int>)V(device, 7))(device, w, sd, &sv) >= 0)
+                _workSrv = sv;
+        }
         _depthW = dd.Width;
         _depthH = dd.Height;
         _depthF = dd.Format;
@@ -530,7 +554,11 @@ public static unsafe class LiveCharacters
         _lastFrameView = mv;
         if(!Matrix4x4.Invert(mv, out var back))
             return;
-        var m = back * _propView * _propProj;
+        var prop = _prop;
+        var proj = prop is { HasProj: true } ? prop.Proj : _propProj;
+        var view = prop?.View ?? _propView;
+        _shadeProj = proj;
+        var m = back * view * proj;
         if(!Matrix4x4.Invert(m, out var mi))
             return;
         foreach(var (at, order, inverse) in ProjSlots)
@@ -562,6 +590,8 @@ public static unsafe class LiveCharacters
         var pp = mp;
         pp.M11 *= prop.Zoom;
         pp.M22 *= prop.Zoom;
+        if(prop.HasProj)
+            pp = prop.Proj;
         if(!Matrix4x4.Invert(pv, out var piv) || !Matrix4x4.Invert(pp, out var pip))
             return false;
         var mvp = mv * mp;
@@ -725,12 +755,21 @@ public static unsafe class LiveCharacters
     private const string Hlsl = @"
 Texture2D<float4> A : register(t0);
 Texture2D<float4> N : register(t1);
-cbuffer C : register(b0) { float4 P; };
+Texture2D<float> D : register(t2);
+cbuffer C : register(b0) { float4 P; row_major float4x4 InvP; float4 Size; };
 float4 Vs(uint id : SV_VertexID) : SV_Position
 {
     float2 uv = float2((id << 1) & 2, id & 2);
     return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
 }
+float3 ViewAt(int2 q)
+{
+    float d = D.Load(int3(q, 0));
+    float2 uv = (q + 0.5) * Size.zw;
+    float4 h = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, d, 1), InvP);
+    return h.xyz / h.w;
+}
+
 float4 Ps(float4 pos : SV_Position) : SV_Target0
 {
     int3 p = int3(pos.xy, 0);
@@ -738,9 +777,23 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
     float4 n = N.Load(p);
     bool hit = any(n != 0) || any(a != 0);
     if (!hit) return float4(0, 0, 0, 0);
-    float3 nn = n.xyz * 2 - 1;
-    float l = dot(nn, nn) > 0.01 ? saturate(dot(normalize(nn), normalize(float3(0.3, 0.8, 0.5)))) : 0.6;
-    float3 c = a.rgb * (P.y + (1 - P.y) * l) * P.x;
+    // the surface's direction from the depth (the side with the smaller step, so edges don't smear)
+    float3 c0 = ViewAt(p.xy);
+    float3 dxa = ViewAt(p.xy + int2(1, 0)) - c0, dxb = c0 - ViewAt(p.xy - int2(1, 0));
+    float3 dya = ViewAt(p.xy + int2(0, 1)) - c0, dyb = c0 - ViewAt(p.xy - int2(0, 1));
+    float3 dx = abs(dxa.z) < abs(dxb.z) ? dxa : dxb;
+    float3 dy = abs(dya.z) < abs(dyb.z) ? dya : dyb;
+    float3 nn = normalize(cross(dy, dx));
+    if (dot(nn, -c0) < 0) nn = -nn;
+    float3 v = normalize(-c0);
+    float3 key = normalize(float3(0.45, 0.65, 0.6));
+    float3 fill = normalize(float3(-0.6, 0.2, 0.75));
+    float diff = saturate(dot(nn, key)) * 0.85 + saturate(dot(nn, fill)) * 0.25;
+    float rim = pow(1 - saturate(dot(nn, v)), 3) * 0.25;
+    float3 h = normalize(key + v);
+    float spec = pow(saturate(dot(nn, h)), 24) * 0.12;
+    float3 c = a.rgb * (P.y + diff) * P.x + (rim + spec) * P.x * 0.5;
+    if (P.z < 0.5) c = a.rgb * P.x;
     return float4(c, 1);
 }
 ";
@@ -793,7 +846,7 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
             Release(vsCode);
             Release(psCode);
         }
-        var cd = new BufferDesc { ByteWidth = 16, Usage = 2, BindFlags = 0x4, CpuAccessFlags = 0x10000 };
+        var cd = new BufferDesc { ByteWidth = 96, Usage = 2, BindFlags = 0x4, CpuAccessFlags = 0x10000 };
         nint cb = 0;
         ((delegate* unmanaged[Stdcall]<nint, BufferDesc*, void*, nint*, int>)V(device, 3))(device, &cd, null, &cb);
         _cb = cb;
@@ -841,7 +894,11 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
             Mapped m;
             if(((delegate* unmanaged[Stdcall]<nint, nint, uint, uint, uint, Mapped*, int>)V(c, 14))(c, _cb, 0, 4, 0, &m) >= 0)
             {
-                *(Vector4*)m.Data = new Vector4(Brightness, Ambient, 0, 0);
+                bool depth = _workSrv != 0 && Matrix4x4.Invert(_shadeProj, out var invP);
+                Matrix4x4.Invert(_shadeProj, out var ip);
+                *(Vector4*)m.Data = new Vector4(Brightness, Ambient, depth ? 1f : 0f, 0);
+                *(Matrix4x4*)((byte*)m.Data + 16) = ip;
+                *(Vector4*)((byte*)m.Data + 80) = new Vector4(w, h, 1f / w, 1f / h);
                 ((delegate* unmanaged[Stdcall]<nint, nint, uint, void>)V(c, 15))(c, _cb, 0);
             }
             nint rtv = _liveRtv;
@@ -858,11 +915,11 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
             ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _ps, null, 0);
             nint cb = _cb;
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 16))(c, 0, 1, &cb);
-            nint* srvs = stackalloc nint[2] { Srv[AlbedoIndex % MaxTargets], Srv[NormalIndex % MaxTargets] };
-            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 2, srvs);
+            nint* srvs = stackalloc nint[3] { Srv[AlbedoIndex % MaxTargets], Srv[NormalIndex % MaxTargets], _workSrv };
+            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 3, srvs);
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 3, 0);
-            nint* none = stackalloc nint[2];
-            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 2, none);
+            nint* none = stackalloc nint[3];
+            ((delegate* unmanaged[Stdcall]<nint, uint, uint, nint*, void>)V(c, 8))(c, 0, 3, none);
             return _liveSrv != 0;
         }
         catch(Exception e)
@@ -885,6 +942,7 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
             Release(Tex[i]);
             Srv[i] = Rtv[i] = Tex[i] = 0;
         }
+        Release(_workSrv);
         Release(_workDsv);
         Release(_workDepth);
         Release(_bgDepth);
@@ -896,7 +954,7 @@ float4 Ps(float4 pos : SV_Position) : SV_Target0
         Release(_vs);
         Release(_ps);
         Release(_cb);
-        _workDsv = _workDepth = _bgDepth = _ourCb = _stage = _liveSrv = _liveRtv = _live = _vs = _ps = _cb = 0;
+        _workSrv = _workDsv = _workDepth = _bgDepth = _ourCb = _stage = _liveSrv = _liveRtv = _live = _vs = _ps = _cb = 0;
         _hasBackground = false;
     }
 }

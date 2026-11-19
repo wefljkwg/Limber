@@ -267,7 +267,10 @@ public static unsafe class CameraRig
             _wrote = true;
             // (the characters drawn live kept out of the room picture)
             if(pending.Index == Limber.Gpu.LiveCharacters.LiveCamera)
+            {
                 Limber.Gpu.LiveCharacters.HideForGrab();
+                Limber.Gpu.LiveCharacters.NoteRoomProjection(pending.Index, *(Matrix4x4*)&rc->ProjectionMatrix2);
+            }
             CameraControl.Grabbed = pending.Index;
             CameraControl.GrabFrame = true;
         }
