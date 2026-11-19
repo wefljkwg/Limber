@@ -18,6 +18,9 @@ public sealed class SoftBodySettings
     // motion, and springs back to it; 0 = it settles with the simulated sag).
     public float KeepShape { get; set; } = 1f;
     public float MaxStretch { get; set; } = 0.55f; // furthest any point may move from rest, in breast-bone separations
+    // While walking or running (by how fast the character goes): how much the movement swings it. 0 = held still to
+    // the body, 1 = as simulated, up to 2 = more. Standing still is never changed.
+    public float Moving { get; set; } = 1f;
     public bool Collisions { get; set; } = true;   // arms, hands, thighs, the floor, and other characters' hands
     // What it collides with and how (the Physics collisions page).
     public CollisionSettings Collide { get; set; } = new();

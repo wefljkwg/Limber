@@ -91,6 +91,7 @@ public sealed unsafe class SoftBody
         }
         public long LastTicks;
         public Vector3 LastRoot;
+        public float MoveSpeed; // how fast the character goes (eased), m/s
         public int SeenFrame;
         public Vector3 SacShift; // testicles: how far the whole sac is moved out of the way of props (eased)
     }
@@ -752,7 +753,22 @@ public sealed unsafe class SoftBody
         var root = skeleton.RootPosition;
         bool reset = state.LastRoot == default || dt > 0.25f || Vector3.Distance(root, state.LastRoot) > 2f;
         bool advance = dt > 1e-4f; // called twice in one frame: just write the same result again
+        // Walking / running: how fast the character goes (its root, eased so a step's stop and start don't flicker it).
+        if (reset)
+            state.MoveSpeed = 0f;
+        else if (advance)
+        {
+            float speedNow = Vector3.Distance(root, state.LastRoot) / dt;
+            if (float.IsFinite(speedNow))
+                state.MoveSpeed += (MathF.Min(speedNow, 20f) - state.MoveSpeed) * (1f - MathF.Exp(-dt / 0.25f));
+        }
         state.LastRoot = root;
+        // Moving: below 1 part of the body's movement carries it rigidly (no lag, no flailing), above 1 it's swung more.
+        float moving = Math.Clamp(s.Moving, 0f, 2f);
+        float movingShare = Math.Clamp((state.MoveSpeed - 0.3f) / 1.2f, 0f, 1f);
+        movingShare = movingShare * movingShare * (3f - 2f * movingShare);
+        float moveResponse = 1f + (moving - 1f) * movingShare;
+        float moveCarry = Math.Clamp(1f - moveResponse, 0f, 1f);
 
         // Two layers, so it moves like flesh and keeps its form:
         //  1. Swing: each breast as a whole is a weight on a spring, hanging from its own bone (the pivot, like the
@@ -777,7 +793,9 @@ public sealed unsafe class SoftBody
         float maxSquash = Math.Clamp(0.15f * stretch, 0.02f, 0.6f);
 
         // Ripple: how tightly each point follows the swing (Cohesion), its neighbours, its damping and its reach.
-        float anchorK = Math.Clamp(Lerp(80f, 700f, cohesion), 20f, 3000f);
+        // (Firmness holds the ripple to the swing too, not only the swing to the body: before, a firmer setting still
+        // rippled and flailed just as much)
+        float anchorK = Math.Clamp(Lerp(80f, 700f, cohesion), 20f, 3000f) * Math.Clamp(Lerp(1f, 5f, firm) / 2.4f, 0.4f, 5f);
         float linkK = 300f;
         float invMass = 1f / heaviness;
         float limit = (1.5f / MaxStep) * (1.5f / MaxStep);
@@ -802,7 +820,7 @@ public sealed unsafe class SoftBody
         if (_boneStrength <= 0f)
             _props = Array.Empty<PropWorld>();
         float floor = _col.Floor ? root.Y + 0.01f + Math.Clamp(_col.FloorHeight, -200f, 200f) * 0.01f : -1e6f;
-        float jiggle = Math.Clamp(s.Jiggle, 0f, 6f);
+        float jiggle = Math.Clamp(s.Jiggle, 0f, 6f) * MathF.Max(1f, moveResponse);
         float keepShape = Math.Clamp(s.KeepShape, 0f, 1f);
         Span<Vector3> shown = stackalloc Vector3[Side]; // reused for both sides (no stackalloc inside the loop)
         Span<Vector3> turned = stackalloc Vector3[Side];
@@ -896,6 +914,12 @@ public sealed unsafe class SoftBody
             {
                 var tipVelocity = (restTip - breast.PrevTip) / dt;
                 float swingKeep = MathF.Exp(-2f * zeta * omega * h);
+                // (Moving: that share of the body's movement taken rigidly, and the swing's own speed eased off)
+                if (moveCarry > 0f)
+                {
+                    breast.Swing += (restTip - breast.PrevTip) * moveCarry;
+                    swingKeep *= 1f - moveCarry * MathF.Min(1f, 30f * h);
+                }
                 for (int step = 0; step < steps; step++)
                 {
                     float frac = (step + 1) / (float)steps;
@@ -1050,6 +1074,12 @@ public sealed unsafe class SoftBody
 
             // ---- 2. Ripple (each point around the swing)
             float keep = MathF.Exp(-rippleDamping * h);
+            if (moveCarry > 0f && steps > 0)
+            {
+                for (int i = 0; i < Side; i++)
+                    breast.Position[i] += (breast.Goal[i] - breast.PrevGoal[i]) * moveCarry;
+                keep *= 1f - moveCarry * MathF.Min(1f, 30f * h);
+            }
             for (int step = 0; step < steps; step++)
             {
                 float frac = (step + 1) / (float)steps;

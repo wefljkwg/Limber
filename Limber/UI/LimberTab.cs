@@ -2168,6 +2168,9 @@ public sealed partial class LimberTab
         Slider("Jiggle##lmb_soft", soft.Jiggle, v => soft.Jiggle = v, "Exaggerates the movement.", 0f, 6f);
         Slider("Cohesion##lmb_soft", soft.Cohesion, v => soft.Cohesion = v, "High = one piece; low = more liquid.");
         Slider("Max stretch##lmb_soft", soft.MaxStretch, v => soft.MaxStretch = v, "Limit on swing and stretch.", 0f, 3f);
+        Slider("While moving##lmb_soft", soft.Moving, v => soft.Moving = v,
+            "How much walking and running swing it (by how fast the character goes; standing still isn't changed). "
+            + "0 = held still to the body, 1 = as simulated, 2 = more.", 0f, 2f);
         if(part == Limber.BodyRig.RigParts.Testicles)
         {
             Slider("Hang##lmb_soft", soft.Hang, v => soft.Hang = v,
