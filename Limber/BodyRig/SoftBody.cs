@@ -625,6 +625,32 @@ public sealed unsafe class SoftBody
         return result.ToArray();
     }
 
+    /// <summary>How the body turned the part since last frame (world): from its rest shape's frame then (its base to its
+    /// middle, and to a corner of its base) to now. Null if it can't tell.</summary>
+    private static Quaternion? BodyTurn(Breast b, Vector3 pivot, Vector3 restTip)
+    {
+        static bool Frame(Vector3 origin, Vector3 tip, Vector3 corner, out Matrix4x4 m)
+        {
+            m = default;
+            var a = tip - origin;
+            if (a.LengthSquared() < 1e-10f)
+                return false;
+            a = Vector3.Normalize(a);
+            var c = corner - origin;
+            c -= a * Vector3.Dot(c, a);
+            if (c.LengthSquared() < 1e-10f)
+                return false;
+            c = Vector3.Normalize(c);
+            var d = Vector3.Cross(a, c);
+            m = new Matrix4x4(a.X, a.Y, a.Z, 0, c.X, c.Y, c.Z, 0, d.X, d.Y, d.Z, 0, 0, 0, 0, 1);
+            return true;
+        }
+        if (b.PrevTarget.Length == 0 || !Frame(b.PrevPivot, b.PrevTip, b.PrevTarget[0], out var then) || !Frame(pivot, restTip, b.Target[0], out var now))
+            return null;
+        var turn = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(Matrix4x4.Transpose(then) * now));
+        return float.IsFinite(turn.X) && float.IsFinite(turn.W) ? turn : null;
+    }
+
     private void Simulate(in RigSkeleton skeleton, State state, SoftBodySettings s, nint self)
     {
         _col = s.Collide ?? new CollisionSettings();
@@ -914,6 +940,23 @@ public sealed unsafe class SoftBody
             {
                 var tipVelocity = (restTip - breast.PrevTip) / dt;
                 float swingKeep = MathF.Exp(-2f * zeta * omega * h);
+                // Keep rotation: that share of how the body turned it this frame (the chest twisting, turning, rocking)
+                // carried rigidly, so it turns with the chest instead of lagging and flinging round.
+                float keepTurn = Math.Clamp(s.KeepRotation, 0f, 1f);
+                if (keepTurn > 0f && BodyTurn(breast, pivot, restTip) is { } bodyTurn)
+                {
+                    var carried = Quaternion.Slerp(Quaternion.Identity, bodyTurn, keepTurn);
+                    var turnAt = breast.PrevPivot;
+                    breast.Swing = turnAt + Vector3.Transform(breast.Swing - turnAt, carried);
+                    breast.SwingVelocity = Vector3.Transform(breast.SwingVelocity, carried);
+                    for (int i = 0; i < Side; i++)
+                    {
+                        breast.Position[i] = turnAt + Vector3.Transform(breast.Position[i] - turnAt, carried);
+                        breast.Velocity[i] = Vector3.Transform(breast.Velocity[i], carried);
+                        // (and where the ripple's goal was, so it isn't pulled back the way it came)
+                        breast.PrevGoal[i] = turnAt + Vector3.Transform(breast.PrevGoal[i] - turnAt, carried);
+                    }
+                }
                 // (Moving: that share of the body's movement taken rigidly, and the swing's own speed eased off)
                 if (moveCarry > 0f)
                 {
