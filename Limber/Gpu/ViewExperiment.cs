@@ -298,6 +298,40 @@ public static unsafe class ViewExperiment
 
     /// <summary>Clears per frame, smoothed (shown on the page).</summary>
     public static float TargetClears, DepthClears, MainDepthClears, FrameMs;
+    /// <summary>Clears of a picture the size of the borrowed slot's, per frame (the slot being drawn), and whether the
+    /// game's chara-view loop saw the slot as wanted last frame (Manager+0x3837c+n).</summary>
+    public static float SlotClears;
+    public static string LoopSaw = "";
+    private static int _slotClears;
+    private static uint _slotW, _slotH;
+
+    // A view's texture size (false: not a 2D texture).
+    private static bool SizeOf(nint view, out uint width, out uint height)
+    {
+        width = height = 0;
+        if(view == 0)
+            return false;
+        nint res = 0;
+        ((delegate* unmanaged[Stdcall]<nint, nint*, void>)V(view, 7))(view, &res);
+        if(res == 0)
+            return false;
+        try
+        {
+            uint dim = 0;
+            ((delegate* unmanaged[Stdcall]<nint, uint*, void>)V(res, 7))(res, &dim);
+            if(dim != 3)
+                return false;
+            uint* desc = stackalloc uint[11];
+            ((delegate* unmanaged[Stdcall]<nint, uint*, void>)V(res, 10))(res, desc);
+            width = desc[0];
+            height = desc[1];
+            return true;
+        }
+        finally
+        {
+            ((delegate* unmanaged[Stdcall]<nint, uint>)V(res, 2))(res);
+        }
+    }
     public static int Applied => _applied;
     public static bool Counting => _hooked;
 
@@ -340,6 +374,8 @@ public static unsafe class ViewExperiment
         try
         {
             _rtvClears++;
+            if(_slotW > 0 && SizeOf(rtv, out var w, out var h) && w == _slotW && h == _slotH)
+                _slotClears++;
             if(_recording)
                 Record.Append($"  clear target {Describe(rtv)}\n");
         }
@@ -354,6 +390,8 @@ public static unsafe class ViewExperiment
         try
         {
             _dsvClears++;
+            if(_slotW > 0 && SizeOf(dsv, out var w, out var h) && w == _slotW && h == _slotH)
+                _slotClears++;
             bool main = IsMainDepth(dsv);
             if(main)
                 _mainClears++;
@@ -432,6 +470,25 @@ public static unsafe class ViewExperiment
             _recordNext = false;
             Record.Clear();
             _recording = true;
+        }
+        SlotClears += (_slotClears - SlotClears) * k;
+        _slotClears = 0;
+        try
+        {
+            SlotPicture(Slot, out var sw, out var sh);
+            _slotW = (uint)Math.Max(sw, 0);
+            _slotH = (uint)Math.Max(sh, 0);
+            nint views = Views(out var manager);
+            if(views != 0)
+            {
+                var sb = new StringBuilder();
+                for(int n = 0; n < 8; n++)
+                    sb.Append(*(byte*)(manager + 0x3837c + n) != 0 ? '1' : '0');
+                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(*(nint*)SlotCameraAt(views, Slot) == _camera && _camera != 0 ? "Limber's" : $"0x{*(nint*)SlotCameraAt(views, Slot):X}")}";
+            }
+        }
+        catch
+        {
         }
         _rtvClears = 0;
         _dsvClears = 0;

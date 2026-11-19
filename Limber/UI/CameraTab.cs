@@ -454,6 +454,8 @@ public sealed class CameraTab
         Tooltip("Lists every render target and depth buffer the game clears in one frame into the box below (try it with the experiment off, then on).");
         if(Limber.Gpu.ViewExperiment.State.Length > 0)
             ImGui.TextUnformatted("Experiment: " + Limber.Gpu.ViewExperiment.State);
+        if(Limber.Gpu.ViewExperiment.On && Limber.Gpu.ViewExperiment.LoopSaw.Length > 0)
+            ImGui.TextWrapped($"{Limber.Gpu.ViewExperiment.LoopSaw}; {Limber.Gpu.ViewExperiment.SlotClears:0.0} clears a frame of a picture that size");
         if(Limber.Gpu.ViewExperiment.On)
         {
             var srv = Limber.Gpu.ViewExperiment.SlotPicture(Limber.Gpu.ViewExperiment.Slot, out var pw, out var ph);
