@@ -47,6 +47,8 @@ public static unsafe class ResearchConsole
     private static readonly Queue<string> Pending = new();
     private static int _waitFrames;
     private static bool _clearsAsked;
+    private static bool _cbAsked;
+    private static int _cbWait;
 
     // Writes: queued here, applied in the game's render function (main thread, before it draws).
     private sealed record Write(nint At, byte[] Bytes);
@@ -69,6 +71,21 @@ public static unsafe class ResearchConsole
             {
                 _poll = 0;
                 Poll();
+            }
+            if(_cbAsked)
+            {
+                if(CbProbe.Ready)
+                {
+                    _cbAsked = false;
+                    Out(CbProbe.Result);
+                }
+                else if(++_cbWait > 300)
+                {
+                    _cbAsked = false;
+                    CbProbe.Asked = false;
+                    Out("  no chosen character was drawn (give a character a shader effect first)");
+                }
+                return;
             }
             if(_clearsAsked && ViewExperiment.LastRecordReady)
             {
@@ -197,6 +214,12 @@ public static unsafe class ResearchConsole
                 return true;
             case "snapslots":
                 SnapSlots();
+                return true;
+            case "cbdump":
+                CbProbe.Ready = false;
+                CbProbe.Asked = true;
+                _cbAsked = true;
+                _cbWait = 0;
                 return true;
             case "clears":
                 ViewExperiment.RecordOneFrame();

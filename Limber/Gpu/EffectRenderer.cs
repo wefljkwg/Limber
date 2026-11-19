@@ -1538,6 +1538,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             Release(dsv);
             return;
         }
+        CbProbe.OnCharacterDraw(c);
         nint blend = 0, depth = 0, ps = 0, psCb = 0;
         float* factor = stackalloc float[4];
         uint sampleMask = 0, stencilRef = 0, classes = 0;
