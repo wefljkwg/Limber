@@ -277,6 +277,9 @@ public sealed class CameraTab
         if(ImGui.SliderInt("Timing###cam_rig_delay", ref delay, 0, 3)) { _config.MonitorDelay = delay; save = true; }
         Tooltip("How many frames after the camera is moved its picture reaches the screen. Right: the screens show the camera's view and your view doesn't flash.\n"
             + "If the screens show your own view and your view flashes to the camera's, raise it; if the screens go black or stutter, lower it.");
+        bool hud = _config.MonitorHideHud;
+        if(ImGui.Checkbox("No HUD on the screens###cam_rig_hud", ref hud)) { _config.MonitorHideHud = hud; save = true; }
+        Tooltip("The game's HUD, nameplates and markers are hidden on the frames the screens get (you keep seeing them as usual).");
         bool show = _config.ShowCameraProps, always = _config.ShowCameraPropsAlways;
         if(ImGui.Checkbox("Show the cameras###cam_rig_show", ref show)) { _config.ShowCameraProps = show; save = true; }
         Tooltip("Small wireframe cameras where they are (only while this section is open, unless Always).");

@@ -44,7 +44,7 @@ public sealed class MonitorProp
 /// camera prop instead (Limber moves the game camera there for that one frame), copied into that camera's picture, and the
 /// last normal frame is put back on screen (Gpu/MonitorRenderer). The cameras take turns.
 /// </summary>
-public static class CameraRig
+public static unsafe class CameraRig
 {
     public static RigSettings? Config;
 
@@ -62,13 +62,27 @@ public static class CameraRig
 
     public static Vector3 Forward(Quaternion q) => Vector3.Transform(Vector3.UnitZ, q);
 
-    /// <summary>Framework thread, before the game moves its camera: whether this frame is one drawn from a camera prop.</summary>
-    public static void Update(bool here, double seconds)
+    // The camera prop the next frame is drawn from (set at the frame's start, used just before the game draws it).
+    private static (int Index, CameraProp Camera)? _pending;
+    private static bool _hudHiddenByUs;
+    private static bool _wrote;
+    private static Matrix4x4 _wroteView, _gameView, _wroteRender, _gameRender, _gameProj, _gameProj2;
+    private static bool _wroteProj;
+
+    /// <summary>Framework thread, at the start of a frame: whether this frame is one drawn from a camera prop.</summary>
+    public static unsafe void Update(bool here, double seconds)
     {
         _framesSinceGrab++;
+        CameraControl.GrabFrame = false;
+        PutBack();
+        if(_hudHiddenByUs)
+        {
+            SetHud(true);
+            _hudHiddenByUs = false;
+        }
         if(!here || !Live)
         {
-            CameraControl.SetGrab(null, 0f);
+            _pending = null;
             return;
         }
         var wanted = Monitors.Where(m => m.On).Select(CameraOf).Where(c => c != null).Distinct().ToList();
@@ -85,7 +99,167 @@ public static class CameraRig
         var fwd = Forward(cam.Rotation);
         if(!MathUtil.IsFinite(fwd) || fwd.LengthSquared() < 1e-6f)
             return;
-        CameraControl.SetGrab(new CameraControl.Grab(Cameras.IndexOf(cam), cam.Position, cam.Position + Vector3.Normalize(fwd), cam.FoV), 0f);
+        _pending = (Cameras.IndexOf(cam), cam);
+        // (the game's HUD, nameplates and markers kept off this frame: it's the one the screens get)
+        if(Config.MonitorHideHud && HudVisible())
+        {
+            SetHud(false);
+            _hudHiddenByUs = true;
+        }
+    }
+
+    private static unsafe bool HudVisible()
+    {
+        var ui = FFXIVClientStructs.FFXIV.Client.UI.UIModule.Instance();
+        if(ui == null)
+            return false;
+        var atk = ui->GetRaptureAtkModule();
+        return atk != null && atk->IsUiVisible;
+    }
+
+    private static unsafe void SetHud(bool visible)
+    {
+        try
+        {
+            var ui = FFXIVClientStructs.FFXIV.Client.UI.UIModule.Instance();
+            if(ui == null)
+                return;
+            var atk = ui->GetRaptureAtkModule();
+            if(atk != null)
+                atk->SetUiVisibility(visible);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
+    /// Just before the game draws the frame (end of its bone update): for a camera prop's frame, the view the world is
+    /// drawn with is put at the camera prop. Only the drawing's own view: the game camera, the HUD, nameplates, markers and
+    /// sound stay where they are.
+    /// </summary>
+    public static unsafe void ApplyView()
+    {
+        if(_pending is not { } pending)
+            return;
+        _pending = null;
+        try
+        {
+            var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+            if(cm == null || cm->CurrentCamera == null || cm->CurrentCamera->RenderCamera == null)
+                return;
+            var sc = cm->CurrentCamera;
+            var rc = sc->RenderCamera;
+            Matrix4x4 view = *(Matrix4x4*)&sc->ViewMatrix;
+            Matrix4x4 render = *(Matrix4x4*)&rc->ViewMatrix;
+            var vfix = Affine(view);
+            if(!Matrix4x4.Invert(vfix, out var world) || !Matrix4x4.Invert(vfix, out var invView))
+                return;
+            var xc = new Vector3(world.M11, world.M12, world.M13);
+            var yc = new Vector3(world.M21, world.M22, world.M23);
+            var zc = new Vector3(world.M31, world.M32, world.M33);
+            var so = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object*)sc;
+            var position = *(Vector3*)&so->Position;
+            var look = *(Vector3*)&sc->LookAtVector;
+            var fcur = look - position;
+            if(fcur.LengthSquared() < 1e-8f)
+                return;
+            // (the game's own way round: which way its view axes point)
+            float s = MathF.Sign(Vector3.Dot(zc, Vector3.Normalize(fcur)));
+            float t = MathF.Sign(Vector3.Dot(xc, Vector3.Cross(Vector3.UnitY, zc)));
+            float u = MathF.Sign(Vector3.Dot(yc, Vector3.Cross(zc, xc)));
+            if(s == 0 || t == 0 || u == 0)
+                return;
+            var cam = pending.Camera;
+            var f = Vector3.Normalize(Forward(cam.Rotation));
+            var z = s * f;
+            var xr = Vector3.Cross(Vector3.UnitY, z);
+            xr = xr.LengthSquared() < 1e-6f ? Vector3.UnitX : Vector3.Normalize(xr);
+            var x = t * xr;
+            var y = u * Vector3.Normalize(Vector3.Cross(z, x));
+            var w = new Matrix4x4(x.X, x.Y, x.Z, 0, y.X, y.Y, y.Z, 0, z.X, z.Y, z.Z, 0, cam.Position.X, cam.Position.Y, cam.Position.Z, 1);
+            if(!Matrix4x4.Invert(w, out var newView))
+                return;
+            // the drawing's own view keeps however it relates to the scene's (an origin it draws round)
+            var relation = Affine(render) * invView;
+            var newRender = relation * newView;
+            _gameView = view;
+            _gameRender = render;
+            _wroteView = Keep(view, newView);
+            _wroteRender = Keep(render, newRender);
+            *(Matrix4x4*)&sc->ViewMatrix = _wroteView;
+            *(Matrix4x4*)&rc->ViewMatrix = _wroteRender;
+            _wroteProj = false;
+            if(cam.FoV > 1f && rc->FoV > 0.01f)
+            {
+                float k = MathF.Tan(rc->FoV * 0.5f) / MathF.Tan(cam.FoV * MathF.PI / 360f);
+                _gameProj = *(Matrix4x4*)&rc->ProjectionMatrix;
+                _gameProj2 = *(Matrix4x4*)&rc->ProjectionMatrix2;
+                var p1 = _gameProj;
+                p1.M11 *= k;
+                p1.M22 *= k;
+                var p2 = _gameProj2;
+                p2.M11 *= k;
+                p2.M22 *= k;
+                *(Matrix4x4*)&rc->ProjectionMatrix = p1;
+                *(Matrix4x4*)&rc->ProjectionMatrix2 = p2;
+                _wroteProj = true;
+            }
+            _wrote = true;
+            CameraControl.Grabbed = pending.Index;
+            CameraControl.GrabFrame = true;
+        }
+        catch
+        {
+        }
+    }
+
+    // The game's own view back, if it didn't make a new one this frame.
+    private static unsafe void PutBack()
+    {
+        if(!_wrote)
+            return;
+        _wrote = false;
+        try
+        {
+            var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+            if(cm == null || cm->CurrentCamera == null || cm->CurrentCamera->RenderCamera == null)
+                return;
+            var sc = cm->CurrentCamera;
+            var rc = sc->RenderCamera;
+            if(*(Matrix4x4*)&sc->ViewMatrix == _wroteView)
+                *(Matrix4x4*)&sc->ViewMatrix = _gameView;
+            if(*(Matrix4x4*)&rc->ViewMatrix == _wroteRender)
+                *(Matrix4x4*)&rc->ViewMatrix = _gameRender;
+            if(_wroteProj)
+            {
+                *(Matrix4x4*)&rc->ProjectionMatrix = _gameProj;
+                *(Matrix4x4*)&rc->ProjectionMatrix2 = _gameProj2;
+                _wroteProj = false;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static Matrix4x4 Affine(Matrix4x4 m)
+    {
+        m.M14 = 0;
+        m.M24 = 0;
+        m.M34 = 0;
+        m.M44 = 1;
+        return m;
+    }
+
+    // (a new view with the old one's fourth column, however the game uses it)
+    private static Matrix4x4 Keep(Matrix4x4 old, Matrix4x4 m)
+    {
+        m.M14 = old.M14;
+        m.M24 = old.M24;
+        m.M34 = old.M34;
+        m.M44 = old.M44;
+        return m;
     }
 
     /// <summary>Where the game camera is and what it looks at now (where new props go).</summary>

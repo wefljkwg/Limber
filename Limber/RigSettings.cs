@@ -224,7 +224,8 @@ public sealed class RigSettings
     public List<Limber.Rig.MonitorProp> Monitors { get; set; } = new();
     public bool MonitorsOn { get; set; } = true;
     public float MonitorRefresh { get; set; } = 6f;      // pictures a second, per camera
-    public int MonitorDelay { get; set; } = 1;           // frames between the camera being moved and that picture on screen
+    public int MonitorDelay { get; set; } = 1;
+    public bool MonitorHideHud { get; set; } = true;     // the game's HUD kept off the screens' pictures           // frames between the camera being moved and that picture on screen
     public bool ShowCameraProps { get; set; } = true;
     public bool ShowCameraPropsAlways { get; set; }
 
