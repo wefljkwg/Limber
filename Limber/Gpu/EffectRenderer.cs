@@ -984,7 +984,12 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         public (uint Start, uint Count, int Look)[] Ranges = [];
         public int Fallback = -1;
         public bool SeeThrough;
+        public string File = "";
     }
+
+    // Draws of a chosen character that matched none of the model's meshes (for the log: which file, where its indices start).
+    private static readonly ConcurrentDictionary<(string File, uint Start), byte> Unmatched = new();
+    private static readonly HashSet<(string, uint)> UnmatchedLogged = new();
 
     // a bone matrix buffer's view -> what's drawn with it
     private static volatile Dictionary<nint, Entry> _map = new();
@@ -1186,7 +1191,6 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     return glowOnlyOf[from];
                 return -1;
             }
-            int all = defOf.TryGetValue("All", out var allDef) && allDef.EffectBody && allDef.EffectOutfit ? lookOf["All"] : -1;
             var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObject->DrawObject;
             int slots = SafeMemory.Read<int>((nint)(&cb->SlotCount), 0);
             nint models = SafeMemory.ReadPointer((nint)(&cb->Models));
@@ -1207,13 +1211,13 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                 int views = 0;
                 for(int t = 0; t < tables; t++)
                 {
-                    var entry = new Entry { Fallback = all, SeeThrough = seeThrough };
+                    // (a draw that matches none of the meshes: by the model, gear for equipment, the body for the rest)
+                    bool gearFile = file.Contains("/equipment/", StringComparison.OrdinalIgnoreCase) || file.Contains("/accessory/", StringComparison.OrdinalIgnoreCase)
+                                    || file.Contains("/weapon/", StringComparison.OrdinalIgnoreCase);
+                    var entry = new Entry { Fallback = LookFor(gearFile ? "Gear" : "Skin"), SeeThrough = seeThrough, File = file };
+                    // (every mesh of the model: where their indices start tells them apart, whichever bone table they use)
                     if(data != null)
-                    {
-                        int table = t;
-                        entry.Ranges = data.Meshes.Where(m => m.Table == table)
-                            .Select(m => (m.Start, m.Count, LookFor(m.Part))).ToArray();
-                    }
+                        entry.Ranges = data.Meshes.Select(m => (m.Start, m.Count, LookFor(m.Part))).ToArray();
                     foreach(var view in TableViews(list + t * 0xE0))
                     {
                         // (a view found under more than one table isn't one character's own: left out)
@@ -1229,6 +1233,9 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         foreach(var view in shared)
             map.Remove(view);
         Views = map.Count;
+        foreach(var (key, _) in Unmatched)
+            if(UnmatchedLogged.Add(key))
+                Plugin.Log.Information($"Limber: effects: a draw of {key.File} starting at index {key.Start} matched none of its meshes");
         _hidden = _hide.ToArray();
         _map = map;
         if(map.Count > 0)
@@ -1454,12 +1461,16 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         if(entry == null)
             return false;
         look = entry.Fallback;
+        bool matched = false;
         foreach(var (s, c, l) in entry.Ranges)
             if(start >= s && start < s + c)
             {
                 look = l;
+                matched = true;
                 break;
             }
+        if(!matched && Unmatched.Count < 64)
+            Unmatched.TryAdd((entry.File, start), 0);
         seeThrough = entry.SeeThrough;
         return look >= 0;
     }
