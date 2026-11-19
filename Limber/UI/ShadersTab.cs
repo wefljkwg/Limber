@@ -72,14 +72,6 @@ public sealed class ShadersTab
                 _config.Save();
             }
         }
-        int delay = _config.ShaderEffectDelay;
-        ImGui.SetNextItemWidth(Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
-        if(ImGui.SliderInt("Effect timing###sh_fx_delay", ref delay, 0, 3))
-        {
-            _config.ShaderEffectDelay = delay;
-            _config.Save();
-        }
-        Tooltip("How many frames the drawn effects wait, to stay in step with the character on screen. If they run ahead of the character when it moves, raise it; if they trail behind, lower it.");
         if(_shaders.Status.Length > 0 || _status.Length > 0)
             ImGui.TextDisabled(_status.Length > 0 ? _status : _shaders.Status);
 
@@ -176,10 +168,12 @@ public sealed class ShadersTab
         changed |= Slider("Rim tightness###sh_fx_rimt", look.RimTightness, v => look.RimTightness = v, 0.5f, 10f, "How close to the edges the rim stays (higher: a thinner line).");
         changed |= Colour("Outline###sh_fx_out", look.Outline, Vector3.Zero, v => look.Outline = v, "The outline's colour.");
         ImGui.SameLine();
-        changed |= Slider("Outline width###sh_fx_outw", look.OutlineWidth, v => look.OutlineWidth = v, 0f, 20f, "A cartoon outline round them, this many millimetres thick (0: none).");
+        changed |= Slider("Outline width###sh_fx_outw", look.OutlineWidth, v => look.OutlineWidth = v, 0f, 20f, "A cartoon outline round them, this many pixels thick (0: none).");
         bool see = look.SeeThrough;
         if(ImGui.Checkbox("See through walls###sh_fx_see", ref see)) { look.SeeThrough = see; changed = true; }
         Tooltip("Where something's in front of them, a faint silhouette in the rim's colour still shows.");
+        if(look.HasEffects() && look.Enabled)
+            ImGui.TextDisabled($"Marking {Limber.Gpu.EffectRenderer.Drawn} of the game's draws ({Limber.Gpu.EffectRenderer.Views} bone buffers found)");
         if(Limber.Gpu.EffectRenderer.Error.Length > 0)
         {
             ImGui.TextColored(new Vector4(0.95f, 0.4f, 0.4f, 1f), "Can't draw the effects: " + Limber.Gpu.EffectRenderer.Error);

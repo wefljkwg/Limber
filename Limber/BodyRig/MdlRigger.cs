@@ -1371,6 +1371,22 @@ public static class MdlRigger
     /// <summary>The model's attribute names, in the order of their bits.</summary>
     public static string[] AttributeNames(byte[] file) => Parse(file).AttributeNames.ToArray();
 
+    /// <summary>One LoD's meshes: where each one's indices start in the LoD's index list, how many, its bone table and material.</summary>
+    public static List<(int Mesh, uint Start, uint Count, int Table, string Material)> MeshRanges(byte[] file, int lod)
+    {
+        var result = new List<(int, uint, uint, int, string)>();
+        var m = Parse(file);
+        if (lod >= m.LodCount)
+            return result;
+        var (first, count) = m.Lods[lod];
+        for (int mi = first; mi < first + count && mi < m.Meshes.Count; mi++)
+        {
+            var me = m.Meshes[mi];
+            result.Add((mi, me.StartIndex, me.IndexCount, me.BoneTable, me.Material < m.MaterialNames.Count ? m.MaterialNames[me.Material] : ""));
+        }
+        return result;
+    }
+
     /// <summary>Each mesh's bone table (by mesh index).</summary>
     public static int[] MeshBoneTables(byte[] file) => Parse(file).Meshes.Select(x => x.BoneTable).ToArray();
 
