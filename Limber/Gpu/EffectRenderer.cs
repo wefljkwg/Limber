@@ -532,6 +532,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
         public float[] Bw = [];      // 4 per vertex
         public int Table = -1;       // its bone table (the game's matrices for it)
         public uint LodMask;         // parts only for far away (atr_lod): never drawn this close
+        public uint HatMask;         // parts a hat hides (atr_kam)
         public ushort[] Raw = [];    // the mesh's own index list, as the file has it
         public List<(int Start, int Count, uint Attributes)> Subs = new();
         public List<(int Shape, (int Index, int Vertex)[] Values)> Shapes = new();
@@ -611,10 +612,14 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             var materials = MdlRigger.MeshMaterials(data);
             var tables = MdlRigger.MeshBoneTables(data);
             var attributeNames = MdlRigger.AttributeNames(data);
-            uint lodMask = 0;
+            uint lodMask = 0, hatMask = 0;
             for(int a = 0; a < attributeNames.Length && a < 32; a++)
+            {
                 if(attributeNames[a].Equals("atr_lod", StringComparison.OrdinalIgnoreCase))
                     lodMask |= 1u << a;
+                if(attributeNames[a].Equals("atr_kam", StringComparison.OrdinalIgnoreCase))
+                    hatMask |= 1u << a;
+            }
             var result = new ModelData();
             Span<int> bi = stackalloc int[4];
             Span<float> bw = stackalloc float[4];
@@ -686,6 +691,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 mesh.Raw = skin.Triangles;
                 mesh.Table = layout.Mesh < tables.Length ? tables[layout.Mesh] : -1;
                 mesh.LodMask = lodMask;
+                mesh.HatMask = hatMask;
                 mesh.Subs = MdlRigger.MeshSubmeshes(data, layout.Mesh);
                 mesh.Shapes = MdlRigger.MeshShapesIndexed(data, 0, layout.Mesh);
                 if(mesh.Raw.Length >= 3)
@@ -992,7 +998,9 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             nint models = SafeMemory.ReadPointer((nint)(&cb->Models));
             if(slots <= 0 || slots > 64 || models == 0)
                 continue;
-            foreach(var (slot, file) in LiveMesh.ModelFiles((nint)cb))
+            var worn = LiveMesh.ModelFiles((nint)cb);
+            bool hat = worn.Any(w => w.File.EndsWith("_met.mdl", StringComparison.OrdinalIgnoreCase));
+            foreach(var (slot, file) in worn)
             {
                 if(!file.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase) || slot >= slots)
                     continue;
@@ -1008,6 +1016,9 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 var rm = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model*)model;
                 uint attributes = SafeMemory.Read<uint>((nint)(&rm->EnabledAttributeIndexMask), uint.MaxValue);
                 uint shapes = SafeMemory.Read<uint>((nint)(&rm->EnabledShapeKeyIndexMask), 0u);
+                // (a hat on: the hair's parts it covers go, as the game draws them)
+                if(hat && data.Meshes.Count > 0)
+                    attributes &= ~data.Meshes[0].HatMask;
                 if(Reported.Add((file, attributes, shapes)))
                     Plugin.Log.Information($"Limber: effects on {file}: attributes {attributes:X8}, shape keys {shapes:X8}; "
                         + string.Join(", ", data.Meshes.Select((m, i) => $"mesh {i}: {m.Subs.Count} parts ({string.Join("/", m.Subs.Select(x => $"{x.Attributes:X}"))}), {m.Shapes.Count} shapes, {m.Tris(attributes, shapes).Length / 3} of {m.Raw.Length / 3} triangles")));
@@ -1043,8 +1054,9 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                                 tested++;
                             }
                             bool was = binds.GameOk;
-                            binds.GameOk = tested > 0 && err / tested < 0.3f;
-                            if(binds.GameOk != was || !ReportedGame.Contains(file))
+                            if(tested > 0)
+                                binds.GameOk = err / tested < 0.3f;
+                            if(tested > 0 && (binds.GameOk != was || !ReportedGame.Contains(file)))
                             {
                                 ReportedGame.Add(file);
                                 Plugin.Log.Information($"Limber: effects on {file}: the game's own matrices {(binds.GameOk ? "used" : "not used")} (off by {(tested > 0 ? err / tested : -1f):0.000} m, ring {_ringOffset})");
@@ -1193,11 +1205,31 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
     private static readonly Guid Texture2DId = new("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
 
     /// <summary>Draws the effects on the characters that have them (render thread). Nothing when nobody has one.</summary>
-    public static void Draw(IReadOnlyList<Shaders.EffectTarget> targets)
+    // What was gathered on the last few frames (the picture on screen may be a frame or more older than the bones read now).
+    private sealed class Snap
+    {
+        public Vert[] V = [];
+        public uint[] I = [];
+        public int Nv, Ni;
+        public LookGpu[] Looks = [];
+        public bool Hull, Surface, Valid;
+        public Matrix4x4 Vp;
+        public Vector3[] Probes = new Vector3[4];
+        public int ProbeCount;
+    }
+
+    private static readonly Snap[] Ring = [new(), new(), new(), new()];
+    private static int _snapAt;
+
+    public static void Draw(IReadOnlyList<Shaders.EffectTarget> targets, int delay)
     {
         Drawn = 0;
         if(_failed || targets.Count == 0)
+        {
+            foreach(var old in Ring)
+                old.Valid = false;
             return;
+        }
         var c = Context();
         var device = Device();
         var kernel = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device.Instance();
@@ -1207,9 +1239,27 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
         bool saved = false;
         try
         {
-            var (nv, ni, hull, surface) = Gather(targets);
-            if(nv == 0 || ni == 0 || _looks.Count == 0 || (!hull && !surface))
+            var (gv, gi, gh, gs) = Gather(targets);
+            var control = FFXIVClientStructs.FFXIV.Client.Game.Control.Control.Instance();
+            var now = Ring[_snapAt];
+            (now.V, _verts) = (_verts, now.V);
+            (now.I, _indices) = (_indices, now.I);
+            now.Nv = gv;
+            now.Ni = gi;
+            now.Looks = _looks.ToArray();
+            now.Hull = gh;
+            now.Surface = gs;
+            now.Vp = control != null ? control->ViewProjectionMatrix : Matrix4x4.Identity;
+            now.ProbeCount = _probeCount;
+            Array.Copy(_probes, now.Probes, 4);
+            now.Valid = control != null && gv > 0 && gi > 0 && now.Looks.Length > 0 && (gh || gs);
+            _snapAt = (_snapAt + 1) & 3;
+            // (drawn as it was the given number of frames ago: in step with the picture on screen)
+            var snap = Ring[(_snapAt - 1 - Math.Clamp(delay, 0, 3)) & 3];
+            if(!snap.Valid)
                 return;
+            int nv = snap.Nv, ni = snap.Ni;
+            bool hull = snap.Hull, surface = snap.Surface;
             if(_vsMesh == 0)
                 Setup();
             var swap = (nint)kernel->SwapChain->DXGISwapChain;
@@ -1231,7 +1281,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             EnsureOwnDepth(bd.Width, bd.Height);
             Verts.Ensure(nv);
             Indices.Ensure(ni);
-            Looks.Ensure(_looks.Count);
+            Looks.Ensure(snap.Looks.Length);
 
             nint sceneSrv = 0;
             var uvScale = Vector2.One;
@@ -1243,28 +1293,28 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 if(ds->AllocatedWidth > 0 && ds->AllocatedHeight > 0)
                     uvScale = new Vector2((float)ds->ActualWidth / ds->AllocatedWidth, (float)ds->ActualHeight / ds->AllocatedHeight);
             }
-            var constants = MakeConstants(bd.Width, bd.Height, uvScale, sceneSrv != 0, out bool reversed);
+            var constants = MakeConstants(snap, bd.Width, bd.Height, uvScale, sceneSrv != 0, out bool reversed);
             if(constants == null)
                 return;
 
             Save(c);
             saved = true;
 
-            fixed(Vert* p = _verts)
+            fixed(Vert* p = snap.V)
                 if(!Verts.Write(c, p, nv))
                     return;
             // (the triangles sent again only when they change)
-            if(ni != _uploadedIndices || Indices.Buffer != _indicesIn || !_indices.AsSpan(0, ni).SequenceEqual(_sent.AsSpan(0, ni)))
+            if(ni != _uploadedIndices || Indices.Buffer != _indicesIn || !snap.I.AsSpan(0, ni).SequenceEqual(_sent.AsSpan(0, ni)))
             {
-                fixed(uint* p = _indices)
+                fixed(uint* p = snap.I)
                     if(!Indices.Write(c, p, ni))
                         return;
                 Grow(ref _sent, ni);
-                Array.Copy(_indices, _sent, ni);
+                Array.Copy(snap.I, _sent, ni);
                 _uploadedIndices = ni;
                 _indicesIn = Indices.Buffer;
             }
-            var looks = _looks.ToArray();
+            var looks = snap.Looks;
             fixed(LookGpu* p = looks)
                 if(!Looks.Write(c, p, looks.Length))
                     return;
@@ -1363,13 +1413,10 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
         }
     }
 
-    private static Constants? MakeConstants(uint w, uint h, Vector2 uvScale, bool useScene, out bool reversed)
+    private static Constants? MakeConstants(Snap snap, uint w, uint h, Vector2 uvScale, bool useScene, out bool reversed)
     {
         reversed = false;
-        var control = FFXIVClientStructs.FFXIV.Client.Game.Control.Control.Instance();
-        if(control == null)
-            return null;
-        var vp = control->ViewProjectionMatrix;
+        var vp = snap.Vp;
         if(!Matrix4x4.Invert(vp, out var ivp))
             return null;
         Vector3 Unproject(float x, float y, float z)
@@ -1401,7 +1448,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             if(float.IsFinite(rc->FarPlane) && rc->FarPlane > camNear)
                 camFar = rc->FarPlane;
         }
-        Vector4 P(int i) => i < _probeCount ? new Vector4(_probes[i], 1) : default;
+        Vector4 P(int i) => i < snap.ProbeCount ? new Vector4(snap.Probes[i], 1) : default;
         return new Constants
         {
             ViewProj = vp,

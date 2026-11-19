@@ -213,6 +213,7 @@ public sealed class RigSettings
     public List<Limber.Rig.GlobalPresetRule> GlobalPresetRules { get; set; } = new();
     /// <summary>Scene > Shaders: each character's shader looks, and saved ones.</summary>
     public List<Limber.Rig.ShaderLook> ShaderLooks { get; set; } = new();
+    public int ShaderEffectDelay { get; set; } = 1; // frames the drawn effects wait (to match the picture on screen)
     public List<Limber.Rig.ShaderPreset> ShaderPresets { get; set; } = new();
     /// <summary>Favourites: list (housing, world, animations) -> the items' keys.</summary>
     public Dictionary<string, HashSet<string>> Favorites { get; set; } = new();

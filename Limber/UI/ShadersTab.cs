@@ -72,6 +72,14 @@ public sealed class ShadersTab
                 _config.Save();
             }
         }
+        int delay = _config.ShaderEffectDelay;
+        ImGui.SetNextItemWidth(Fit.Fixed(120f * ImGuiHelpers.GlobalScale));
+        if(ImGui.SliderInt("Effect timing###sh_fx_delay", ref delay, 0, 3))
+        {
+            _config.ShaderEffectDelay = delay;
+            _config.Save();
+        }
+        Tooltip("How many frames the drawn effects wait, to stay in step with the character on screen. If they run ahead of the character when it moves, raise it; if they trail behind, lower it.");
         if(_shaders.Status.Length > 0 || _status.Length > 0)
             ImGui.TextDisabled(_status.Length > 0 ? _status : _shaders.Status);
 
