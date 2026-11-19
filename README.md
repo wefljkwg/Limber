@@ -31,7 +31,15 @@ Koikatsu needs BepInEx and KKAPI, which any HF Patch or BetterRepack install alr
 
 Pose, shape and animate characters in group pose. Everything happens on your screen only. Open it with `/limber1` (or `/lmb`).
 
-### New in 0.69.0
+### New in 0.70.0
+
+- **Shaders** (Scene): give any character (player, NPC or actor) their own look, on them only: colour, brightness and glow on their materials, per part (skin, hair, face, gear), with presets.
+- **Drawn effects** (Shaders): Limber draws effects onto the character's real model as the game draws it (exact shape, same frame): light up, pulse, rim light, cartoon outline, see through walls, and Pixelate (the censor mosaic, with Game Boy colours). Glow now lights the skin too.
+- **Material effects** (Shaders): 50 effects in the style of Koikatsu's Material Editor, stacked up to 8 per look, each with its own colours and sliders: colour grade, toon and cel shading, hologram, X-ray, thermal and night vision, metal, gold statue, stone, glass, slime, ice, wet, snow, iridescent, dissolve, space, lava, water, stripes, checker, dots, camo, glitter, CRT, glitch, blur, heat haze, pencil sketch, oil painting, ink lines, halftone, dither, cross-hatch, emboss and more.
+- **Body physics**: a While moving slider (less swinging when walking or running), Keep position and Keep rotation (big breasts stop flailing with the chest), and the body mod's own jiggle can be ignored. Mesh collision presses rigged skin too.
+- **Fixes**: Rig everything finds the butt on bodies weighted to the body mod's own butt bones, and the stomach bulge reaches up to the chest on any skeleton.
+
+### 0.69.0
 
 - **Paired Animations** (Posing): line two characters up with each other (face to face, behind, side by side...), give each an animation (any race's version) and start them together. Save the pairing with each one's IK, attached bones, FK pose and Move character.
 - **Stomach bulge** (Body shape): a ridge, peaked ridge or dome pushed out of the belly, with length, size, penis shape, creases, tightening and navel stretch, and presets. It can follow the partner's penis, growing and sinking as it moves, and a long one pushes the breasts apart.
