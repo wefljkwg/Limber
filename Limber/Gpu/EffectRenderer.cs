@@ -122,7 +122,7 @@ public static unsafe class EffectRenderer
     private static nint _looksBuf, _looksSrv;
     private static int _looksCap;
     private static nint _maskA, _maskARtv, _maskASrv, _maskB, _maskBRtv, _maskBSrv;
-    private static nint _ownDepth, _ownDsv, _depthOwn, _depthOwnR, _blendNoColour;
+    private static nint _ownDepth, _ownDsv, _depthOwn, _depthOwnR, _blendNoColour, _psSlime, _blendAlpha;
     private static bool _reversed;
     private static volatile bool[] _hidden = [];
     private static uint _maskW, _maskH;
@@ -165,7 +165,9 @@ public static unsafe class EffectRenderer
         Release(_depthOwn);
         Release(_depthOwnR);
         Release(_blendNoColour);
-        _ownDsv = _ownDepth = _depthOwn = _depthOwnR = _blendNoColour = 0;
+        Release(_psSlime);
+        Release(_blendAlpha);
+        _ownDsv = _ownDepth = _depthOwn = _depthOwnR = _blendNoColour = _psSlime = _blendAlpha = 0;
         foreach(var o in new[] { _vsFull, _psMask, _psXray, _psLight, _psOutline, _cb, _maskCb, _blendAdd, _blendSolid, _blendWrite, _depthOff, _depthEqual, _rasterNone,
                      _looksSrv, _looksBuf, _maskARtv, _maskASrv, _maskA, _maskBRtv, _maskBSrv, _maskB })
             Release(o);
@@ -458,7 +460,8 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
         float2 off = ScreenStep(wp, n) * P.x * (1 - rim * 0.5);
         o = Pic(px + off) * lerp(1, A, P.z) + B * pow(rim, 2) * P.y;
         break; }
-    case 13: { // Goo / slime
+    case 13: { // Goo / slime (rounded: drawn by its own pass, PsSlime)
+        if (P.w > 0.5) break;
         float w = Noise3(rel * 8 + t * 0.6) - 0.5;
         float2 off = (ScreenStep(wp, n) + w) * P.x;
         float3 behind = Pic(px + off);
@@ -668,6 +671,84 @@ float4 PsMaterial(float4 pos : SV_Position) : SV_Target0
     return float4(saturate(c), 1);
 }
 
+// ---- Rounded slime: the character as one wobbling blob of jelly. Its shape is how much of a disc round each pixel is
+// slime (thin bits melt away, gaps between fingers and legs fill in, edges round off), its surface tilts with that, and
+// what's behind is bent through it, tinted deeper where it's thicker, with a wet shine.
+int SlimeOf(int look)
+{
+    Look Lk = Looks[look];
+    int first = (int)Lk.Extra.z, count = (int)Lk.Extra.w;
+    for (int i = 0; i < count; i++)
+    {
+        Fx f = Effects[first + i];
+        if ((int)round(f.Head.x) == 13 && f.P.w > 0.5) return first + i;
+    }
+    return -1;
+}
+
+float4 PsSlime(float4 pos : SV_Position) : SV_Target0
+{
+    float2 px = pos.xy;
+    float R = max(Right.w, 2);
+    float2 g = 0;
+    float covered = 0, total = 0;
+    int fx = -1;
+    float tBase = Cam.w;
+    // the centre counts double
+    int lc = VisibleLook(MaskPixel(px * Screen.zw));
+    int fc = lc >= 0 ? SlimeOf(lc) : -1;
+    if (fc >= 0) { covered += 2; fx = fc; }
+    total += 2;
+    [loop] for (int ring = 1; ring <= 3; ring++)
+    {
+        [loop] for (int k = 0; k < 12; k++)
+        {
+            float a = (k + ring * 0.5) * 0.5235988;
+            float2 dir = float2(cos(a), sin(a));
+            float rr = R * ring / 3.0;
+            // (the edge breathes a little)
+            rr *= 1 + 0.12 * sin(tBase * 2.3 + a * 3 + ring);
+            float2 q = px + dir * rr;
+            if (any(q < 0) || any(q >= Screen.xy)) { total += 1; continue; }
+            int lk = VisibleLook(MaskPixel(q * Screen.zw));
+            int f = lk >= 0 ? SlimeOf(lk) : -1;
+            total += 1;
+            if (f >= 0)
+            {
+                covered += 1;
+                g += dir * (1.0 - (ring - 1) * 0.25);
+                if (fx < 0) fx = f;
+            }
+        }
+    }
+    if (fx < 0) discard;
+    float C = covered / total;
+    float alpha = smoothstep(0.42, 0.58, C);
+    if (alpha <= 0.001) discard;
+    Fx F = Effects[fx];
+    float t = Cam.w * F.Head.z;
+    float3 A = F.A.rgb;
+    float4 P = F.P;
+    // the surface: tipped outward where the blob thins, a slow wobble on top
+    float2 outward = -g / max(covered, 1);
+    float2 wob = float2(Noise3(float3(px * 0.02, t * 0.7)), Noise3(float3(px * 0.02 + 9, t * 0.7))) - 0.5;
+    float2 tilt = outward * 2.2 + wob * 0.6;
+    float3 V = normalize(cross(Right.xyz, Up.xyz));
+    float3 N = normalize(Right.xyz * tilt.x - Up.xyz * tilt.y + V * (0.35 + C));
+    if (dot(N, V) < 0) N = -N;
+    float3 L = normalize(V + Up.xyz * 0.8 + Right.xyz * 0.35);
+    // what's behind, bent through it
+    float2 off = (tilt * P.x * 1.5) + wob * P.x;
+    float3 behind = Pic(px + off);
+    float thick = saturate(C * 1.3);
+    float3 o = lerp(behind, A * (0.3 + Lum(behind) * 0.9), saturate(P.z * (0.35 + thick * 0.65)));
+    float facing = saturate(dot(N, V));
+    o += A * pow(1 - facing, 2.5) * 0.7;
+    o += pow(saturate(dot(reflect(-V, N), L)), 70) * P.y * 1.8;
+    o += pow(saturate(dot(reflect(-V, N), normalize(V - Up.xyz * 0.3 - Right.xyz * 0.6))), 25) * P.y * 0.25;
+    return float4(saturate(o), alpha * saturate(F.Head.y));
+}
+
 float4 PsOutline(float4 pos : SV_Position) : SV_Target0
 {
     float2 uv = pos.xy * Screen.zw;
@@ -763,6 +844,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         _psOutline = Compile("PsOutline", "ps_5_0");
         _psPixel = Compile("PsPixel", "ps_5_0");
         _psMaterial = Compile("PsMaterial", "ps_5_0");
+        _psSlime = Compile("PsSlime", "ps_5_0");
 
         nint o = 0;
         var cbDesc = new BufferDesc { ByteWidth = (uint)((sizeof(Constants) + 15) / 16 * 16), Usage = UsageDynamic, BindFlags = BindConstant, CpuAccessFlags = CpuWrite };
@@ -781,6 +863,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         _blendSolid = MakeBlend(new RtBlend { BlendEnable = 0, Src = 2, Dest = 1, Op = 1, SrcAlpha = 2, DestAlpha = 1, OpAlpha = 1, WriteMask = 0x7 });
         _blendWrite = MakeBlend(new RtBlend { BlendEnable = 0, Src = 2, Dest = 1, Op = 1, SrcAlpha = 2, DestAlpha = 1, OpAlpha = 1, WriteMask = 0xF });
         _blendNoColour = MakeBlend(new RtBlend { BlendEnable = 0, Src = 2, Dest = 1, Op = 1, SrcAlpha = 2, DestAlpha = 1, OpAlpha = 1, WriteMask = 0 });
+        _blendAlpha = MakeBlend(new RtBlend { BlendEnable = 1, Src = 5, Dest = 6, Op = 1, SrcAlpha = 1, DestAlpha = 2, OpAlpha = 1, WriteMask = 0x7 });
 
         nint MakeDepth(bool on, int func)
         {
@@ -999,7 +1082,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     }
 
     private static readonly List<LookGpu> _looks = new();
-    private static float _widest, _block;
+    private static float _widest, _block, _slime;
     private static readonly List<FxGpu> _fx = new();
     private static readonly List<bool> _hide = new();
 
@@ -1026,6 +1109,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         _fx.Clear();
         _widest = 0f;
         _block = 0f;
+        _slime = 0f;
         foreach(var target in targets)
         {
             var gameObject = ActorSkeleton.GetObject(target.Index);
@@ -1049,6 +1133,8 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     int kind = MaterialFx.IdOf(f.Kind);
                     if(kind <= 0)
                         continue;
+                    if(kind == 13 && f.P is { Length: > 3 } && f.P[3] > 0.5f)
+                        _slime = MathF.Max(_slime, f.P[3]);
                     _fx.Add(new FxGpu
                     {
                         Head = new Vector4(kind, Math.Clamp(f.Strength, 0f, 1f), f.Speed, 0f),
@@ -1712,6 +1798,13 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendSolid, zero, 0xFFFFFFFF);
             ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psMaterial, null, 0);
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 3, 0);
+            // the rounded slime (over and round the character, blended in at its soft edge)
+            if(_slime > 0.5f)
+            {
+                ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendAlpha, zero, 0xFFFFFFFF);
+                ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psSlime, null, 0);
+                ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 3, 0);
+            }
             // (the mosaic reads what they made)
             if(pixelate)
             {
@@ -1800,7 +1893,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             Cam = new Vector4(cam, (float)(Environment.TickCount64 % 3_600_000) / 1000f),
             Screen = new Vector4(w, h, 1f / w, 1f / h),
             Mask = new Vector4(maskW, maskH, _widest, _block),
-            Right = new Vector4(right, 0f),
+            Right = new Vector4(right, _slime),
             Up = new Vector4(up, _reversed ? 1f : 0f),
         };
     }
