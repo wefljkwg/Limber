@@ -34,6 +34,7 @@ public sealed class ShaderLook
     public bool SeeThrough { get; set; }
     public float Pixelate { get; set; }             // mosaic block size, pixels (0: off)
     public bool GameBoy { get; set; }               // the mosaic in the Game Boy's four greens
+    public List<MaterialFx> Fx { get; set; } = new(); // material effects, applied in order
 
     public bool ChangesMaterial()
     {
@@ -42,7 +43,7 @@ public sealed class ShaderLook
                || MathF.Abs(Brightness - 1f) > 1e-3f || GlowStrength > 1e-3f;
     }
 
-    public bool HasEffects() => LightStrength > 0f || RimStrength > 0f || OutlineWidth > 0f || SeeThrough || Pixelate >= 1f
+    public bool HasEffects() => LightStrength > 0f || RimStrength > 0f || OutlineWidth > 0f || SeeThrough || Pixelate >= 1f || (Fx?.Any(f => f.On) ?? false)
                                 || GlowStrength > 0f; // (the skin's glow is drawn: its shader can't glow)
 
     public ShaderLook Clone()
@@ -53,6 +54,7 @@ public sealed class ShaderLook
         c.Light = (float[])(Light ?? [1f, 0.55f, 0.85f]).Clone();
         c.Rim = (float[])(Rim ?? [0.55f, 0.8f, 1f]).Clone();
         c.Outline = (float[])(Outline ?? [0f, 0f, 0f]).Clone();
+        c.Fx = (Fx ?? new()).Select(f => f.Clone()).ToList();
         return c;
     }
 

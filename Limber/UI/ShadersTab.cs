@@ -177,6 +177,7 @@ public sealed class ShadersTab
         bool see = look.SeeThrough;
         if(ImGui.Checkbox("See through walls###sh_fx_see", ref see)) { look.SeeThrough = see; changed = true; }
         Tooltip("Where something's in front of them, a faint silhouette in the rim's colour still shows.");
+        changed |= DrawFx(look);
         if(look.HasEffects() && look.Enabled)
             ImGui.TextDisabled($"Marking {Limber.Gpu.EffectRenderer.Drawn} of the game's draws ({Limber.Gpu.EffectRenderer.Views} bone buffers found)");
         if(Limber.Gpu.EffectRenderer.Error.Length > 0)
@@ -194,7 +195,91 @@ public sealed class ShadersTab
             look.Shine = 1f; look.Reflection = 1f; look.Bumps = 1f; look.Shader = "";
             look.Light = fresh.Light; look.LightStrength = 0f; look.Pulse = 0f; look.Rim = fresh.Rim; look.RimStrength = 0f;
             look.RimTightness = fresh.RimTightness; look.Outline = fresh.Outline; look.OutlineWidth = 0f; look.SeeThrough = false;
-            look.Pixelate = 0f; look.GameBoy = false;
+            look.Pixelate = 0f; look.GameBoy = false; look.Fx = new();
+            changed = true;
+        }
+        return changed;
+    }
+
+    // The look's material effects: added from a list by group, each with its own colours and settings, in order.
+    private bool DrawFx(ShaderLook look)
+    {
+        bool changed = false;
+        var list = look.Fx ??= new();
+        ImGui.TextDisabled($"Material effects ({list.Count}/8, applied top to bottom)");
+        ImGui.SetNextItemWidth(Fit.Fixed(240f * ImGuiHelpers.GlobalScale));
+        using(var combo = ImRaii.Combo("###sh_fx_add", "Add a material effect..."))
+        {
+            if(combo.Success)
+                foreach(var group in MaterialFx.Defs.GroupBy(d => d.Group))
+                {
+                    ImGui.TextDisabled(group.Key);
+                    foreach(var d in group)
+                    {
+                        if(ImGui.Selectable($"  {d.Name}###sh_fx_new_{d.Id}") && list.Count < 8)
+                        {
+                            list.Add(MaterialFx.New(d));
+                            changed = true;
+                        }
+                        Tooltip(d.Tip);
+                    }
+                }
+        }
+        int remove = -1, up = -1;
+        for(int i = 0; i < list.Count; i++)
+        {
+            var f = list[i];
+            var d = MaterialFx.DefOf(f.Kind);
+            using var id = ImRaii.PushId($"fx{i}");
+            bool on = f.On;
+            if(ImGui.Checkbox($"{(d?.Name ?? f.Kind)}###on", ref on)) { f.On = on; changed = true; }
+            if(d != null)
+                Tooltip(d.Tip);
+            ImGui.SameLine();
+            if(i > 0 && ImGui.SmallButton("Up###up"))
+                up = i;
+            if(i > 0)
+                ImGui.SameLine();
+            if(ImGui.SmallButton("Remove###rm"))
+                remove = i;
+            if(!f.On || d == null)
+                continue;
+            using var indent = ImRaii.PushIndent();
+            changed |= Slider("Amount###amt", f.Strength, v => f.Strength = v, 0f, 1f, "How much of the effect (0: none, 1: all of it).");
+            if(d.Moves)
+                changed |= Slider("Speed###spd", f.Speed, v => f.Speed = v, -5f, 5f, "How fast it moves (negative: backwards, 0: still).");
+            if(d.ALabel != null)
+                changed |= Colour($"{d.ALabel}###ca", f.A, d.ADefault, v => f.A = v, d.ALabel);
+            if(d.BLabel != null)
+            {
+                if(d.ALabel != null)
+                    ImGui.SameLine();
+                changed |= Colour($"{d.BLabel}###cb", f.B, d.BDefault, v => f.B = v, d.BLabel);
+            }
+            f.P ??= [0f, 0f, 0f, 0f];
+            if(f.P.Length < 4)
+                f.P = f.P.Concat(new float[4 - f.P.Length]).ToArray();
+            for(int k = 0; k < d.Params.Length && k < 4; k++)
+            {
+                var p = d.Params[k];
+                int at = k;
+                changed |= Slider($"{p.Label}###p{k}", f.P[k], v => f.P[at] = v, p.Min, p.Max, p.Tip.Length > 0 ? p.Tip : p.Label + ".");
+            }
+            if(ImGui.SmallButton("Defaults###def"))
+            {
+                var fresh = MaterialFx.New(d);
+                f.A = fresh.A; f.B = fresh.B; f.P = fresh.P; f.Strength = 1f; f.Speed = 1f;
+                changed = true;
+            }
+        }
+        if(remove >= 0)
+        {
+            list.RemoveAt(remove);
+            changed = true;
+        }
+        else if(up > 0)
+        {
+            (list[up - 1], list[up]) = (list[up], list[up - 1]);
             changed = true;
         }
         return changed;
@@ -255,7 +340,7 @@ public sealed class ShadersTab
                     picked.Shine = l.Shine; picked.Reflection = l.Reflection; picked.Bumps = l.Bumps; picked.Shader = l.Shader;
                     picked.Light = l.Light; picked.LightStrength = l.LightStrength; picked.Pulse = l.Pulse; picked.Rim = l.Rim;
                     picked.RimStrength = l.RimStrength; picked.RimTightness = l.RimTightness; picked.Outline = l.Outline;
-                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough; picked.Pixelate = l.Pixelate; picked.GameBoy = l.GameBoy;
+                    picked.OutlineWidth = l.OutlineWidth; picked.SeeThrough = l.SeeThrough; picked.Pixelate = l.Pixelate; picked.GameBoy = l.GameBoy; picked.Fx = l.Fx;
                     _config.Save();
                     _status = $"Loaded \"{p.Name}\" onto {picked.Character}.";
                 }
