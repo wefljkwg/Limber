@@ -207,7 +207,7 @@ public static unsafe class ResearchConsole
                 Out(Limber.Rig.CameraRig.LastViews);
                 return false;
             case "status":
-                Out($"  experiment {(ViewExperiment.On ? "on" : "off")}, slot {ViewExperiment.Slot}, update {(ViewExperiment.LetGameUpdateCamera ? 1 : 0)}; {ViewExperiment.State}");
+                Out($"  experiment {(ViewExperiment.On ? "on" : "off")}, slot {ViewExperiment.Slot}, update {(ViewExperiment.LetGameUpdateCamera ? 1 : 0)}, preview seen {ViewExperiment.PreviewSeen}; {ViewExperiment.State}");
                 Out($"  {ViewExperiment.LoopSaw}");
                 Out($"  per frame: {ViewExperiment.TargetClears:0.0} target clears, {ViewExperiment.DepthClears:0.0} depth clears, {ViewExperiment.SlotClears:0.0} of the slot's size, {ViewExperiment.FrameMs:0.0} ms");
                 Out($"  bases: {string.Join(", ", Bases().Select(b => $"{b.Key} 0x{b.Value:X}"))}");

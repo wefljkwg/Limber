@@ -632,6 +632,20 @@ public static unsafe class ViewExperiment
     /// <summary>Once a frame (the UI draw, at Present): the frame's counts.</summary>
     public static void Frame()
     {
+        if(!PreviewSeen)
+        {
+            try
+            {
+                var mgr = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
+                if(mgr != null)
+                    for(int n = 0; n < 8; n++)
+                        if(n != _usedSlot && *((byte*)mgr + 0x3837c + n) != 0)
+                            PreviewSeen = true;
+            }
+            catch
+            {
+            }
+        }
         if(!_hooked)
             return;
         long now = System.Diagnostics.Stopwatch.GetTimestamp();
