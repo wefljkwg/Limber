@@ -530,6 +530,8 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
         public Vector3[] Nrm = [];
         public byte[] Bi = [];       // 4 per vertex: the mesh's own bone (its table's index)
         public float[] Bw = [];      // 4 per vertex
+        public int Table = -1;       // its bone table (the game's matrices for it)
+        public uint LodMask;         // parts only for far away (atr_lod): never drawn this close
         public ushort[] Raw = [];    // the mesh's own index list, as the file has it
         public List<(int Start, int Count, uint Attributes)> Subs = new();
         public List<(int Shape, (int Index, int Vertex)[] Values)> Shapes = new();
@@ -568,7 +570,7 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 Range(0, idx.Length);
             else
                 foreach(var (start, count, needs) in Subs)
-                    if((needs & attributes) == needs)
+                    if((needs & attributes) == needs && (needs & LodMask) == 0)
                         Range(start, count);
             _tris = tris.ToArray();
             _attr = attributes;
@@ -607,6 +609,12 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             int end = (int)(offset[0] + size[0]);
             var skins = MdlRigger.Skin(data, 0);
             var materials = MdlRigger.MeshMaterials(data);
+            var tables = MdlRigger.MeshBoneTables(data);
+            var attributeNames = MdlRigger.AttributeNames(data);
+            uint lodMask = 0;
+            for(int a = 0; a < attributeNames.Length && a < 32; a++)
+                if(attributeNames[a].Equals("atr_lod", StringComparison.OrdinalIgnoreCase))
+                    lodMask |= 1u << a;
             var result = new ModelData();
             Span<int> bi = stackalloc int[4];
             Span<float> bw = stackalloc float[4];
@@ -676,6 +684,8 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                 if(bad)
                     continue;
                 mesh.Raw = skin.Triangles;
+                mesh.Table = layout.Mesh < tables.Length ? tables[layout.Mesh] : -1;
+                mesh.LodMask = lodMask;
                 mesh.Subs = MdlRigger.MeshSubmeshes(data, layout.Mesh);
                 mesh.Shapes = MdlRigger.MeshShapesIndexed(data, 0, layout.Mesh);
                 if(mesh.Raw.Length >= 3)
@@ -712,10 +722,15 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
     {
         public long Next;
         public Dictionary<string, (int Partial, int Bone, Matrix4x4 Inverse)> ByName = new(StringComparer.Ordinal);
+        public nint[] Tables = [];   // the game's bone-table objects (one per file bone table)
+        public int[] Counts = [];
+        public bool GameOk;          // the game's own matrices agree with where the bones are (used, not worked out here)
+        public long GameChecked;
     }
 
     private static readonly Dictionary<nint, Binds> BindsOf = new();
     private static readonly HashSet<(string, uint, uint)> Reported = new();
+    private static readonly HashSet<string> ReportedGame = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SkeletonInfoCache Cache = new();
 
     private static Binds? ReadBinds(nint model, in ActorSkeleton sk, long now)
@@ -731,9 +746,13 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             return binds;
         }
         var raw = new List<(int Partial, int Bone, float[] F)>();
+        binds.Tables = new nint[tables];
+        binds.Counts = new int[tables];
         for(int t = 0; t < tables; t++)
         {
             nint table = list + t * 0xE0;
+            binds.Tables[t] = table;
+            binds.Counts[t] = Math.Clamp(SafeMemory.Read<int>(table + 0xC8, 0), 0, 1024);
             nint matrices = SafeMemory.ReadPointer(table + 0xB8);
             nint refsAt = SafeMemory.ReadPointer(table + 0xC0);
             int count = SafeMemory.Read<int>(table + 0xC8, 0);
@@ -788,8 +807,90 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
             if(!binds.ByName.ContainsKey(name))
                 binds.ByName[name] = (partial, bone, BodySwap.ToRowVector(f, 0, columns));
         }
+        if(known != null)
+        {
+            binds.GameOk = known.GameOk;
+            binds.GameChecked = known.GameChecked;
+        }
         BindsOf[model] = binds;
         return binds;
+    }
+
+    // ---- The game's own skinning matrices for this frame (the very ones it drew the character with)
+    // Each bone table keeps four ring buffers (+0x90), the frame's slot at Render::Manager+0x38384; each buffer's CPU copy
+    // (+0x88) holds a 3x4 per bone, column by column, in the camera's view space. Which slot is this frame's at the time
+    // Limber draws is learned: the one whose contents just changed.
+
+    private static int _ringOffset;
+    private static nint _ringTable;
+    private static readonly Vector3[] _ringLast = new Vector3[4];
+
+    private static int CurrentSlot()
+    {
+        var manager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager.Instance();
+        if(manager == null)
+            return -1;
+        int slot = SafeMemory.Read<int>((nint)manager + 0x38384, -1);
+        return slot is >= 0 and <= 3 ? slot : -1;
+    }
+
+    private static nint RingData(nint table, int slot)
+    {
+        nint buffer = SafeMemory.ReadPointer(table + 0x90 + slot * 8);
+        if(!SafeMemory.Plausible(buffer))
+            return 0;
+        nint data = SafeMemory.ReadPointer(buffer + 0x88);
+        return SafeMemory.Plausible(data) ? data : 0;
+    }
+
+    private static void LearnRing(nint table)
+    {
+        int s = CurrentSlot();
+        if(s < 0)
+            return;
+        Span<Vector3> now = stackalloc Vector3[4];
+        for(int k = 0; k < 4; k++)
+        {
+            nint data = RingData(table, k);
+            now[k] = data == 0 ? Vector3.Zero : SafeMemory.Read<Vector3>(data + 36, Vector3.Zero);
+        }
+        if(table == _ringTable)
+        {
+            int changed = -1, count = 0;
+            for(int k = 0; k < 4; k++)
+                if(Vector3.DistanceSquared(now[k], _ringLast[k]) > 1e-12f)
+                {
+                    changed = k;
+                    count++;
+                }
+            if(count == 1)
+                _ringOffset = (changed - s) & 3;
+        }
+        _ringTable = table;
+        for(int k = 0; k < 4; k++)
+            _ringLast[k] = now[k];
+    }
+
+    private static bool GameMatrices(nint table, int count, in Matrix4x4 viewToWorld, Matrix4x4[] into)
+    {
+        int s = CurrentSlot();
+        if(s < 0 || count <= 0)
+            return false;
+        nint data = RingData(table, (s + _ringOffset) & 3);
+        if(data == 0)
+            return false;
+        int n = Math.Min(count, into.Length);
+        var f = new float[n * 12];
+        fixed(float* to = f)
+            if(!SafeMemory.Copy(data, to, n * 48))
+                return false;
+        for(int e = 0; e < n; e++)
+        {
+            int o = e * 12;
+            var g = new Matrix4x4(f[o], f[o + 1], f[o + 2], 0f, f[o + 3], f[o + 4], f[o + 5], 0f, f[o + 6], f[o + 7], f[o + 8], 0f, f[o + 9], f[o + 10], f[o + 11], 1f);
+            into[e] = g * viewToWorld;
+        }
+        return true;
     }
 
     private static bool BoneWorld(in ActorSkeleton sk, int partial, int bone, out Matrix4x4 m)
@@ -859,6 +960,10 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
         _probeCount = 0;
         long now = Environment.TickCount64;
         var seenModels = new HashSet<nint>();
+        bool haveView = CameraUtil.TryGetMatrices(out var cameraView, out _);
+        var viewToWorld = Matrix4x4.Identity;
+        haveView = haveView && Matrix4x4.Invert(cameraView, out viewToWorld);
+        bool ringLearned = false;
         foreach(var target in targets)
         {
             if(!ActorSkeleton.TryGet(target.Address, target.Index, Cache, out var sk))
@@ -913,8 +1018,42 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                         continue;
                     // the mesh's bones, where they are now (a bone the game doesn't skin it with: the mesh left out)
                     var mats = new Matrix4x4[mesh.Bones.Length];
+                    var known = new bool[mesh.Bones.Length];
+                    bool game = false;
+                    // the game's own matrices for this frame when they can be read (and agree with the bones)
+                    if(haveView && mesh.Table >= 0 && mesh.Table < binds.Tables.Length && binds.Counts[mesh.Table] >= mesh.Bones.Length
+                       && GameMatrices(binds.Tables[mesh.Table], mesh.Bones.Length, viewToWorld, mats))
+                    {
+                        if(_ringTable == 0 || !ringLearned)
+                        {
+                            LearnRing(binds.Tables[mesh.Table]);
+                            ringLearned = true;
+                        }
+                        if(now >= binds.GameChecked)
+                        {
+                            binds.GameChecked = now + 250;
+                            float err = 0f;
+                            int tested = 0;
+                            for(int b = 0; b < mesh.Bones.Length && tested < 4; b++)
+                            {
+                                if(!binds.ByName.TryGetValue(mesh.Bones[b], out var bind) || bind.Partial != 0
+                                   || !BoneWorld(sk, 0, bind.Bone, out var world) || !Matrix4x4.Invert(bind.Inverse, out var rest))
+                                    continue;
+                                err += Vector3.Distance(Vector3.Transform(rest.Translation, mats[b]), world.Translation);
+                                tested++;
+                            }
+                            bool was = binds.GameOk;
+                            binds.GameOk = tested > 0 && err / tested < 0.3f;
+                            if(binds.GameOk != was || !ReportedGame.Contains(file))
+                            {
+                                ReportedGame.Add(file);
+                                Plugin.Log.Information($"Limber: effects on {file}: the game's own matrices {(binds.GameOk ? "used" : "not used")} (off by {(tested > 0 ? err / tested : -1f):0.000} m, ring {_ringOffset})");
+                            }
+                        }
+                        game = binds.GameOk;
+                    }
                     bool ok = true;
-                    for(int b = 0; b < mesh.Bones.Length && ok; b++)
+                    for(int b = 0; b < mesh.Bones.Length && ok && !game; b++)
                     {
                         if(!binds.ByName.TryGetValue(mesh.Bones[b], out var bind))
                         {
@@ -926,9 +1065,8 @@ float PsProbe(float4 pos : SV_Position) : SV_Target0
                     }
                     if(!ok)
                         continue;
-                    var known = new bool[mesh.Bones.Length];
                     for(int b = 0; b < known.Length; b++)
-                        known[b] = binds.ByName.ContainsKey(mesh.Bones[b]);
+                        known[b] = game || binds.ByName.ContainsKey(mesh.Bones[b]);
                     int look = lookOf.TryGetValue(mesh.Part, out var own) ? own : lookOf.TryGetValue("All", out var all) ? all : -1;
                     int n = mesh.Pos.Length;
                     Grow(ref _verts, nv + n);

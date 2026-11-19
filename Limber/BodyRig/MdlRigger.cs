@@ -111,6 +111,7 @@ public static class MdlRigger
         public List<(uint IndexStart, uint ValueCount, uint ValueStart)> ShapeMeshes = new();
         // Submeshes: where in the LoD's indices, how many, which attributes they need (bits of the model's attribute list).
         public List<(uint IndexOffset, uint IndexCount, uint Attributes)> Submeshes = new();
+        public List<string> AttributeNames = new();
         public List<(ushort Index, ushort Vertex)> ShapeValues = new();
     }
 
@@ -1367,6 +1368,12 @@ public static class MdlRigger
         return result;
     }
 
+    /// <summary>The model's attribute names, in the order of their bits.</summary>
+    public static string[] AttributeNames(byte[] file) => Parse(file).AttributeNames.ToArray();
+
+    /// <summary>Each mesh's bone table (by mesh index).</summary>
+    public static int[] MeshBoneTables(byte[] file) => Parse(file).Meshes.Select(x => x.BoneTable).ToArray();
+
     /// <summary>As <see cref="MeshShapes"/>, with each shape's place in the model's shape list (its bit in the model's
     /// enabled shape mask).</summary>
     public static List<(int Shape, (int Index, int Vertex)[] Values)> MeshShapesIndexed(byte[] file, int lod, int mesh)
@@ -2113,7 +2120,9 @@ public static class MdlRigger
             m.Meshes.Add(mesh);
         }
 
-        r.BaseStream.Position += attributeCount * 4 + terrainShadowMeshCount * 20;
+        for (int i = 0; i < attributeCount; i++)
+            m.AttributeNames.Add(m.Strings.TryGetValue(r.ReadUInt32(), out var atr) ? atr : "");
+        r.BaseStream.Position += terrainShadowMeshCount * 20;
         for (int i = 0; i < submeshCount; i++)
         {
             long at = r.BaseStream.Position;
