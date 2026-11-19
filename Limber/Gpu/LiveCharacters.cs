@@ -193,7 +193,7 @@ public static unsafe class LiveCharacters
     public static int Replays, LastReplays;
     public static string Error = "";
     /// <summary>Which of the g-buffer copies holds the colour, and which the normals (set from the console).</summary>
-    public static int AlbedoIndex = 1, NormalIndex;
+    public static int AlbedoIndex = 2, NormalIndex;
 
     /// <summary>For the console: Limber's g-buffer copies and depth.</summary>
     public static nint TargetTexture(int i) => i >= 0 && i < MaxTargets ? Tex[i] : 0;
@@ -487,6 +487,9 @@ public static unsafe class LiveCharacters
     }
 
     public static string LastPatch = "";
+    /// <summary>0: the camera's matrices swapped (world and camera-relative ones); 1: also the projection made to take
+    /// the main camera's view space to the prop's picture (for shaders handed positions already in view space).</summary>
+    public static int PatchMode;
 
     // Every copy of the main camera's matrices (and its position) in the buffer swapped for the prop's, in the same
     // layout (the game keeps them transposed; views as 3 rows).
@@ -513,10 +516,26 @@ public static unsafe class LiveCharacters
         var pvp = pv * pp;
         if(!Matrix4x4.Invert(mvp, out var mivp) || !Matrix4x4.Invert(pvp, out var pivp))
             return false;
+        // The characters are drawn relative to the main camera's position (their bones are moved by it on the CPU), with
+        // the same matrices without the camera's position in them: for the prop, from the main camera's position to the
+        // world (+eye) and then the prop's view.
+        var eyeMain = new Vector3(miv.M41, miv.M42, miv.M43);
+        var mvRel = mv;
+        mvRel.M41 = mvRel.M42 = mvRel.M43 = 0;
+        var pvRel = Matrix4x4.CreateTranslation(eyeMain) * pv;
+        var mvpRel = mvRel * mp;
+        var pvpRel = pvRel * pp;
+        if(!Matrix4x4.Invert(mvRel, out var mivRel) || !Matrix4x4.Invert(pvRel, out var pivRel)
+           || !Matrix4x4.Invert(mvpRel, out var mivpRel) || !Matrix4x4.Invert(pvpRel, out var pivpRel))
+            return false;
         var kinds = new (Matrix4x4 Main, Matrix4x4 Prop, int Size, string Name)[]
         {
             (mv, pv, 12, "view"), (miv, piv, 12, "inverse view"), (mvp, pvp, 16, "view-projection"),
-            (mivp, pivp, 16, "inverse view-projection"), (mp, pp, 16, "projection"), (mip, pip, 16, "inverse projection"),
+            (mivp, pivp, 16, "inverse view-projection"),
+            (mvRel, pvRel, 12, "relative view"), (mivRel, pivRel, 12, "inverse relative view"),
+            (mvpRel, pvpRel, 16, "relative view-projection"), (mivpRel, pivpRel, 16, "inverse relative view-projection"),
+            (mp, PatchMode == 1 && Matrix4x4.Invert(mv, out var back) ? back * pv * pp : pp, 16, "projection"),
+            (mip, PatchMode == 1 && Matrix4x4.Invert(mv, out var back2) && Matrix4x4.Invert(back2 * pv * pp, out var backInv) ? backInv : pip, 16, "inverse projection"),
         };
         var done = new bool[n];
         var log = new StringBuilder();

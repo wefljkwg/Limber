@@ -272,6 +272,9 @@ public static unsafe class ResearchConsole
             case "worldsrc":
                 WorldPass.SourceOffset = (int)Number(value);
                 break;
+            case "patch":
+                LiveCharacters.PatchMode = (int)Number(value);
+                break;
             case "albedo":
                 LiveCharacters.AlbedoIndex = (int)Number(value);
                 break;
