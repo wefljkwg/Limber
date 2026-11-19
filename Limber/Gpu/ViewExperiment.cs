@@ -183,6 +183,7 @@ public static unsafe class ViewExperiment
             *((byte*)_camera + 0x205) = (byte)(LetGameUpdateCamera ? 0 : 1);
             *(nint*)SlotCameraAt(views, _usedSlot) = _camera;
             *(int*)CountAt(manager, _usedSlot) = 1;
+            Light(_usedSlot);
             _applied++;
             State = $"drawing into slot {_usedSlot}";
         }
@@ -193,6 +194,48 @@ public static unsafe class ViewExperiment
             Plugin.Log.Warning(e, "Limber: the second-view experiment stopped");
             Restore();
         }
+    }
+
+    // Each chara-view slot has a small lighting block (a global's +(n+0x2b)*0x40), which the game fills when a preview
+    // window takes the slot (0x1402691d0): a key light, a sky-ish direction, ambient 0.2, the rest 1. A slot nobody took
+    // has it all zero, so it draws black: Limber fills it the same way.
+    private const string LightSig = "83 FA 07 77 ?? 48 63 C2 48 83 C0 2B 8B CA 48 C1 E0 06 48 03 05";
+    private static nint _lightGlobal = -1;
+    public static string LightState = "";
+
+    private static void Light(int n)
+    {
+        if(_lightGlobal == -1)
+        {
+            _lightGlobal = 0;
+            try
+            {
+                if(Plugin.SigScanner.TryScanText(LightSig, out var at))
+                    _lightGlobal = at + 25 + *(int*)(at + 21);
+            }
+            catch
+            {
+            }
+            if(_lightGlobal == 0)
+                LightState = "couldn't find the slots' lighting";
+        }
+        if(_lightGlobal == 0)
+            return;
+        nint table = *(nint*)_lightGlobal;
+        if(!SafeMemory.Plausible(table))
+            return;
+        float* b = (float*)(table + (n + 0x2b) * 0x40);
+        bool empty = true;
+        for(int i = 0; i < 16; i++)
+            if(b[i] != 0)
+                empty = false;
+        if(LightState.Length == 0)
+            LightState = empty ? $"slot {n}'s lighting was empty: filled in" : $"slot {n}'s lighting was already set";
+        *(int*)b = 0;
+        *(uint*)(b + 1) = 0x3f2ac083;
+        b[4] = b[5] = b[6] = 0.57735f;
+        b[8] = b[9] = b[10] = 0.2f;
+        b[11] = b[12] = b[13] = b[14] = b[15] = 1f;
     }
 
     // The slot as the game had it.
@@ -215,6 +258,7 @@ public static unsafe class ViewExperiment
         }
         _usedSlot = -1;
         State = "";
+        LightState = "";
     }
 
     // The camera of the first monitor that's on, or the first camera prop.
@@ -484,7 +528,17 @@ public static unsafe class ViewExperiment
                 var sb = new StringBuilder();
                 for(int n = 0; n < 8; n++)
                     sb.Append(*(byte*)(manager + 0x3837c + n) != 0 ? '1' : '0');
-                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(*(nint*)SlotCameraAt(views, Slot) == _camera && _camera != 0 ? "Limber's" : $"0x{*(nint*)SlotCameraAt(views, Slot):X}")}";
+                nint sc = *(nint*)SlotCameraAt(views, Slot);
+                string where = "";
+                if(SafeMemory.Plausible(sc))
+                {
+                    var m = SafeMemory.Read<Matrix4x4>(sc + 0x10, default);
+                    m.M14 = m.M24 = m.M34 = 0;
+                    m.M44 = 1;
+                    if(Matrix4x4.Invert(m, out var w))
+                        where = $" at ({w.M41:0.0}, {w.M42:0.0}, {w.M43:0.0})";
+                }
+                LoopSaw = $"slots drawn by the game last frame: {sb} (0-7); slot {Slot}: count {*(int*)CountAt(manager, Slot)}, camera {(sc == _camera && _camera != 0 ? "Limber's" : $"0x{sc:X} (Limber's is 0x{_camera:X})")}{where}; {LightState}";
             }
         }
         catch
