@@ -50,8 +50,9 @@ public sealed class ShaderLook
     public bool ChangesMaterial()
     {
         var t = Tint ?? [1f, 1f, 1f];
-        return MathF.Abs(t[0] - 1f) > 1e-3f || MathF.Abs(t[1] - 1f) > 1e-3f || MathF.Abs(t[2] - 1f) > 1e-3f
-               || MathF.Abs(Brightness - 1f) > 1e-3f || GlowStrength > 1e-3f;
+        float ta = Shaders.Alpha(t);
+        return ta > 1e-3f && (MathF.Abs(t[0] - 1f) > 1e-3f || MathF.Abs(t[1] - 1f) > 1e-3f || MathF.Abs(t[2] - 1f) > 1e-3f)
+               || MathF.Abs(Brightness - 1f) > 1e-3f || GlowStrength * Shaders.Alpha(Glow) > 1e-3f;
     }
 
     public bool HasEffects() => LightStrength > 0f || RimStrength > 0f || OutlineWidth > 0f || SeeThrough || Pixelate >= 1f || HideBody || (Fx?.Any(f => f.On) ?? false)
@@ -75,7 +76,7 @@ public sealed class ShaderLook
         var t = Tint ?? [1f, 1f, 1f];
         var g = Glow ?? [1f, 1f, 1f];
         return FormattableString.Invariant(
-            $"{Part}|{(MaterialBody ? "b" : "")}{(MaterialOutfit ? "o" : "")}|{t[0]:0.###},{t[1]:0.###},{t[2]:0.###}|{Brightness:0.###}|{g[0]:0.###},{g[1]:0.###},{g[2]:0.###}|{GlowStrength:0.###}|{Shine:0.###}|{Reflection:0.###}|{Bumps:0.###}");
+            $"{Part}|{(MaterialBody ? "b" : "")}{(MaterialOutfit ? "o" : "")}|{t[0]:0.###},{t[1]:0.###},{t[2]:0.###},{Shaders.Alpha(t):0.###}|{Brightness:0.###}|{g[0]:0.###},{g[1]:0.###},{g[2]:0.###},{Shaders.Alpha(g):0.###}|{GlowStrength:0.###}|{Shine:0.###}|{Reflection:0.###}|{Bumps:0.###}");
     }
 }
 
@@ -286,11 +287,13 @@ public sealed unsafe class Shaders : IDisposable
         // the like come as Limber's own effects instead.)
         var t = look.Tint ?? [1f, 1f, 1f];
         float bright = Math.Clamp(look.Brightness, 0f, 10f);
-        var colour = new[] { t[0] * bright, t[1] * bright, t[2] * bright };
+        // (a colour's opacity: how much of it; the tint at 0 leaves the colour as it is)
+        float ta = Alpha(t);
+        var colour = new[] { (1f + (t[0] - 1f) * ta) * bright, (1f + (t[1] - 1f) * ta) * bright, (1f + (t[2] - 1f) * ta) * bright };
         if (colour.Any(c => MathF.Abs(c - 1f) > 1e-4f))
             b = Scale(b, DiffuseColor, colour, 1f);
         var glowColour = look.Glow ?? [1f, 1f, 1f];
-        float glow = Math.Clamp(look.GlowStrength, 0f, 20f);
+        float glow = Math.Clamp(look.GlowStrength * Alpha(glowColour), 0f, 20f);
         float shine = 1f; // (Shine, Reflections and Bumps: none of the character shaders took them this way; off)
         // Gear (the character shaders) takes its shine and glow from its colour table, row by row, not from the
         // material's settings: changed there. The others (hair, skin, eyes...) from their settings.
@@ -427,6 +430,9 @@ public sealed unsafe class Shaders : IDisposable
         }
         return path;
     }
+
+    /// <summary>A colour's opacity (its fourth value; 1 when it has none).</summary>
+    public static float Alpha(float[]? c) => c is { Length: >= 4 } ? Math.Clamp(c[3], 0f, 1f) : 1f;
 
     /// <summary>Which part a material is: skin, hair, face or gear.</summary>
     public static string PartOf(string path, uint slot, bool skin)

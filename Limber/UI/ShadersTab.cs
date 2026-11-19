@@ -154,14 +154,10 @@ public sealed class ShadersTab
         ImGui.SameLine();
         if(ImGui.Checkbox("Outfit###sh_mat_outfit", ref mo)) { look.MaterialOutfit = mo; changed = true; }
         Tooltip("The colour, brightness and glow below go on what they wear: clothes, accessories, weapons.");
-        var tint = new Vector3(look.Tint?[0] ?? 1f, look.Tint?[1] ?? 1f, look.Tint?[2] ?? 1f);
-        if(ImGui.ColorEdit3("Colour###sh_tint", ref tint, ImGuiColorEditFlags.NoInputs)) { look.Tint = [tint.X, tint.Y, tint.Z]; changed = true; }
-        Tooltip("Multiplies their colour (white: as it is).");
+        changed |= Colour("Colour###sh_tint", look.Tint, Vector3.One, v => look.Tint = v, "Multiplies their colour (white: as it is).");
         ImGui.SameLine();
         changed |= Slider("Brightness###sh_bright", look.Brightness, v => look.Brightness = v, 0f, 3f, "Darker (below 1) or brighter (above).");
-        var glow = new Vector3(look.Glow?[0] ?? 1f, look.Glow?[1] ?? 1f, look.Glow?[2] ?? 1f);
-        if(ImGui.ColorEdit3("Glow###sh_glowc", ref glow, ImGuiColorEditFlags.NoInputs)) { look.Glow = [glow.X, glow.Y, glow.Z]; changed = true; }
-        Tooltip("The colour they glow with. Gear and hair glow through their material; skin can't (the game's skin shader has no glow), so Limber draws the skin's glow itself.");
+        changed |= Colour("Glow###sh_glowc", look.Glow, Vector3.One, v => look.Glow = v, "The colour they glow with. Gear and hair glow through their material; skin can't (the game's skin shader has no glow), so Limber draws the skin's glow itself.");
         ImGui.SameLine();
         changed |= Slider("Glow strength###sh_glow", look.GlowStrength, v => look.GlowStrength = v, 0f, 3f, "How much they glow on their own, even in the dark (0: none).");
 
@@ -278,9 +274,14 @@ public sealed class ShadersTab
                 changed |= Colour($"{d.BLabel}###cb", f.B, d.BDefault, v => f.B = v, d.BLabel);
             }
             f.P ??= [0f, 0f, 0f, 0f];
-            if(f.P.Length < 4)
-                f.P = f.P.Concat(new float[4 - f.P.Length]).ToArray();
-            for(int k = 0; k < d.Params.Length && k < 4; k++)
+            if(f.P.Length < 8)
+            {
+                // (settings added since this effect was made start at their defaults)
+                var grown = MaterialFx.New(d).P;
+                Array.Copy(f.P, grown, f.P.Length);
+                f.P = grown;
+            }
+            for(int k = 0; k < d.Params.Length && k < 8; k++)
             {
                 var p = d.Params[k];
                 int at = k;
@@ -308,11 +309,12 @@ public sealed class ShadersTab
 
     private static bool Colour(string label, float[]? value, Vector3 fallback, Action<float[]> set, string tip)
     {
-        var c = value is { Length: >= 3 } ? new Vector3(value[0], value[1], value[2]) : fallback;
-        bool moved = ImGui.ColorEdit3(label, ref c, ImGuiColorEditFlags.NoInputs);
+        // (with its opacity: the fourth value, 1 when it has none)
+        var c = value is { Length: >= 3 } ? new Vector4(value[0], value[1], value[2], value.Length >= 4 ? value[3] : 1f) : new Vector4(fallback, 1f);
+        bool moved = ImGui.ColorEdit4(label, ref c, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.AlphaBar | ImGuiColorEditFlags.AlphaPreviewHalf);
         if(moved)
-            set([c.X, c.Y, c.Z]);
-        Tooltip(tip);
+            set([c.X, c.Y, c.Z, c.W]);
+        Tooltip(tip + " (Opacity: how much of this colour.)");
         return moved;
     }
 

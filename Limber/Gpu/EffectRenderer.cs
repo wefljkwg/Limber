@@ -194,7 +194,8 @@ public static unsafe class EffectRenderer
     private struct FxGpu
     {
         public Vector4 Head;     // kind, strength, speed, 0
-        public Vector4 A, B, P;
+        public Vector4 A, B, P;  // colours (rgb, opacity), settings 1-4
+        public Vector4 Q;        // settings 5-8
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -344,7 +345,7 @@ float4 PsPixel(float4 pos : SV_Position) : SV_Target0
 }
 
 // ---- Material effects (Koikatsu Material Editor style): each look's list, applied in order on its visible pixels
-struct Fx { float4 Head; float4 A; float4 B; float4 P; }; // Head: kind, strength, speed, 0
+struct Fx { float4 Head; float4 A; float4 B; float4 P; float4 Q; }; // Head: kind, strength, speed, 0; A, B: rgb, opacity
 StructuredBuffer<Fx> Effects : register(t5);
 
 float Lum(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
@@ -414,14 +415,16 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
 {
     int kind = (int)round(f.Head.x);
     float t = Cam.w * f.Head.z;
-    float3 A = f.A.rgb, B = f.B.rgb;
+    // each colour's opacity: painted over the picture, as a tint, or as added light
+    float3 A = lerp(c, f.A.rgb, f.A.a), B = lerp(c, f.B.rgb, f.B.a);
+    float3 Am = lerp(1, f.A.rgb, f.A.a), Aa = f.A.rgb * f.A.a, Ba = f.B.rgb * f.B.a;
     float4 P = f.P;
     float3 L = normalize(v + Up.xyz * 0.7 + Right.xyz * 0.4); // a light from above the camera
     float3 o = c;
     [branch] switch (kind)
     {
     case 1: { // Colour grade
-        o = HueShift(c, P.x); float l = Lum(o); o = lerp(l, o, P.y); o = (o - 0.5) * P.z + 0.5; o *= P.w * A; break; }
+        o = HueShift(c, P.x); float l = Lum(o); o = lerp(l, o, P.y); o = (o - 0.5) * P.z + 0.5; o *= P.w * Am; break; }
     case 2: o = 1 - c; break; // Invert
     case 3: { float l = Lum(c); o = lerp(l, float3(1.07, 0.74, 0.43) * l, P.x); break; } // Greyscale / sepia
     case 4: { float lv = max(P.x, 2); o = floor(c * lv + 0.5) / lv; break; } // Posterize
@@ -430,18 +433,18 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
         float q = floor(l * bands) / (bands - 1);
         float s = lerp(q, l, P.y);
         o = c / max(l, 1e-3) * s;
-        o *= lerp(A, 1, saturate(s * 2));
-        o += B * pow(saturate(dot(reflect(-v, n), L)), 30) * P.z;
+        o *= lerp(Am, 1, saturate(s * 2));
+        o += Ba * pow(saturate(dot(reflect(-v, n), L)), 30) * P.z;
         break; }
-    case 6: o = A + B * pow(rim, 2) * P.x; break; // Silhouette
+    case 6: o = A + Ba * pow(rim, 2) * P.x; break; // Silhouette
     case 7: { // Hologram
         float lines = frac(rel.y * P.x - t * 0.5);
         float scan = 0.55 + 0.45 * smoothstep(0.0, 0.2, lines) * smoothstep(1.0, 0.6, lines);
         float flick = 1 - P.y * step(0.85, Hash1(floor(t * 12)));
         float grain = 1 + (Hash2(px + floor(t * 30)) - 0.5) * P.z;
-        o = (A * (0.35 + Lum(c) * 1.2) * scan + B * pow(rim, 1.5) * 1.5) * flick * grain;
+        o = (A * (0.35 + Lum(c) * 1.2) * scan + Ba * pow(rim, 1.5) * 1.5) * flick * grain;
         break; }
-    case 8: o = A * P.y * (1 - rim) + B * pow(rim, max(0.2, 1 / max(P.x, 0.05))) * 1.5; break; // X-ray
+    case 8: o = A * P.y * (1 - rim) + Ba * pow(rim, max(0.2, 1 / max(P.x, 0.05))) * 1.5; break; // X-ray
     case 9: o = Thermal(Lum(c) * P.y + P.x); break; // Thermal vision
     case 10: { // Night vision
         float l = Lum(c) * 2.2;
@@ -458,7 +461,7 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
         break; }
     case 12: { // Glass
         float2 off = ScreenStep(wp, n) * P.x * (1 - rim * 0.5);
-        o = Pic(px + off) * lerp(1, A, P.z) + B * pow(rim, 2) * P.y;
+        o = Pic(px + off) * lerp(1, Am, P.z) + Ba * pow(rim, 2) * P.y;
         break; }
     case 13: { // Goo / slime (rounded: drawn by its own pass, PsSlime)
         if (P.w > 0.5) break;
@@ -466,11 +469,11 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
         float2 off = (ScreenStep(wp, n) + w) * P.x;
         float3 behind = Pic(px + off);
         o = lerp(behind, A * (0.5 + Lum(behind)), P.z);
-        o += pow(saturate(dot(reflect(-v, n), L)), 40) * P.y + A * rim * 0.6;
+        o += pow(saturate(dot(reflect(-v, n), L)), 40) * P.y + Aa * rim * 0.6;
         break; }
     case 14: { // Ice / frost
         float2 vo = Voronoi(rel * max(P.w, 0.5) * 10);
-        o = lerp(c, A, P.x) + rim * 0.5 * A;
+        o = lerp(c, A, P.x) + rim * 0.5 * Aa;
         o += smoothstep(0.06, 0.0, vo.y) * P.y * 0.8;
         o += step(0.995 - P.z * 0.02, Hash2(floor(px / 2) + floor(t * 3))) * P.z * 2;
         break; }
@@ -598,7 +601,7 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
         float3 cell = floor(rel * max(P.y, 1) * 40);
         float h = Hash3(cell);
         float tw = saturate(sin(t * 4 + h * 60));
-        o = c + A * step(1 - P.x * 0.05, h) * pow(tw, 6) * 3; break; }
+        o = c + Aa * step(1 - P.x * 0.05, h) * pow(tw, 6) * 3; break; }
     case 38: { // Snow
         float cover = smoothstep(1 - P.x * 1.5, 1.1 - P.x * 1.5, n.y);
         o = lerp(c, A, cover);
@@ -616,24 +619,24 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
     case 41: { // Energy bands
         float b = frac(rel.y / max(P.x * 0.01, 0.01) - t);
         float band = 1 - smoothstep(0, max(P.y, 0.01), abs(b - 0.5) * 2);
-        o = c + A * band * 2; break; }
+        o = c + Aa * band * 2; break; }
     case 42: o = lerp(A, B, saturate(Lum(c))); break; // Gradient map
     case 43: { // Heat haze
         float2 w = float2(Noise3(float3(px * max(P.y, 0.1) * 0.05, t)), Noise3(float3(px * max(P.y, 0.1) * 0.05 + 7, t))) - 0.5;
         o = Pic(px + w * P.x * 2); break; }
-    case 44: o = c * (1 - P.x) * A; break; // Shadow
+    case 44: o = c * (1 - P.x) * Am; break; // Shadow
     case 45: { // Cel shading (light-direction bands from the surface)
         float d = saturate(dot(n, L) * 0.5 + 0.5);
         float bands = max(P.x, 2);
         float s = floor(d * bands) / (bands - 1);
-        o = c * lerp(A, 1, s) + B * step(1 - P.y * 0.1, pow(rim, 1)) ; break; }
+        o = c * lerp(Am, 1, s) + Ba * step(1 - P.y * 0.1, pow(rim, 1)) ; break; }
     case 46: { // Gold statue / chrome (metal keeping the shape)
         float3 r = reflect(-v, n);
         float env = 0.35 + 0.65 * saturate(r.y * 0.5 + 0.5) + 0.2 * sin(r.x * 8);
         float spec = pow(saturate(dot(r, L)), 60) * 2;
         o = A * env * (0.6 + 0.8 * Lum(c)) + spec; break; }
     case 47: { // Pulse (brightness throb)
-        o = c * (1 + P.x * (0.5 + 0.5 * sin(t * 6.2831853))) + A * P.y * (0.5 + 0.5 * sin(t * 6.2831853)); break; }
+        o = c * (1 + P.x * (0.5 + 0.5 * sin(t * 6.2831853))) + Aa * P.y * (0.5 + 0.5 * sin(t * 6.2831853)); break; }
     case 48: { // Rainbow shift (over the body)
         o = lerp(c, Rainbow(rel.y * max(P.x, 0.1) - t * 0.3) * (0.4 + Lum(c)), P.y); break; }
     case 49: { // Noise dissolve to colour
@@ -641,9 +644,9 @@ float3 ApplyFx(Fx f, float3 c, float2 px, int2 mp, float3 wp, float3 rel, float3
         float th = P.x + (P.z > 0.5 ? 0.5 + 0.5 * sin(t) : 0) * 0.5;
         float edge = smoothstep(th - 0.05, th, nz) - smoothstep(th, th + 0.02, nz);
         o = nz < th ? A : c;
-        o += B * edge * 3; break; }
+        o += Ba * edge * 3; break; }
     case 50: { // Outline glow inside (fresnel colour)
-        o = c + A * pow(rim, max(P.x, 0.5)) * P.y * 2; break; }
+        o = c + Aa * pow(rim, max(P.x, 0.5)) * P.y * 2; break; }
     }
     return lerp(c, o, saturate(f.Head.y));
 }
@@ -729,6 +732,7 @@ float4 PsSlime(float4 pos : SV_Position) : SV_Target0
     float t = Cam.w * F.Head.z;
     float3 A = F.A.rgb;
     float4 P = F.P;
+    float4 Q = F.Q;
     // the surface: tipped outward where the blob thins, a slow wobble on top
     float2 outward = -g / max(covered, 1);
     float2 wob = float2(Noise3(float3(px * 0.02, t * 0.7)), Noise3(float3(px * 0.02 + 9, t * 0.7))) - 0.5;
@@ -737,16 +741,43 @@ float4 PsSlime(float4 pos : SV_Position) : SV_Target0
     float3 N = normalize(Right.xyz * tilt.x - Up.xyz * tilt.y + V * (0.35 + C));
     if (dot(N, V) < 0) N = -N;
     float3 L = normalize(V + Up.xyz * 0.8 + Right.xyz * 0.35);
+    // the body's own shape through it (where the body is: its own surface, from its depth)
+    float shade = 1, lines = 0;
+    int2 mp = MaskPixel(px * Screen.zw);
+    if (lc >= 0 && (Q.x > 0.001 || Q.y > 0.001))
+    {
+        float3 wp = WorldAt(mp);
+        float3 xl = wp - WorldAt(mp - int2(1, 0)), xr = WorldAt(mp + int2(1, 0)) - wp;
+        float3 yu = wp - WorldAt(mp - int2(0, 1)), yd = WorldAt(mp + int2(0, 1)) - wp;
+        float3 Ns = normalize(cross(dot(xl, xl) < dot(xr, xr) ? xl : xr, dot(yu, yu) < dot(yd, yd) ? yu : yd));
+        if (dot(Ns, V) < 0) Ns = -Ns;
+        N = normalize(lerp(N, Ns, Q.x));
+        shade = lerp(1, 0.45 + 0.75 * saturate(dot(Ns, L)), Q.x);
+        // where one part passes in front of another: a jump in depth round about
+        float d0 = length(wp - Cam.xyz), jump = 0;
+        [unroll] for (int k = 0; k < 4; k++)
+        {
+            int2 o = int2(k == 0 ? 2 : k == 1 ? -2 : 0, k == 2 ? 2 : k == 3 ? -2 : 0);
+            int2 q2 = clamp(mp + o, 0, (int2)Mask.xy - 1);
+            if (MaskA.Load(int3(q2, 0)).x < 0.5) continue;
+            jump = max(jump, abs(length(WorldAt(q2) - Cam.xyz) - d0));
+        }
+        lines = smoothstep(0.02, 0.06, jump) * Q.y;
+    }
     // what's behind, bent through it
     float2 off = (tilt * P.x * 1.5) + wob * P.x;
     float3 behind = Pic(px + off);
     float thick = saturate(C * 1.3);
-    float3 o = lerp(behind, A * (0.3 + Lum(behind) * 0.9), saturate(P.z * (0.35 + thick * 0.65)));
+    float3 o = lerp(behind, A * (0.3 + Lum(behind) * 0.9), saturate(P.z * F.A.a * (0.35 + thick * 0.65)));
+    o *= shade;
     float facing = saturate(dot(N, V));
     o += A * pow(1 - facing, 2.5) * 0.7;
     o += pow(saturate(dot(reflect(-V, N), L)), 70) * P.y * 1.8;
     o += pow(saturate(dot(reflect(-V, N), normalize(V - Up.xyz * 0.3 - Right.xyz * 0.6))), 25) * P.y * 0.25;
-    return float4(saturate(o), alpha * saturate(F.Head.y));
+    // (the inner lines: a darker crease with a bright lip)
+    o = lerp(o, A * 0.25, lines * 0.8) + lines * 0.15;
+    float opacity = Q.z > 0 || Q.w > 0 || Q.x > 0 || Q.y > 0 ? Q.z : 1;
+    return float4(saturate(o), alpha * saturate(F.Head.y) * saturate(opacity));
 }
 
 float4 PsOutline(float4 pos : SV_Position) : SV_Target0
@@ -768,7 +799,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
             int look = VisibleLook(q);
             if (look < 0) continue;
             Look L = Looks[look];
-            if (L.Outline.w * scale >= r) return float4(L.Outline.rgb, 1);
+            if (L.Outline.w * scale >= r) return float4(L.Outline.rgb, L.Misc.w);
         }
     }
     discard;
@@ -1091,15 +1122,24 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
     private static readonly List<FxGpu> _fx = new();
     private static readonly List<bool> _hide = new();
 
+    // A setting of a material effect (one it was saved without: its default).
+    private static float Par(MaterialFx f, int i)
+    {
+        if(f.P is { } p && i < p.Length)
+            return p[i];
+        var d = MaterialFx.DefOf(f.Kind);
+        return d != null && i < d.Params.Length ? d.Params[i].Default : 0f;
+    }
+
     private static LookGpu ToGpu(ShaderLook l)
     {
         Vector3 C(float[]? a, Vector3 d) => a is { Length: >= 3 } ? new Vector3(a[0], a[1], a[2]) : d;
         return new LookGpu
         {
-            Light = new Vector4(C(l.Light, new(1f, 0.55f, 0.85f)), Math.Max(0f, l.LightStrength)),
-            Rim = new Vector4(C(l.Rim, new(0.55f, 0.8f, 1f)), Math.Max(0f, l.RimStrength)),
-            Outline = new Vector4(C(l.Outline, Vector3.Zero), Math.Clamp(l.OutlineWidth, 0f, 20f)),
-            Misc = new Vector4(Math.Clamp(l.RimTightness, 0.5f, 12f), Math.Max(0f, l.Pulse), l.SeeThrough ? 1f : 0f, 0f),
+            Light = new Vector4(C(l.Light, new(1f, 0.55f, 0.85f)), Math.Max(0f, l.LightStrength) * Shaders.Alpha(l.Light)),
+            Rim = new Vector4(C(l.Rim, new(0.55f, 0.8f, 1f)), Math.Max(0f, l.RimStrength) * Shaders.Alpha(l.Rim)),
+            Outline = new Vector4(C(l.Outline, Vector3.Zero), Shaders.Alpha(l.Outline) > 0f ? Math.Clamp(l.OutlineWidth, 0f, 20f) : 0f),
+            Misc = new Vector4(Math.Clamp(l.RimTightness, 0.5f, 12f), Math.Max(0f, l.Pulse), l.SeeThrough ? 1f : 0f, Shaders.Alpha(l.Outline)),
             Extra = new Vector4(Math.Clamp(l.Pixelate, 0f, 64f), l.GameBoy ? 1f : 0f, 0f, 0f),
         };
     }
@@ -1143,9 +1183,10 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     _fx.Add(new FxGpu
                     {
                         Head = new Vector4(kind, Math.Clamp(f.Strength, 0f, 1f), f.Speed, 0f),
-                        A = new Vector4(MaterialFx.Colour(f.A), 1f),
-                        B = new Vector4(MaterialFx.Colour(f.B), 1f),
-                        P = new Vector4(f.P is { Length: > 0 } ? f.P[0] : 0f, f.P is { Length: > 1 } ? f.P[1] : 0f, f.P is { Length: > 2 } ? f.P[2] : 0f, f.P is { Length: > 3 } ? f.P[3] : 0f),
+                        A = new Vector4(MaterialFx.Colour(f.A), MaterialFx.Opacity(f.A)),
+                        B = new Vector4(MaterialFx.Colour(f.B), MaterialFx.Opacity(f.B)),
+                        P = new Vector4(Par(f, 0), Par(f, 1), Par(f, 2), Par(f, 3)),
+                        Q = new Vector4(Par(f, 4), Par(f, 5), Par(f, 6), Par(f, 7)),
                     });
                 }
                 g.Extra.Z = fxFirst;
@@ -1158,12 +1199,14 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
                     var glow = l.Glow is { Length: >= 3 } gc ? new Vector3(gc[0], gc[1], gc[2]) : Vector3.One;
                     var sg = g;
                     var mixed = sg.Light.W > 0f ? (new Vector3(sg.Light.X, sg.Light.Y, sg.Light.Z) * sg.Light.W + glow * l.GlowStrength) / (sg.Light.W + l.GlowStrength) : glow;
-                    sg.Light = new Vector4(mixed, sg.Light.W + l.GlowStrength);
+                    float glowAmount = l.GlowStrength * Shaders.Alpha(l.Glow);
+                    mixed = sg.Light.W > 0f ? (new Vector3(sg.Light.X, sg.Light.Y, sg.Light.Z) * sg.Light.W + glow * glowAmount) / (sg.Light.W + glowAmount) : glow;
+                    sg.Light = new Vector4(mixed, sg.Light.W + glowAmount);
                     skinOf[l.Part] = _looks.Count;
                     _looks.Add(sg);
                     _hide.Add(l.HideBody);
                     // (the glow alone, for a look whose effects are kept off the body but whose material isn't)
-                    var go = new LookGpu { Light = new Vector4(glow, l.GlowStrength), Rim = default, Outline = default, Misc = new Vector4(3f, 0f, 0f, 0f), Extra = default, Origin = g.Origin };
+                    var go = new LookGpu { Light = new Vector4(glow, glowAmount), Rim = default, Outline = default, Misc = new Vector4(3f, 0f, 0f, 0f), Extra = default, Origin = g.Origin };
                     glowOnlyOf[l.Part] = _looks.Count;
                     _looks.Add(go);
                     _hide.Add(false);
@@ -1837,7 +1880,7 @@ float4 PsOutline(float4 pos : SV_Position) : SV_Target0
         // the outline (drawn over), then the light, rim and see-through silhouette (added on)
         if(_widest > 0f)
         {
-            ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendSolid, zero, 0xFFFFFFFF);
+            ((delegate* unmanaged[Stdcall]<nint, nint, float*, uint, void>)V(c, 35))(c, _blendAlpha, zero, 0xFFFFFFFF);
             ((delegate* unmanaged[Stdcall]<nint, nint, nint*, uint, void>)V(c, 9))(c, _psOutline, null, 0);
             ((delegate* unmanaged[Stdcall]<nint, uint, uint, void>)V(c, 13))(c, 3, 0);
         }

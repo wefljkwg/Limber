@@ -17,20 +17,22 @@ public sealed class MaterialFx
     public bool On { get; set; } = true;
     public float Strength { get; set; } = 1f;   // 0: none of it, 1: all of it
     public float Speed { get; set; } = 1f;      // for the moving ones
-    public float[] A { get; set; } = [1f, 1f, 1f];
-    public float[] B { get; set; } = [0f, 0f, 0f];
-    public float[] P { get; set; } = [0f, 0f, 0f, 0f];
+    public float[] A { get; set; } = [1f, 1f, 1f, 1f];   // rgb, opacity
+    public float[] B { get; set; } = [0f, 0f, 0f, 1f];
+    public float[] P { get; set; } = new float[8];
 
     public MaterialFx Clone()
     {
         var c = (MaterialFx)MemberwiseClone();
-        c.A = (float[])(A ?? [1f, 1f, 1f]).Clone();
-        c.B = (float[])(B ?? [0f, 0f, 0f]).Clone();
-        c.P = (float[])(P ?? [0f, 0f, 0f, 0f]).Clone();
+        c.A = (float[])(A ?? [1f, 1f, 1f, 1f]).Clone();
+        c.B = (float[])(B ?? [0f, 0f, 0f, 1f]).Clone();
+        c.P = (float[])(P ?? new float[8]).Clone();
         return c;
     }
 
     public static Vector3 Colour(float[]? c) => c is { Length: >= 3 } ? new Vector3(c[0], c[1], c[2]) : Vector3.One;
+
+    public static float Opacity(float[]? c) => c is { Length: >= 4 } ? Math.Clamp(c[3], 0f, 1f) : 1f;
 
     /// <summary>A setting: its label, range, starting value and what it does.</summary>
     public sealed record Param(string Label, float Min, float Max, float Default, string Tip);
@@ -87,7 +89,10 @@ public sealed class MaterialFx
             [Pr("Bend", 0, 40, 12, "How far the picture bends (pixels)."), Pr("Edge shine", 0, 2, 0.6f, ""), Pr("Tint", 0, 1, 0.3f, "")], false),
         new(13, "Slime / goo", "Looks", "Turned into a wobbling blob of see-through slime with a wet shine. Rounder melts thin bits away and fills the gaps (best with Hide their body).", "Slime colour", new(0.4f, 1f, 0.5f), null, Black,
             [Pr("Wobble", 0, 30, 8, "How much it bends what's behind (pixels)."), Pr("Shine", 0, 2, 1, ""), Pr("Colour", 0, 1, 0.5f, "How much of the slime colour (thicker parts take more)."),
-             Pr("Roundness (px)", 0, 80, 28, "How blobby: thin parts (fingers, hair strands) melt, gaps between limbs fill in and the edges round off. 0: follows the body exactly.")], true),
+             Pr("Roundness (px)", 0, 80, 28, "How blobby: thin parts (fingers, hair strands) melt, gaps between limbs fill in and the edges round off. 0: follows the body exactly."),
+             Pr("Body detail", 0, 1, 0.4f, "How much of the body's own shape shows in the slime's shading and shine (breasts, belly, muscles)."),
+             Pr("Inner lines", 0, 1, 0.3f, "Lines where one part passes in front of another (an arm over the body, the legs), so the shape reads."),
+             Pr("Opacity", 0, 1, 1, "How solid the slime is: lower lets more of what's behind show plainly.")], true),
         new(14, "Ice / frost", "Looks", "Frozen: icy tint, cracks and glints.", "Ice colour", new(0.7f, 0.9f, 1f), null, Black,
             [Pr("Frost", 0, 1, 0.6f, ""), Pr("Cracks", 0, 1, 0.5f, ""), Pr("Glints", 0, 1, 0.4f, ""), Pr("Crack size", 0.5f, 5, 1.5f, "")], true),
         new(39, "Wet / oily", "Looks", "Glistening wet or oiled skin.", null, White, null, Black,
@@ -164,8 +169,8 @@ public sealed class MaterialFx
     public static MaterialFx New(Def d) => new()
     {
         Kind = d.Name,
-        A = [d.ADefault.X, d.ADefault.Y, d.ADefault.Z],
-        B = [d.BDefault.X, d.BDefault.Y, d.BDefault.Z],
-        P = Enumerable.Range(0, 4).Select(i => i < d.Params.Length ? d.Params[i].Default : 0f).ToArray(),
+        A = [d.ADefault.X, d.ADefault.Y, d.ADefault.Z, 1f],
+        B = [d.BDefault.X, d.BDefault.Y, d.BDefault.Z, 1f],
+        P = Enumerable.Range(0, 8).Select(i => i < d.Params.Length ? d.Params[i].Default : 0f).ToArray(),
     };
 }
