@@ -1078,6 +1078,7 @@ public sealed class Plugin : IDalamudPlugin
                 Limber.Gpu.MonitorRenderer.Draw(_config.Ik.MonitorDelay);
                 Limber.Gpu.ResearchConsole.Frame();
                 Limber.Gpu.ViewExperiment.Frame();
+                Limber.Gpu.WorldPass.Frame();
                 Limber.Koi.Props.KoiPropRuntime.Update();
                 perf.Mark("climax liquid");
                 _timeline?.Update(ImGui.GetIO().DeltaTime); // (first: the features below read what it writes)
@@ -1371,6 +1372,7 @@ public sealed class Plugin : IDalamudPlugin
         Limber.Gpu.FluidRenderer.Dispose();
         try { Limber.Gpu.SteamRenderer.Dispose(); } catch { }
         try { Limber.Gpu.EffectRenderer.Dispose(); } catch { }
+        try { Limber.Gpu.WorldPass.Dispose(); } catch { }
         try { Limber.Gpu.ViewExperiment.Dispose(); } catch { }
         try { Limber.Gpu.MonitorRenderer.Dispose(); Limber.Rig.CameraControl.SetGrab(null, 0f); } catch { }
         Limber.Gpu.GameLiquid.Stop();

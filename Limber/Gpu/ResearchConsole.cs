@@ -210,6 +210,7 @@ public static unsafe class ResearchConsole
                 Out($"  experiment {(ViewExperiment.On ? "on" : "off")}, slot {ViewExperiment.Slot}, update {(ViewExperiment.LetGameUpdateCamera ? 1 : 0)}, preview seen {ViewExperiment.PreviewSeen}; {ViewExperiment.State}");
                 Out($"  {ViewExperiment.LoopSaw}");
                 Out($"  per frame: {ViewExperiment.TargetClears:0.0} target clears, {ViewExperiment.DepthClears:0.0} depth clears, {ViewExperiment.SlotClears:0.0} of the slot's size, {ViewExperiment.FrameMs:0.0} ms");
+                Out($"  world pass: {(WorldPass.On ? "on" : "off")}, drawn twice {WorldPass.Doubled} times, captured {WorldPass.Captured} times, main depth clears last frame {WorldPass.LastClears}, capture {WorldPass.CaptureWidth}x{WorldPass.CaptureHeight}; {WorldPass.Error}");
                 Out($"  bases: {string.Join(", ", Bases().Select(b => $"{b.Key} 0x{b.Value:X}"))}");
                 return false;
             default:
@@ -235,10 +236,20 @@ public static unsafe class ResearchConsole
             case "update":
                 ViewExperiment.LetGameUpdateCamera = value != "0";
                 break;
+            case "world":
+                WorldPass.Ensure();
+                WorldPass.On = value == "on" || value == "1";
+                break;
+            case "worldupdate":
+                WorldPass.UpdateCamera = value != "0";
+                break;
+            case "worldsrc":
+                WorldPass.SourceOffset = (int)Number(value);
+                break;
             default:
                 throw new ArgumentException($"set what? ({what})");
         }
-        Out($"  experiment {(ViewExperiment.On ? "on" : "off")}, slot {ViewExperiment.Slot}, update {(ViewExperiment.LetGameUpdateCamera ? 1 : 0)}");
+        Out($"  experiment {(ViewExperiment.On ? "on" : "off")}, slot {ViewExperiment.Slot}, update {(ViewExperiment.LetGameUpdateCamera ? 1 : 0)}; world {(WorldPass.On ? "on" : "off")}, worldupdate {(WorldPass.UpdateCamera ? 1 : 0)}, worldsrc 0x{WorldPass.SourceOffset:X}");
     }
 
     private static void QueueWrite(nint at, byte[] bytes)
@@ -296,6 +307,7 @@ public static unsafe class ResearchConsole
         b["device"] = (nint)d;
         b["d3d"] = d == null ? 0 : (nint)d->D3D11Forwarder;
         b["ctx"] = d == null ? 0 : (nint)d->D3D11DeviceContext;
+        b["cap"] = WorldPass.CaptureTexture;
         b["module"] = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? 0;
         return b;
     }

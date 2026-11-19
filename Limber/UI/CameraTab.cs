@@ -438,6 +438,22 @@ public sealed class CameraTab
             ImGui.SameLine();
             ImGui.TextUnformatted(Limber.Gpu.ResearchConsole.Last);
         }
+        var worldOn = Limber.Gpu.WorldPass.On;
+        if(ImGui.Checkbox("Draw the whole world a second time from a camera prop (may crash the game)###cam_rig_world", ref worldOn))
+        {
+            Limber.Gpu.WorldPass.Ensure();
+            Limber.Gpu.WorldPass.On = worldOn;
+        }
+        Tooltip("Has the game draw its world twice a frame: first from the first monitor's camera prop (or the first camera prop), then as usual, and copies the first picture out for the screens. Heavy: about twice the drawing work.");
+        if(Limber.Gpu.WorldPass.On)
+        {
+            ImGui.TextWrapped($"World pass: drawn twice {Limber.Gpu.WorldPass.Doubled} times, copied {Limber.Gpu.WorldPass.Captured} times, main depth cleared {Limber.Gpu.WorldPass.LastClears} times last frame. {Limber.Gpu.WorldPass.Error}");
+            if(Limber.Gpu.WorldPass.CaptureView != 0 && Limber.Gpu.WorldPass.CaptureWidth > 0)
+            {
+                float iw = 480 * ImGuiHelpers.GlobalScale;
+                ImGui.Image(new ImTextureID(Limber.Gpu.WorldPass.CaptureView), new Vector2(iw, iw * Limber.Gpu.WorldPass.CaptureHeight / Limber.Gpu.WorldPass.CaptureWidth));
+            }
+        }
         var exOn = Limber.Gpu.ViewExperiment.On;
         if(ImGui.Checkbox("Draw the world from a camera prop into a spare preview picture (may crash the game)###cam_rig_ex", ref exOn))
         {

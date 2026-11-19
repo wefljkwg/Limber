@@ -405,7 +405,7 @@ public static unsafe class ViewExperiment
     }
 
     // The camera of the first monitor that's on, or the first camera prop.
-    private static CameraProp? Pick()
+    internal static CameraProp? Pick()
     {
         foreach(var m in CameraRig.Monitors)
             if(m.On && CameraRig.CameraOf(m) is { } c)
@@ -414,7 +414,7 @@ public static unsafe class ViewExperiment
     }
 
     // The main render camera's view, put at a camera prop (the same sum as the monitors' frame swap).
-    private static bool RenderViewFor(CameraProp cam, out Matrix4x4 newRender)
+    internal static bool RenderViewFor(CameraProp cam, out Matrix4x4 newRender)
     {
         newRender = default;
         var cm = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
@@ -581,7 +581,10 @@ public static unsafe class ViewExperiment
                 _slotClears++;
             bool main = IsMainDepth(dsv);
             if(main)
+            {
                 _mainClears++;
+                WorldPass.OnMainDepthClear(ctx);
+            }
             if(_recording)
                 Record.Append($"  clear depth {Describe(dsv)} flags {flags} to {depth}{(main ? " MAIN DEPTH" : "")}\n");
         }
