@@ -272,6 +272,11 @@ public sealed class CameraTab
         if(ImGui.SliderFloat("Refresh###cam_rig_hz", ref refresh, 0.5f, 30f, "%.1f / s", ImGuiSliderFlags.Logarithmic)) { _config.MonitorRefresh = refresh; save = true; }
         Tooltip("How many new pictures a second each camera's screens get. Each one is a frame the game shows twice, so keep it low (3-8) for smooth play.\n"
             + "With DLSS / FSR the frame after a picture can smear a little: plain anti-aliasing avoids that.");
+        int delay = _config.MonitorDelay;
+        ImGui.SetNextItemWidth(Limber.UI.Fit.Fixed(100f * ImGuiHelpers.GlobalScale));
+        if(ImGui.SliderInt("Timing###cam_rig_delay", ref delay, 0, 3)) { _config.MonitorDelay = delay; save = true; }
+        Tooltip("How many frames after the camera is moved its picture reaches the screen. Right: the screens show the camera's view and your view doesn't flash.\n"
+            + "If the screens show your own view and your view flashes to the camera's, raise it; if the screens go black or stutter, lower it.");
         bool show = _config.ShowCameraProps, always = _config.ShowCameraPropsAlways;
         if(ImGui.Checkbox("Show the cameras###cam_rig_show", ref show)) { _config.ShowCameraProps = show; save = true; }
         Tooltip("Small wireframe cameras where they are (only while this section is open, unless Always).");

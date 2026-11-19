@@ -382,10 +382,17 @@ float4 PsQuad(VOut i) : SV_Target0
     private static void Copy(nint c, nint to, nint from) => ((delegate* unmanaged[Stdcall]<nint, nint, nint, void>)V(c, 47))(c, to, from);
 
     /// <summary>Once a frame (render thread), after Limber's other effects are drawn into the picture.</summary>
-    public static void Draw()
+    // Which camera prop each of the last few frames was set up from (-1: the normal camera): the picture on screen is a
+    // frame or more behind the camera the game was given (it draws one frame while the next is being set up).
+    private static readonly int[] Recent = [-1, -1, -1, -1];
+    private static int _recentAt;
+
+    public static void Draw(int delay)
     {
-        int grabbed = CameraControl.Grabbed;
+        Recent[_recentAt] = CameraControl.Grabbed;
         CameraControl.Grabbed = -1;
+        int grabbed = Recent[(_recentAt - Math.Clamp(delay, 0, 3)) & 3];
+        _recentAt = (_recentAt + 1) & 3;
         if(_failed || !CameraRig.Live)
         {
             if(_last != 0)
